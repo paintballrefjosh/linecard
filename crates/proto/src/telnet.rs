@@ -263,7 +263,11 @@ impl Session for TelnetSession {
     }
 
     fn close(&mut self) -> io::Result<()> {
-        self.stream.shutdown(Shutdown::Both)
+        match self.stream.shutdown(Shutdown::Both) {
+            // The far end already hung up (macOS reports ENOTCONN): closed is closed.
+            Err(e) if e.kind() == io::ErrorKind::NotConnected => Ok(()),
+            other => other,
+        }
     }
 }
 
