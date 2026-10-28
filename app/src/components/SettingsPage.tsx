@@ -76,6 +76,8 @@ export function SettingsPage({ theme, onTheme }: Props) {
       <SessionLogging />
 
       <SavedPasswords />
+
+      <Workspaces />
     </div>
   );
 }
@@ -231,6 +233,40 @@ function SavedPasswords() {
             </div>
             <div className="settings-control">
               <button className="btn" onClick={() => forget(c.key)} aria-label={`Remove saved password for ${c.label}`}>
+                Remove
+              </button>
+            </div>
+          </div>
+        ))
+      )}
+    </Section>
+  );
+}
+
+/** Saved workspaces (open them from the toolbar). */
+function Workspaces() {
+  const { prefs, update } = usePrefs();
+  return (
+    <Section title="Workspaces">
+      {prefs.workspaces.length === 0 ? (
+        <p className="settings-note settings-empty">
+          None yet. Use the workspaces button in the toolbar to save your open tabs and their layout.
+        </p>
+      ) : (
+        prefs.workspaces.map((w) => (
+          <div className="settings-row" key={w.name}>
+            <div className="settings-text">
+              <span>{w.name}</span>
+              <p>
+                {Object.keys(w.layout.panels).length} tabs, saved {relativeTime(w.savedAt)}
+              </p>
+            </div>
+            <div className="settings-control">
+              <button
+                className="btn"
+                aria-label={`Remove workspace ${w.name}`}
+                onClick={() => update({ workspaces: prefs.workspaces.filter((x) => x.name !== w.name) })}
+              >
                 Remove
               </button>
             </div>

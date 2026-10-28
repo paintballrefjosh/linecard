@@ -14,6 +14,7 @@ import { LayoutPicker, layoutShortcut } from "./components/LayoutPicker";
 import { SettingsPage } from "./components/SettingsPage";
 import { SidebarResizer, useSidebarWidth } from "./components/SidebarResizer";
 import { Workspace, applyLayout, openConnection } from "./components/Workspace";
+import { WorkspaceMenu } from "./components/WorkspaceMenu";
 
 type View = "connections" | "devices" | "settings";
 
@@ -36,6 +37,17 @@ export function parseQuickConnect(input: string): ConnectionNode | null {
   const ports: Record<ConnectionKind, number> = { ssh: 22, telnet: 23, rdp: 3389, vnc: 5900, serial: 0 };
   const port = m[4] ?? m[5] ?? String(ports[kind]);
   return { type: "connection", id: `quick-${s}`, name: m[3], kind, endpoint: `${m[3]}:${port}` };
+}
+
+function findConnection(nodes: TreeNode[], id: string): ConnectionNode | undefined {
+  for (const n of nodes) {
+    if (n.type === "connection" && n.id === id) return n;
+    if (n.type === "folder") {
+      const hit = findConnection(n.children, id);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
 }
 
 /** Every saved SSH connection (candidates for a jump host). */
@@ -249,6 +261,7 @@ export default function App() {
                 aria-invalid={quickError}
               />
             </form>
+            <WorkspaceMenu dock={dock} findConnection={(id) => findConnection(tree, id)} />
             <LayoutPicker value={layout} onChange={changeLayout} />
           </header>
 

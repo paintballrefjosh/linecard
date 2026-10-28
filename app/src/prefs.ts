@@ -1,5 +1,13 @@
 import { createContext, useContext } from "react";
+import type { SerializedDockview } from "dockview";
 import { defaultRules, type HighlightRule } from "./highlight";
+
+/** Open tabs and pane layout saved under a name. */
+export interface SavedWorkspace {
+  name: string;
+  savedAt: number;
+  layout: SerializedDockview;
+}
 
 /** Per-device preferences (never synced). Stored by the backend; defaults
  *  live here so new options need no migration. */
@@ -13,6 +21,7 @@ export interface Preferences {
   /** Color keywords (down, err-disabled, up…) in terminal output. */
   highlightKeywords: boolean;
   highlightRules: HighlightRule[];
+  workspaces: SavedWorkspace[];
 }
 
 export const defaultPrefs: Preferences = {
@@ -21,6 +30,7 @@ export const defaultPrefs: Preferences = {
   confirmMultilinePaste: true,
   highlightKeywords: true,
   highlightRules: defaultRules,
+  workspaces: [],
 };
 
 export function withDefaults(stored: Partial<Preferences> | null | undefined): Preferences {

@@ -1644,3 +1644,24 @@ kbd {
   font-family: var(--font-mono);
   font-size: 12px;
 }
+
+.toolbar-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: transparent;
+  color: var(--text-quiet);
+}
+.toolbar-btn:hover,
+.toolbar-btn[aria-expanded="true"] {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.form-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-quiet);
+}

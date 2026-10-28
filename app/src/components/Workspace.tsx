@@ -6,6 +6,7 @@ import {
   type IDockviewPanelHeaderProps,
   type IDockviewPanelProps,
   type IWatermarkPanelProps,
+  type SerializedDockview,
 } from "dockview";
 import "dockview/dist/styles/dockview.css";
 import { X } from "lucide-react";
@@ -118,6 +119,36 @@ export function openConnection(api: DockviewApi, conn: ConnectionNode) {
     params: { conn, instance },
     position: api.activeGroup ? { referenceGroup: api.activeGroup } : undefined,
   });
+}
+
+/** Open tabs and pane layout, for saving as a workspace. */
+export function snapshotWorkspace(api: DockviewApi): SerializedDockview {
+  return api.toJSON();
+}
+
+/** Replace the current tabs with a saved workspace. Connections are refreshed
+ *  from `current` by id (so renames and edits since saving apply); ones that
+ *  were deleted keep their saved details. */
+export function restoreWorkspace(
+  api: DockviewApi,
+  saved: SerializedDockview,
+  current: (id: string) => ConnectionNode | undefined,
+) {
+  const data: SerializedDockview = structuredClone(saved);
+  for (const panel of Object.values(data.panels)) {
+    const p = panel.params as PanelParams | undefined;
+    if (!p) continue;
+    const fresh = current(p.conn.id);
+    if (fresh) {
+      p.conn = fresh;
+      panel.title = p.instance > 1 ? `${fresh.name} (${p.instance})` : fresh.name;
+    }
+    // Keep new panel ids clear of restored ones.
+    const n = Number(panel.id.split("#").pop());
+    if (n > counter) counter = n;
+  }
+  api.clear();
+  api.fromJSON(data);
 }
 
 /** Rearrange panes into one of the six layouts, keeping every open tab.

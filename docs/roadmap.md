@@ -21,7 +21,7 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 - [x] Session logging (plain text, optional timestamps, global/folder/connection settings) and keyword highlighting (editable rules)
 - [x] Importers: SecureCRT, PuTTY (registry, / folders), mRemoteNG (confCons.xml), OpenSSH config; import dialog with preview
 - [ ] SuperPuTTY Sessions.xml folders
-- [ ] Saved workspaces
+- [x] Saved workspaces: open tabs and layout saved by name, restored with reconnects
 
 ## Phase 2 — Sync (v0.4–0.6)
 
