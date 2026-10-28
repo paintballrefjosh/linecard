@@ -16,7 +16,7 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 - [x] Serial driver (`serialport`): port picker with live ports, framing, flow control, BREAK
 - [ ] XMODEM/YMODEM file transfer over serial
 - [x] Connection editor dialog
-- [ ] Show inherited values in the connection editor
+- [x] Show inherited values (and where they come from) in the connection editor
 - [x] Credential vault: saved passwords in the OS keychain (Windows Credential Manager), "Save password" on login prompts, list and remove in Settings
 - [x] Session logging (plain text, optional timestamps, global/folder/connection settings) and keyword highlighting (editable rules)
 - [x] Importers: SecureCRT, PuTTY (registry, / folders), mRemoteNG (confCons.xml), OpenSSH config; import dialog with preview

@@ -382,3 +382,22 @@ pub struct LoggingDto {
     #[serde(default)]
     pub default_folder: Option<String>,
 }
+
+#[derive(Serialize)]
+pub struct InheritedValue {
+    pub value: String,
+    /// Folder path ("/DC1/Spine") or "Settings".
+    pub from: String,
+}
+
+/// Values a connection inherits, shown as placeholders in the editor.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InheritedDto {
+    pub username: Option<InheritedValue>,
+    pub tab_color: Option<InheritedValue>,
+    /// The jump host's name.
+    pub jump_host: Option<InheritedValue>,
+    /// "on" / "off"
+    pub log: Option<InheritedValue>,
+}

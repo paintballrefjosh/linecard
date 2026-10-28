@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getBackend } from "../api";
-import type { ConnectionDraft, ConnectionKind, FlowControl, Parity, SerialSettings } from "../types";
+import type { ConnectionDraft, Inherited, ConnectionKind, FlowControl, Parity, SerialSettings } from "../types";
 import { Modal } from "./Dialog";
 import { kindLabel } from "./icons";
 
@@ -54,6 +54,10 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
   const set = (patch: Partial<ConnectionDraft>) => setD((cur) => ({ ...cur, ...patch }));
   const setSerial = (patch: Partial<SerialSettings>) =>
     setD((cur) => ({ ...cur, serial: { ...(cur.serial ?? consoleDefaults()), ...patch } }));
+  const [inherited, setInherited] = useState<Inherited | null>(null);
+  useEffect(() => {
+    void getBackend().then((b) => b.inheritedSettings(initial.folderId).then(setInherited));
+  }, [initial.folderId]);
   const isNew = initial.id === null;
   const serial = d.kind === "serial";
   /** Ports present now (USB adapters come and go), refreshed when Serial is picked. */
@@ -227,7 +231,11 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
           <>
             <label htmlFor="ce-jump">Jump host</label>
             <select id="ce-jump" value={d.jumpHost ?? ""} onChange={(e) => set({ jumpHost: e.target.value || null })}>
-              <option value="">From folder, or connect directly</option>
+              <option value="">
+                {inherited?.jumpHost
+                  ? `Inherited: ${inherited.jumpHost.value} (from ${inherited.jumpHost.from})`
+                  : "None: connect directly"}
+              </option>
               {jumpHosts
                 .filter((j) => j.id !== d.id)
                 .map((j) => (
@@ -244,7 +252,11 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
           id="ce-user"
           value={d.username ?? ""}
           onChange={(e) => set({ username: e.target.value })}
-          placeholder="Inherited from folder"
+          placeholder={
+            inherited?.username
+              ? `${inherited.username.value} (from ${inherited.username.from})`
+              : "Asked when connecting"
+          }
           spellCheck={false}
           autoComplete="off"
         />
@@ -255,7 +267,11 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
           value={d.log === null ? "" : d.log ? "on" : "off"}
           onChange={(e) => set({ log: e.target.value === "" ? null : e.target.value === "on" })}
         >
-          <option value="">From folder or Settings</option>
+          <option value="">
+            {inherited?.log
+              ? `Inherited: ${inherited.log.value === "on" ? "logging" : "not logging"} (from ${inherited.log.from})`
+              : "Inherited"}
+          </option>
           <option value="on">Always log this connection</option>
           <option value="off">Never log this connection</option>
         </select>
@@ -267,8 +283,13 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
             role="radio"
             aria-checked={!d.tabColor}
             className="swatch swatch-none"
-            aria-label="Inherited from folder"
-            title="Inherited from folder"
+            aria-label={inherited?.tabColor ? `Inherited color from ${inherited.tabColor.from}` : "No color"}
+            title={
+              inherited?.tabColor
+                ? `Inherited: ${inherited.tabColor.value} (from ${inherited.tabColor.from})`
+                : "No color"
+            }
+            style={inherited?.tabColor ? { background: inherited.tabColor.value } : undefined}
             onClick={() => set({ tabColor: null })}
           />
           {swatches.map((c) => (

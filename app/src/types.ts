@@ -175,3 +175,18 @@ export interface ImportPreview {
   warnings: string[];
   rows: { folder: string; name: string; kind: ConnectionKind; endpoint: string; username: string | null }[];
 }
+
+/** A value a connection inherits, and where it comes from ("/DC1" or "Settings"). */
+export interface InheritedValue {
+  value: string;
+  from: string;
+}
+
+export interface Inherited {
+  username: InheritedValue | null;
+  tabColor: InheritedValue | null;
+  /** The jump host's name. */
+  jumpHost: InheritedValue | null;
+  /** "on" | "off" */
+  log: InheritedValue | null;
+}

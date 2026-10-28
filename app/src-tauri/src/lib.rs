@@ -178,6 +178,55 @@ fn get_connection(state: State<AppState>, id: String) -> CmdResult<ConnectionDra
     Ok(lib.tree().connection(&id).map_err(err)?.into())
 }
 
+/// What a connection in `folder_id` gets when it doesn't set a value itself,
+/// and where each value comes from ("/DC1/Spine" or "Settings").
+#[tauri::command]
+fn inherited_settings(state: State<AppState>, folder_id: Option<String>) -> CmdResult<dto::InheritedDto> {
+    let lib = state.lib.lock().map_err(err)?;
+    let mut tree = lib.tree().clone();
+    // Resolve a throwaway connection placed in that folder, with no overrides.
+    let probe = "__inherited_probe__".to_string();
+    tree.add_connection(Connection {
+        id: probe.clone(),
+        name: String::new(),
+        folder: folder_id.filter(|f| tree.folder(f).is_ok()),
+        order: 0.0,
+        kind: ConnectionKind::Ssh,
+        endpoint: Endpoint::network(ConnectionKind::Ssh, ""),
+        overrides: Settings::default(),
+        notes: String::new(),
+        tags: vec![],
+    })
+    .map_err(err)?;
+    let r = tree.resolve(&probe).map_err(err)?;
+    let from = |field: &str| match r.source_of(field) {
+        Some(linecard_core_model::Source::Folder(id)) => tree.path(Some(id)).unwrap_or_default(),
+        _ => "Settings".to_string(),
+    };
+    let item = |field: &str, value: Option<String>| {
+        value.map(|value| dto::InheritedValue {
+            value,
+            from: from(field),
+        })
+    };
+    Ok(dto::InheritedDto {
+        username: item("username", r.settings.username.clone()),
+        tab_color: item("tab_color", r.settings.tab_color.clone()),
+        jump_host: item(
+            "jump_host",
+            r.settings
+                .jump_host
+                .as_deref()
+                .and_then(|id| tree.connection(id).ok())
+                .map(|c| c.name.clone()),
+        ),
+        log: item(
+            "log_enabled",
+            r.settings.log_enabled.map(|b| if b { "on" } else { "off" }.to_string()),
+        ),
+    })
+}
+
 /// Create (`draft.id` is None) or update a connection. Returns its id.
 #[tauri::command]
 fn save_connection(app: AppHandle, state: State<AppState>, draft: ConnectionDraftDto) -> CmdResult<String> {
@@ -678,6 +727,7 @@ pub fn run() {
             move_node,
             create_folder,
             get_connection,
+            inherited_settings,
             save_connection,
             rename_node,
             delete_node,

@@ -5,6 +5,7 @@ import type {
   ImportPreview,
   ImportSource,
   ImportSourceId,
+  Inherited,
   LoggingSettings,
   PromptReply,
   SavedPassword,
@@ -39,6 +40,8 @@ export interface Backend {
   /** Returns the new folder's id. */
   createFolder(parentId: string | null, name: string): Promise<string>;
   getConnection(id: string): Promise<ConnectionDraft>;
+  /** What a connection in this folder inherits when it doesn't set a value. */
+  inheritedSettings(folderId: string | null): Promise<Inherited>;
   /** Create (`draft.id` null) or update. Returns the connection's id. */
   saveConnection(draft: ConnectionDraft): Promise<string>;
   renameNode(id: string, name: string): Promise<void>;
@@ -91,6 +94,7 @@ async function tauriBackend(): Promise<Backend> {
     moveNode: (id, parentId, index) => invoke("move_node", { id, parentId, index }),
     createFolder: (parentId, name) => invoke<string>("create_folder", { parentId, name }),
     getConnection: (id) => invoke<ConnectionDraft>("get_connection", { id }),
+    inheritedSettings: (folderId) => invoke<Inherited>("inherited_settings", { folderId }),
     saveConnection: (draft) => invoke<string>("save_connection", { draft }),
     renameNode: (id, name) => invoke("rename_node", { id, name }),
     deleteNode: (id) => invoke("delete_node", { id }),

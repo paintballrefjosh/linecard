@@ -408,6 +408,16 @@ export function mockBackend(): Backend {
       emit();
       return id;
     },
+    async inheritedSettings(folderId) {
+      // The demo's DC1 folders log in as netadmin through home-pi.
+      const inDc1 = !!folderId && (folderId.startsWith("dc1") || folderId === "dc1");
+      return {
+        username: inDc1 ? { value: "netadmin", from: "/DC1 Fort Worth" } : null,
+        tabColor: null,
+        jumpHost: inDc1 ? { value: "home-pi", from: "/DC1 Fort Worth" } : null,
+        log: { value: logging.enabled ? "on" : "off", from: "Settings" },
+      };
+    },
     async getLogging() {
       return { ...logging, defaultFolder: "C:\\Users\\you\\Documents\\Linecard Logs" };
     },
