@@ -1,0 +1,25 @@
+[package]
+name = "linecard-sync"
+description = "Linecard sync: pairing phrases, end-to-end encrypted op batches, folder and relay transports"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+base64 = "0.22"
+bip39 = "2"
+chacha20poly1305 = "0.10"
+ed25519-dalek = "2"
+getrandom = "0.2"
+hkdf = "0.12"
+linecard-core-sync = { workspace = true, features = ["serde"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+thiserror = "2"
+
+[dev-dependencies]
+linecard-relay = { path = "../../relay" }
+axum = "0.8"
+tokio = { workspace = true }

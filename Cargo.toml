@@ -7,6 +7,7 @@ members = [
     "crates/proto",
     "crates/importers",
     "crates/vault",
+    "crates/sync",
     "app/src-tauri",
     "relay",
 ]
@@ -25,6 +26,7 @@ linecard-core-store = { path = "crates/core-store" }
 linecard-proto = { path = "crates/proto" }
 linecard-importers = { path = "crates/importers" }
 linecard-vault = { path = "crates/vault" }
+linecard-sync = { path = "crates/sync" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

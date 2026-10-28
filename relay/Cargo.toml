@@ -5,8 +5,18 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+name = "linecard_relay"
+path = "src/lib.rs"
+
+[[bin]]
+name = "linecard-relay"
+path = "src/main.rs"
+
 [dependencies]
 axum = "0.8"
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+rusqlite = { workspace = true }
+sha2 = "0.10"
