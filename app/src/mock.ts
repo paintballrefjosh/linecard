@@ -182,7 +182,10 @@ export function mockBackend(): Backend {
   const savedPasswords = new Map<string, number>();
 
   // Fields the tree nodes don't carry, as the Rust side stores them.
-  const extra = new Map<string, { username: string | null; notes: string; serial: SerialSettings | null }>();
+  const extra = new Map<
+    string,
+    { username: string | null; notes: string; serial: SerialSettings | null; jumpHost: string | null }
+  >();
   const newId = () => `m-${Math.random().toString(36).slice(2, 9)}`;
   const childrenOf = (parentId: string | null): TreeNode[] => {
     const hit = parentId ? find(tree, parentId) : null;
@@ -275,6 +278,7 @@ export function mockBackend(): Backend {
             : null),
         username: x?.username ?? null,
         tabColor: n.tabColor ?? null,
+        jumpHost: x?.jumpHost ?? null,
         notes: x?.notes ?? "",
       };
     },
@@ -294,7 +298,7 @@ export function mockBackend(): Backend {
         id = newId();
         childrenOf(d.folderId).push({ type: "connection", id, ...fields });
       }
-      extra.set(id!, { username: d.username?.trim() || null, notes: d.notes, serial: d.serial });
+      extra.set(id!, { username: d.username?.trim() || null, notes: d.notes, serial: d.serial, jumpHost: d.jumpHost });
       emit();
       return id!;
     },

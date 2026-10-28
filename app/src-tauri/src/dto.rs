@@ -130,6 +130,9 @@ pub struct ConnectionDraftDto {
     pub serial: Option<SerialDto>,
     pub username: Option<String>,
     pub tab_color: Option<String>,
+    /// Id of an SSH connection to tunnel through; empty = inherit.
+    #[serde(default)]
+    pub jump_host: Option<String>,
     pub notes: String,
 }
 
@@ -160,6 +163,7 @@ impl From<&Connection> for ConnectionDraftDto {
             serial,
             username: c.overrides.username.clone(),
             tab_color: c.overrides.tab_color.clone(),
+            jump_host: c.overrides.jump_host.clone(),
             notes: c.notes.clone(),
         }
     }
@@ -210,6 +214,7 @@ impl ConnectionDraftDto {
         conn.kind = self.kind;
         conn.overrides.username = non_empty(&self.username);
         conn.overrides.tab_color = non_empty(&self.tab_color);
+        conn.overrides.jump_host = non_empty(&self.jump_host).filter(|j| Some(j) != self.id.as_ref());
         conn.notes = self.notes.clone();
         Ok(())
     }

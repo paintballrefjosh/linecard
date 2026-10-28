@@ -397,6 +397,34 @@ fn ssh_options(app: &AppHandle, vault: Arc<Vault>) -> SshOptions {
     }
 }
 
+/// Where a saved connection goes, with its inherited login settings and its
+/// jump host (itself a saved SSH connection, resolved the same way).
+fn network_target(tree: &Tree, id: &str, depth: usize) -> CmdResult<TerminalTarget> {
+    if depth > 8 {
+        return Err("jump hosts form a loop".into());
+    }
+    let c = tree.connection(id).map_err(err)?;
+    let Endpoint::Network { host, port } = &c.endpoint else {
+        return Err(format!("{} is a serial connection", c.name));
+    };
+    let settings = tree.resolve(&c.id).map_err(err)?.settings;
+    let mut t = TerminalTarget::new(host.clone(), *port);
+    t.username = settings.username;
+    t.keepalive_secs = settings.keepalive_secs;
+    // A shared credential (e.g. set on a folder) pools the saved password.
+    t.credential_key = settings.credential_id.map(|id| format!("cred:{id}"));
+    if let Some(jump) = settings.jump_host.filter(|j| j != id) {
+        let hop = tree
+            .connection(&jump)
+            .map_err(|_| format!("the jump host for {} no longer exists", c.name))?;
+        if hop.kind != ConnectionKind::Ssh {
+            return Err(format!("jump host {} must be an SSH connection", hop.name));
+        }
+        t.jump = Some(Box::new(network_target(tree, &jump, depth + 1)?));
+    }
+    Ok(t)
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn open_session(
@@ -414,18 +442,7 @@ async fn open_session(
         let lib = state.lib.lock().map_err(err)?;
         let tree = lib.tree();
         match tree.connection(&connection_id) {
-            Ok(c) => {
-                let Endpoint::Network { host, port } = &c.endpoint else {
-                    return Err("Serial sessions arrive in the next Phase 1 milestone".into());
-                };
-                let settings = tree.resolve(&c.id).map_err(err)?.settings;
-                let mut t = TerminalTarget::new(host.clone(), *port);
-                t.username = settings.username;
-                t.keepalive_secs = settings.keepalive_secs;
-                // A shared credential (e.g. set on a folder) pools the saved password.
-                t.credential_key = settings.credential_id.map(|id| format!("cred:{id}"));
-                (c.kind, t)
-            }
+            Ok(c) => (c.kind, network_target(tree, &c.id, 0)?),
             Err(_) => {
                 let (user, host, port) = parse_endpoint(&endpoint, kind).ok_or("could not read host and port")?;
                 let mut t = TerminalTarget::new(host, port);
@@ -581,6 +598,7 @@ mod tests {
             serial: None,
             username: Some("  ".into()),
             tab_color: Some("#d64545".into()),
+            jump_host: None,
             notes: String::new(),
         }
     }
@@ -608,6 +626,49 @@ mod tests {
             draft(ConnectionKind::Serial).apply_to(&mut conn).is_err(),
             "serial needs settings"
         );
+    }
+
+    #[test]
+    fn jump_hosts_resolve_through_folders_and_reject_loops() {
+        let ssh = |id: &str, folder: Option<&str>, jump: Option<&str>| Connection {
+            id: id.into(),
+            name: id.into(),
+            folder: folder.map(Into::into),
+            order: 0.0,
+            kind: ConnectionKind::Ssh,
+            endpoint: Endpoint::network(ConnectionKind::Ssh, format!("{id}.lab")),
+            overrides: Settings {
+                jump_host: jump.map(Into::into),
+                ..Default::default()
+            },
+            notes: String::new(),
+            tags: vec![],
+        };
+        let mut tree = Tree::default();
+        tree.add_folder(Folder {
+            id: "dc".into(),
+            name: "DC".into(),
+            parent: None,
+            order: 0.0,
+            color: None,
+            defaults: Settings {
+                jump_host: Some("bastion".into()),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+        tree.add_connection(ssh("bastion", Some("dc"), None)).unwrap();
+        tree.add_connection(ssh("core1", Some("dc"), None)).unwrap();
+
+        let t = network_target(&tree, "core1", 0).unwrap();
+        assert_eq!(t.host, "core1.lab");
+        let hop = t.jump.expect("inherits the folder's jump host");
+        assert_eq!(hop.host, "bastion.lab");
+        assert!(hop.jump.is_none(), "the bastion doesn't jump through itself");
+
+        tree.add_connection(ssh("a", None, Some("b"))).unwrap();
+        tree.add_connection(ssh("b", None, Some("a"))).unwrap();
+        assert_eq!(network_target(&tree, "a", 0).unwrap_err(), "jump hosts form a loop");
     }
 
     #[test]

@@ -71,6 +71,8 @@ export interface ConnectionDraft {
   serial: SerialSettings | null;
   username: string | null;
   tabColor: string | null;
+  /** Id of an SSH connection to tunnel through; null = from the folder, or direct. */
+  jumpHost: string | null;
   notes: string;
 }
 

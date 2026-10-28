@@ -37,6 +37,11 @@ export function parseQuickConnect(input: string): ConnectionNode | null {
   return { type: "connection", id: `quick-${s}`, name: m[3], kind, endpoint: `${m[3]}:${port}` };
 }
 
+/** Every saved SSH connection (candidates for a jump host). */
+function sshConnections(nodes: TreeNode[]): ConnectionNode[] {
+  return nodes.flatMap((n) => (n.type === "folder" ? sshConnections(n.children) : n.kind === "ssh" ? [n] : []));
+}
+
 /** "/DC1 Fort Worth/Spine" for a folder id; "/" for the top level. */
 function folderPath(nodes: TreeNode[], id: string | null, prefix = ""): string {
   if (!id) return "/";
@@ -221,6 +226,7 @@ export default function App() {
             location={folderPath(tree, editing.folderId)}
             onSave={async (d) => void (await backend.saveConnection(d))}
             onClose={() => setEditing(null)}
+            jumpHosts={sshConnections(tree)}
           />
         )}
 

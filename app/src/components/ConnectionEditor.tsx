@@ -30,6 +30,7 @@ export function blankDraft(folderId: string | null): ConnectionDraft {
     serial: null,
     username: null,
     tabColor: null,
+    jumpHost: null,
     notes: "",
   };
 }
@@ -40,9 +41,11 @@ interface Props {
   location: string;
   onSave(draft: ConnectionDraft): Promise<void>;
   onClose(): void;
+  /** Saved SSH connections that can serve as a jump host. */
+  jumpHosts: { id: string; name: string; endpoint: string }[];
 }
 
-export function ConnectionEditor({ initial, location, onSave, onClose }: Props) {
+export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts }: Props) {
   const [d, setD] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -208,6 +211,22 @@ export function ConnectionEditor({ initial, location, onSave, onClose }: Props) 
                 required
               />
             </div>
+          </>
+        )}
+
+        {d.kind === "ssh" && (
+          <>
+            <label htmlFor="ce-jump">Jump host</label>
+            <select id="ce-jump" value={d.jumpHost ?? ""} onChange={(e) => set({ jumpHost: e.target.value || null })}>
+              <option value="">From folder, or connect directly</option>
+              {jumpHosts
+                .filter((j) => j.id !== d.id)
+                .map((j) => (
+                  <option key={j.id} value={j.id}>
+                    {j.name} ({j.endpoint})
+                  </option>
+                ))}
+            </select>
           </>
         )}
 

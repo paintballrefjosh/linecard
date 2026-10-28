@@ -11,7 +11,8 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 - [x] UI shell: tree, tabs, six layouts, themes, Devices page, quick connect, updater hook
 - [x] Wire `core-store` into the app: every edit is an op in SQLite; the tree is projected from the replica; stable device id
 - [x] SSH driver (`russh`): password, keyboard-interactive, agent (Windows OpenSSH / Pageant), unencrypted key files, host-key verification with known_hosts, legacy algorithms for older gear
-- [ ] SSH: passphrase-protected keys, jump hosts, reconnect
+- [x] SSH: passphrase-protected keys (asked only when the server takes the key), jump hosts (chains, inherited from folders)
+- [ ] Reconnect
 - [x] Connection editor dialog
 - [ ] Show inherited values in the connection editor
 - [x] Credential vault: saved passwords in the OS keychain (Windows Credential Manager), "Save password" on login prompts, list and remove in Settings

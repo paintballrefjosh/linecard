@@ -56,6 +56,8 @@ enum Mode {
 
 struct Shell {
     authorized: Option<PublicKey>,
+    /// Session channels; forwarded (jump) channels must not be echoed.
+    shells: std::collections::HashSet<ChannelId>,
 }
 
 impl Shell {
@@ -123,12 +125,35 @@ impl server::Handler for Shell {
         })
     }
 
-    async fn channel_open_session(
+    /// Act as a jump host: forward the channel to host:port.
+    async fn channel_open_direct_tcpip(
         &mut self,
-        _channel: Channel<Msg>,
+        channel: Channel<Msg>,
+        host: &str,
+        port: u32,
+        _from: &str,
+        _from_port: u32,
         reply: server::ChannelOpenHandle,
         _session: &mut server::Session,
     ) -> Result<(), Self::Error> {
+        let Ok(mut upstream) = tokio::net::TcpStream::connect((host, port as u16)).await else {
+            return Ok(()); // dropping `reply` rejects the channel
+        };
+        reply.accept().await;
+        tokio::spawn(async move {
+            let mut stream = channel.into_stream();
+            let _ = tokio::io::copy_bidirectional(&mut stream, &mut upstream).await;
+        });
+        Ok(())
+    }
+
+    async fn channel_open_session(
+        &mut self,
+        channel: Channel<Msg>,
+        reply: server::ChannelOpenHandle,
+        _session: &mut server::Session,
+    ) -> Result<(), Self::Error> {
+        self.shells.insert(channel.id());
         reply.accept().await;
         Ok(())
     }
@@ -160,7 +185,9 @@ impl server::Handler for Shell {
         data: &[u8],
         session: &mut server::Session,
     ) -> Result<(), Self::Error> {
-        session.data(channel, data.to_ascii_uppercase())?;
+        if self.shells.contains(&channel) {
+            session.data(channel, data.to_ascii_uppercase())?;
+        }
         Ok(())
     }
 
@@ -202,6 +229,7 @@ async fn start_server(mode: Mode) -> u16 {
             let config = config.clone();
             let shell = Shell {
                 authorized: authorized.clone(),
+                shells: Default::default(),
             };
             tokio::spawn(async move {
                 if let Ok(running) = server::run_stream(config, stream, shell).await {
@@ -525,6 +553,88 @@ async fn unticked_passwords_are_not_saved() {
     c.password("secret");
     assert_eq!(c.event().await, SessionEvent::Connected);
     assert!(creds.0.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn jump_host_tunnels_to_the_target() {
+    let jump_port = start_server(Mode::Password).await;
+    let target_port = start_server(Mode::KeyboardInteractive).await;
+    let opts = options(temp_known_hosts());
+
+    let mut jump = TerminalTarget::new("127.0.0.1", jump_port);
+    jump.username = Some("admin".into());
+    let mut target = TerminalTarget::new("127.0.0.1", target_port);
+    target.username = Some("admin".into());
+    target.jump = Some(Box::new(jump));
+
+    let (tx, events) = unbounded_channel();
+    let sink: EventSink = Box::new(move |e| {
+        let _ = tx.send(e);
+    });
+    let mut c = Probe {
+        session: SshSession::connect(&target, &opts, sink).unwrap(),
+        events,
+        screen: String::new(),
+    };
+
+    // The jump host first: its own host key and password...
+    match c.event().await {
+        SessionEvent::HostKey(k) => assert_eq!(k.port, jump_port),
+        other => panic!("expected the jump host's key, got {other:?}"),
+    }
+    c.reply(PromptReply::HostKey(HostKeyDecision::AcceptOnce));
+    match c.event().await {
+        SessionEvent::Auth(p) => assert_eq!(p.title, "Password for admin@127.0.0.1"),
+        other => panic!("expected the jump host's password, got {other:?}"),
+    }
+    c.password("secret");
+
+    // ...then the target, reached through the tunnel.
+    match c.event().await {
+        SessionEvent::HostKey(k) => assert_eq!(k.port, target_port),
+        other => panic!("expected the target's key, got {other:?}"),
+    }
+    assert!(c.screen.contains("Via jump host 127.0.0.1"), "{}", c.screen);
+    c.reply(PromptReply::HostKey(HostKeyDecision::AcceptOnce));
+    assert!(matches!(c.event().await, SessionEvent::Auth(_)));
+    c.password("secret");
+    assert_eq!(c.event().await, SessionEvent::Connected);
+    c.session.write(b"through the tunnel").unwrap();
+    c.screen_has("THROUGH THE TUNNEL").await;
+    c.session.close().unwrap();
+}
+
+#[tokio::test]
+async fn unreachable_target_behind_a_jump_host_says_so() {
+    let jump_port = start_server(Mode::Password).await;
+    let closed = {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let opts = options(temp_known_hosts());
+    let mut jump = TerminalTarget::new("127.0.0.1", jump_port);
+    jump.username = Some("admin".into());
+    let mut target = TerminalTarget::new("127.0.0.1", closed);
+    target.jump = Some(Box::new(jump));
+    let (tx, events) = unbounded_channel();
+    let sink: EventSink = Box::new(move |e| {
+        let _ = tx.send(e);
+    });
+    let mut c = Probe {
+        session: SshSession::connect(&target, &opts, sink).unwrap(),
+        events,
+        screen: String::new(),
+    };
+    c.event().await;
+    c.reply(PromptReply::HostKey(HostKeyDecision::AcceptOnce));
+    c.event().await;
+    c.password("secret");
+    match c.event().await {
+        SessionEvent::Disconnected { reason: Some(r) } => {
+            assert!(r.starts_with("jump host could not reach 127.0.0.1"), "{r}")
+        }
+        other => panic!("expected a tunnel error, got {other:?}"),
+    }
 }
 
 /// Options with the encrypted user key as the only identity file.
