@@ -1,4 +1,6 @@
-# Linecard
+# <img src="docs/logo.svg" alt="" width="40" align="absmiddle"> Linecard
+
+[![CI](https://github.com/paintballrefjosh/linecard/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/paintballrefjosh/linecard/actions/workflows/ci.yml)
 
 A terminal and remote-desktop client in the spirit of SecureCRT and PuTTY — SSH, Telnet, Serial, RDP and VNC — whose connection tree syncs across your computers with end-to-end encryption. Remote changes show up highlighted (green added, amber edited, red deleted) and any one of them can be reverted.
 

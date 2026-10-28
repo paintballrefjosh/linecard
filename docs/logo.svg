@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Linecard">
+  <!-- Same mark as the app icon and the sidebar brand: accent blue, SSH teal,
+       Telnet orange and a neutral square on the dark theme's tile. -->
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="#161b22" stroke="#2c3440" stroke-width="2"/>
+  <rect x="22" y="22" width="38" height="38" rx="9" fill="#6c9ef0"/>
+  <rect x="68" y="22" width="38" height="38" rx="9" fill="#3cc2b8"/>
+  <rect x="22" y="68" width="38" height="38" rx="9" fill="#ec9150"/>
+  <rect x="68" y="68" width="38" height="38" rx="9" fill="#b9c1cc"/>
+</svg>
