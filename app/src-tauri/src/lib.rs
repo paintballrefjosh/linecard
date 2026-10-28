@@ -1,8 +1,8 @@
 //! Tauri shell: exposes the Rust core to the UI as commands and events.
 //!
-//! Phase 1 status: the tree lives in memory (persistence via core-store and
-//! sync arrive with Phase 2); Telnet sessions are real; SSH and Serial
-//! drivers are next (see docs/roadmap.md).
+//! Phase 1 status: the tree lives in memory (persistence via core-store is
+//! next); SSH and Telnet sessions are real; Serial is next (see
+//! docs/roadmap.md).
 
 mod dto;
 
@@ -11,17 +11,18 @@ use std::sync::Mutex;
 
 use linecard_core_model::{Connection, ConnectionKind, Endpoint, Folder, Settings, Tree};
 use linecard_core_sync::{Hlc, Replica};
-use linecard_proto::{Session, TerminalTarget};
+use linecard_proto::{Session, SshOptions, TerminalTarget};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use dto::{ConnectionDraftDto, DeviceDto, SessionEventDto, SyncStateDto, TreeNodeDto};
+use dto::{ConnectionDraftDto, DeviceDto, PromptReplyDto, SessionEventDto, SyncStateDto, TreeNodeDto};
 
 struct AppState {
     device: String,
     tree: Mutex<Tree>,
     replica: Mutex<Replica>,
     sessions: Mutex<HashMap<String, Box<dyn Session>>>,
+    ssh: SshOptions,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -309,10 +310,50 @@ fn get_sync_state() -> SyncStateDto {
 
 // ---- sessions ----------------------------------------------------------------
 
-fn parse_host_port(endpoint: &str, kind: ConnectionKind) -> Option<(String, u16)> {
-    match endpoint.rsplit_once(':') {
-        Some((h, p)) if !h.is_empty() => Some((h.to_string(), p.parse().ok()?)),
-        _ => Some((endpoint.to_string(), kind.default_port()?)),
+/// Quick-connect endpoint: `[user@]host[:port]`, with `[v6addr]:port` for IPv6.
+fn parse_endpoint(endpoint: &str, kind: ConnectionKind) -> Option<(Option<String>, String, u16)> {
+    let (user, rest) = match endpoint.rsplit_once('@') {
+        Some((u, r)) if !u.is_empty() => (Some(u.to_string()), r),
+        _ => (None, endpoint),
+    };
+    let (host, port) = if let Some(v6) = rest.strip_prefix('[') {
+        let (h, tail) = v6.split_once(']')?;
+        (h, tail.strip_prefix(':'))
+    } else if rest.matches(':').count() == 1 {
+        let (h, p) = rest.split_once(':')?;
+        (h, Some(p))
+    } else {
+        (rest, None) // bare hostname, or a bare IPv6 address
+    };
+    if host.is_empty() {
+        return None;
+    }
+    let port = match port {
+        Some(p) => p.parse().ok()?,
+        None => kind.default_port()?,
+    };
+    Some((user, host.to_string(), port))
+}
+
+/// Where SSH keeps keys and trusted hosts. Linecard writes its own
+/// known_hosts and only reads the user's OpenSSH one.
+fn ssh_options(app: &AppHandle) -> SshOptions {
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(std::path::PathBuf::from);
+    let dot_ssh = home.map(|h| h.join(".ssh"));
+    let data = app
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::env::temp_dir().join("linecard"));
+    SshOptions {
+        known_hosts: data.join("known_hosts"),
+        extra_known_hosts: dot_ssh.iter().map(|d| d.join("known_hosts")).collect(),
+        identity_files: dot_ssh
+            .iter()
+            .flat_map(|d| ["id_ed25519", "id_ecdsa", "id_rsa"].map(|f| d.join(f)))
+            .collect(),
+        use_agent: true,
     }
 }
 
@@ -327,31 +368,43 @@ async fn open_session(
     rows: u16,
     on_event: Channel<SessionEventDto>,
 ) -> CmdResult<String> {
-    // Saved connections use their stored endpoint; quick-connect uses what the UI sent.
-    let (kind, host, port) = {
+    // Saved connections use their stored endpoint and inherited settings;
+    // quick-connect uses what the UI sent.
+    let target = {
         let tree = state.tree.lock().map_err(err)?;
         match tree.connection(&connection_id) {
-            Ok(c) => match &c.endpoint {
-                Endpoint::Network { host, port } => (c.kind, host.clone(), *port),
-                Endpoint::Serial(_) => return Err("Serial sessions arrive in the next Phase 1 milestone".into()),
-            },
+            Ok(c) => {
+                let Endpoint::Network { host, port } = &c.endpoint else {
+                    return Err("Serial sessions arrive in the next Phase 1 milestone".into());
+                };
+                let settings = tree.resolve(&c.id).map_err(err)?.settings;
+                let mut t = TerminalTarget::new(host.clone(), *port);
+                t.username = settings.username;
+                t.keepalive_secs = settings.keepalive_secs;
+                (c.kind, t)
+            }
             Err(_) => {
-                let (h, p) = parse_host_port(&endpoint, kind).ok_or("could not read host and port")?;
-                (kind, h, p)
+                let (user, host, port) = parse_endpoint(&endpoint, kind).ok_or("could not read host and port")?;
+                let mut t = TerminalTarget::new(host, port);
+                t.username = user;
+                t.keepalive_secs = tree.global.keepalive_secs;
+                (kind, t)
             }
         }
     };
-
-    let mut target = TerminalTarget::new(host, port);
+    let (kind, mut target) = target;
     target.cols = cols;
     target.rows = rows;
+    let ssh = state.ssh.clone();
     let sink: linecard_proto::EventSink = Box::new(move |e| {
         let _ = on_event.send(SessionEventDto::from(e));
     });
-    let session = tauri::async_runtime::spawn_blocking(move || linecard_proto::connect_terminal(kind, &target, sink))
-        .await
-        .map_err(err)?
-        .map_err(err)?;
+    // Telnet connects before returning; SSH returns at once and reports progress as events.
+    let session =
+        tauri::async_runtime::spawn_blocking(move || linecard_proto::connect_terminal(kind, &target, &ssh, sink))
+            .await
+            .map_err(err)?
+            .map_err(err)?;
 
     let id = new_id();
     state.sessions.lock().map_err(err)?.insert(id.clone(), session);
@@ -372,6 +425,14 @@ fn session_resize(state: State<AppState>, session_id: String, cols: u16, rows: u
     s.resize(cols, rows).map_err(err)
 }
 
+/// Answer a host-key or credential prompt.
+#[tauri::command]
+fn session_reply(state: State<AppState>, session_id: String, reply: PromptReplyDto) -> CmdResult<()> {
+    let mut sessions = state.sessions.lock().map_err(err)?;
+    let s = sessions.get_mut(&session_id).ok_or("session closed")?;
+    s.reply(reply.into()).map_err(err)
+}
+
 #[tauri::command]
 fn session_close(state: State<AppState>, session_id: String) -> CmdResult<()> {
     if let Some(mut s) = state.sessions.lock().map_err(err)?.remove(&session_id) {
@@ -382,17 +443,18 @@ fn session_close(state: State<AppState>, session_id: String) -> CmdResult<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let device = new_id();
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .manage(AppState {
-            replica: Mutex::new(Replica::new(device.clone())),
-            device,
-            tree: Mutex::new(starter_tree()),
-            sessions: Mutex::new(HashMap::new()),
-        })
         .setup(|app| {
+            let device = new_id();
+            app.manage(AppState {
+                replica: Mutex::new(Replica::new(device.clone())),
+                device,
+                tree: Mutex::new(starter_tree()),
+                sessions: Mutex::new(HashMap::new()),
+                ssh: ssh_options(app.handle()),
+            });
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_title("Linecard");
             }
@@ -415,6 +477,7 @@ pub fn run() {
             open_session,
             session_write,
             session_resize,
+            session_reply,
             session_close,
         ])
         .run(tauri::generate_context!())
@@ -437,12 +500,23 @@ mod tests {
     }
 
     #[test]
-    fn host_port_parsing() {
+    fn endpoint_parsing() {
+        let p = |s| parse_endpoint(s, ConnectionKind::Ssh);
+        assert_eq!(p("sw1:2222"), Some((None, "sw1".into(), 2222)));
+        assert_eq!(p("admin@10.0.0.1"), Some((Some("admin".into()), "10.0.0.1".into(), 22)));
+        assert_eq!(p("admin@sw1:2222"), Some((Some("admin".into()), "sw1".into(), 2222)));
+        assert_eq!(p("[fe80::1]:2222"), Some((None, "fe80::1".into(), 2222)));
         assert_eq!(
-            parse_host_port("sw1:2222", ConnectionKind::Ssh),
-            Some(("sw1".into(), 2222))
+            p("fe80::1"),
+            Some((None, "fe80::1".into(), 22)),
+            "bare IPv6, default port"
         );
-        assert_eq!(parse_host_port("sw1", ConnectionKind::Telnet), Some(("sw1".into(), 23)));
+        assert_eq!(p("sw1:notaport"), None);
+        assert_eq!(p(""), None);
+        assert_eq!(
+            parse_endpoint("cs1", ConnectionKind::Telnet),
+            Some((None, "cs1".into(), 23))
+        );
     }
 
     fn draft(kind: ConnectionKind) -> ConnectionDraftDto {

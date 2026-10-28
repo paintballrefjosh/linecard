@@ -236,22 +236,111 @@ pub enum SyncStateDto {
 }
 
 #[derive(Clone, Serialize)]
-#[serde(tag = "event", rename_all = "lowercase")]
+#[serde(rename_all = "camelCase")]
+pub struct KnownHostsLineDto {
+    pub path: String,
+    pub line: usize,
+}
+
+#[derive(Clone, Serialize)]
+pub struct PromptFieldDto {
+    pub label: String,
+    pub echo: bool,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(tag = "event", rename_all = "camelCase")]
 pub enum SessionEventDto {
     Connected,
-    Data { data: Vec<u8> },
-    Title { title: String },
-    Disconnected { reason: Option<String> },
+    Data {
+        data: Vec<u8>,
+    },
+    Title {
+        title: String,
+    },
+    /// `changed` is set when a different key is on record.
+    HostKey {
+        host: String,
+        port: u16,
+        algorithm: String,
+        fingerprint: String,
+        changed: Option<KnownHostsLineDto>,
+    },
+    Auth {
+        title: String,
+        instructions: String,
+        fields: Vec<PromptFieldDto>,
+    },
+    Disconnected {
+        reason: Option<String>,
+    },
 }
 
 impl From<linecard_proto::SessionEvent> for SessionEventDto {
     fn from(e: linecard_proto::SessionEvent) -> Self {
-        use linecard_proto::SessionEvent as E;
+        use linecard_proto::{HostKeyStatus, SessionEvent as E};
         match e {
             E::Connected => SessionEventDto::Connected,
             E::Data(data) => SessionEventDto::Data { data },
             E::Title(title) => SessionEventDto::Title { title },
+            E::HostKey(k) => SessionEventDto::HostKey {
+                host: k.host,
+                port: k.port,
+                algorithm: k.algorithm,
+                fingerprint: k.fingerprint,
+                changed: match k.status {
+                    HostKeyStatus::Unknown => None,
+                    HostKeyStatus::Changed { known_hosts, line } => Some(KnownHostsLineDto {
+                        path: known_hosts.display().to_string(),
+                        line,
+                    }),
+                },
+            },
+            E::Auth(p) => SessionEventDto::Auth {
+                title: p.title,
+                instructions: p.instructions,
+                fields: p
+                    .fields
+                    .into_iter()
+                    .map(|f| PromptFieldDto {
+                        label: f.label,
+                        echo: f.echo,
+                    })
+                    .collect(),
+            },
             E::Disconnected { reason } => SessionEventDto::Disconnected { reason },
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HostKeyDecisionDto {
+    AcceptAndSave,
+    AcceptOnce,
+    Reject,
+}
+
+/// The UI's answer to a `hostKey` or `auth` event.
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum PromptReplyDto {
+    HostKey { decision: HostKeyDecisionDto },
+    Fields { values: Vec<String> },
+    Cancel,
+}
+
+impl From<PromptReplyDto> for linecard_proto::PromptReply {
+    fn from(r: PromptReplyDto) -> Self {
+        use linecard_proto::{HostKeyDecision as D, PromptReply as R};
+        match r {
+            PromptReplyDto::HostKey { decision } => R::HostKey(match decision {
+                HostKeyDecisionDto::AcceptAndSave => D::AcceptAndSave,
+                HostKeyDecisionDto::AcceptOnce => D::AcceptOnce,
+                HostKeyDecisionDto::Reject => D::Reject,
+            }),
+            PromptReplyDto::Fields { values } => R::Fields(values),
+            PromptReplyDto::Cancel => R::Cancel,
         }
     }
 }

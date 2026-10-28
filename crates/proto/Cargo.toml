@@ -7,9 +7,12 @@ license.workspace = true
 
 [dependencies]
 linecard-core-model = { workspace = true }
+tokio = { workspace = true }
+# `ring` instead of the default aws-lc-rs backend: no CMake/NASM needed to
+# build on Windows, and ring is already in the tree via rustls.
+russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2"] }
 
 # Added as each driver lands (see docs/roadmap.md):
-# russh = "0.5x"          # proto-ssh
 # serialport = "4"        # serial
 # ironrdp = "..."         # RDP on macOS/Linux
 # windows = { version = "...", features = [...] }  # native RDP ActiveX host on Windows

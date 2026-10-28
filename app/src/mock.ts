@@ -174,6 +174,9 @@ export function mockBackend(): Backend {
     if (hit) delete hit.node.change;
   };
 
+  /** Endpoints whose host key was saved this run (the mock's known_hosts). */
+  const trustedHosts = new Set<string>();
+
   // Fields the tree nodes don't carry, as the Rust side stores them.
   const extra = new Map<string, { username: string | null; notes: string; serial: SerialSettings | null }>();
   const newId = () => `m-${Math.random().toString(36).slice(2, 9)}`;
@@ -251,7 +254,8 @@ export function mockBackend(): Backend {
       if (hit?.node.type !== "connection") throw new Error("connection not found");
       const n = hit.node;
       const x = extra.get(id);
-      const [host, port] = n.kind === "serial" ? ["", 0] : [n.endpoint.replace(/:\d+$/, ""), Number(n.endpoint.split(":").pop())];
+      const [host, port] =
+        n.kind === "serial" ? ["", 0] : [n.endpoint.replace(/:\d+$/, ""), Number(n.endpoint.split(":").pop())];
       const [com, baud] = n.endpoint.split(" ");
       return {
         id,
@@ -316,14 +320,51 @@ export function mockBackend(): Backend {
       const host = node.name;
       const prompt = `${host.split(" ")[0]}# `;
       let line = "";
-      setTimeout(() => {
+      const connect = () => {
         onEvent({ event: "connected" });
         send(
           `\x1b[2mDemo session (browser preview). Real ${node.kind.toUpperCase()} sessions run in the desktop app.\x1b[0m\r\n\r\n`,
         );
         send(prompt);
-      }, 250);
+      };
+      // SSH walks through the same prompts as the real driver: host key on
+      // first contact, then a password ("wrong" is refused).
+      const [hostname] = node.endpoint.split(":");
+      const askPassword = () =>
+        onEvent({
+          event: "auth",
+          title: `Password for admin@${hostname}`,
+          instructions: "",
+          fields: [{ label: "Password", echo: false }],
+        });
+      if (node.kind === "ssh") {
+        setTimeout(() => {
+          if (trustedHosts.has(node.endpoint)) return askPassword();
+          onEvent({
+            event: "hostKey",
+            host: hostname,
+            port: Number(node.endpoint.split(":")[1] ?? 22),
+            algorithm: "ssh-ed25519",
+            fingerprint: "SHA256:iVxAQiFJZeZYlU9KKfVhxXsCjnnmVyysNOGExA17hCU",
+            changed: node.id === "spine02" ? { path: "C:\\Users\\you\\.ssh\\known_hosts", line: 14 } : null,
+          });
+        }, 300);
+      } else setTimeout(connect, 250);
+      let closed = false;
       return {
+        reply(r) {
+          if (closed) return;
+          if (r.type === "cancel" || (r.type === "hostKey" && r.decision === "reject")) {
+            closed = true;
+            onEvent({ event: "disconnected", reason: r.type === "cancel" ? "canceled" : "host key not accepted" });
+          } else if (r.type === "hostKey") {
+            if (r.decision === "acceptAndSave") trustedHosts.add(node.endpoint);
+            setTimeout(askPassword, 200);
+          } else if (r.values[0] === "wrong" || !r.values[0]) {
+            send("\x1b[31mAccess denied\x1b[0m\r\n");
+            setTimeout(askPassword, 200);
+          } else setTimeout(connect, 200);
+        },
         write(data) {
           for (const ch of data) {
             if (ch === "\r") {

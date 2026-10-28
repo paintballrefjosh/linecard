@@ -12,11 +12,12 @@ Phase 1 scaffold. What works today:
 | --- | --- |
 | Object model: folders, connections, inherited settings | Done, tested (`crates/core-model`) |
 | Sync engine core: HLC clocks, op log, per-field merge, revert, change tracking | Done, tested (`crates/core-sync`) |
+| SSH driver: password, keyboard-interactive, agent, key files, host-key checks, legacy algorithms | Done, tested end to end (`crates/proto/tests/ssh.rs`) |
 | Telnet driver with option negotiation (NAWS, TTYPE, ECHO, SGA) | Done, tested (`crates/proto`) |
 | SecureCRT importer | Done, tested (`crates/importers`) |
 | Local SQLite store | Written, not yet wired into the app |
 | UI: tree with change highlighting + hover cards, tabs, six layouts, themes, Devices page, quick connect, updater | Written; runs against a mock backend in the browser |
-| SSH, Serial, RDP, VNC drivers; sync transports; relay accounts | Next — see [docs/roadmap.md](docs/roadmap.md) |
+| Serial, RDP, VNC drivers; sync transports; relay accounts | Next — see [docs/roadmap.md](docs/roadmap.md) |
 
 ## Layout
 

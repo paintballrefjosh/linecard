@@ -93,10 +93,43 @@ export type SyncState =
   | { state: "offline"; pending: number }
   | { state: "error"; message: string };
 
+export interface PromptField {
+  label: string;
+  /** false = secret (password) */
+  echo: boolean;
+}
+
+/** The server's host key needs a decision (first connection, or it changed). */
+export interface HostKeyEvent {
+  event: "hostKey";
+  host: string;
+  port: number;
+  algorithm: string;
+  /** "SHA256:…" */
+  fingerprint: string;
+  /** Set when a different key is on record. */
+  changed: { path: string; line: number } | null;
+}
+
+/** Credentials requested (password, keyboard-interactive, username). */
+export interface AuthEvent {
+  event: "auth";
+  title: string;
+  instructions: string;
+  fields: PromptField[];
+}
+
 export type SessionEvent =
   | { event: "connected" }
   | { event: "data"; data: number[] }
   | { event: "title"; title: string }
+  | HostKeyEvent
+  | AuthEvent
   | { event: "disconnected"; reason: string | null };
+
+export type HostKeyDecision = "acceptAndSave" | "acceptOnce" | "reject";
+
+export type PromptReply =
+  { type: "hostKey"; decision: HostKeyDecision } | { type: "fields"; values: string[] } | { type: "cancel" };
 
 export type LayoutId = "1" | "2v" | "2h" | "3c" | "1+2" | "4";

@@ -1,12 +1,13 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { getBackend, type SessionHandle } from "../api";
 import { terminalThemes, type Theme } from "../theme";
-import type { ConnectionNode } from "../types";
+import type { AuthEvent, ConnectionNode, HostKeyEvent, PromptReply } from "../types";
 import { KindIcon, kindLabel } from "./icons";
+import { SessionPrompt } from "./SessionPrompt";
 
 export type SessionStatus = "connecting" | "connected" | "disconnected";
 
@@ -27,6 +28,17 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
   statusRef.current = onStatus;
   const outputRef = useRef(onOutput);
   outputRef.current = onOutput;
+  const [prompt, setPrompt] = useState<HostKeyEvent | AuthEvent | null>(null);
+  const sessionRef = useRef<SessionHandle | null>(null);
+  /** An answer given before openSession resolved; sent once it does. */
+  const pendingReply = useRef<PromptReply | null>(null);
+
+  const reply = (r: PromptReply) => {
+    setPrompt(null);
+    if (sessionRef.current) sessionRef.current.reply(r);
+    else pendingReply.current = r;
+    term.current?.focus();
+  };
 
   useEffect(() => {
     if (!host.current) return;
@@ -52,6 +64,7 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
     let session: SessionHandle | null = null;
     let disposed = false;
     statusRef.current("connecting");
+    t.write(`\x1b[2mConnecting to ${conn.endpoint}…\x1b[0m\r\n`);
 
     getBackend()
       .then((b) =>
@@ -59,18 +72,28 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
           if (e.event === "data") {
             t.write(new Uint8Array(e.data));
             outputRef.current?.();
-          }
-          else if (e.event === "connected") statusRef.current("connected");
-          else if (e.event === "title") document.title = `${e.title} · Linecard`;
+          } else if (e.event === "hostKey" || e.event === "auth") {
+            setPrompt(e);
+            outputRef.current?.();
+          } else if (e.event === "connected") {
+            setPrompt(null);
+            statusRef.current("connected");
+          } else if (e.event === "title") document.title = `${e.title} · Linecard`;
           else if (e.event === "disconnected") {
+            setPrompt(null);
             statusRef.current("disconnected");
             t.write(`\r\n\x1b[2m[Disconnected${e.reason ? `: ${e.reason}` : ""}]\x1b[0m\r\n`);
           }
         }),
       )
       .then((s) => {
-        if (disposed) s.close();
-        else session = s;
+        if (disposed) return s.close();
+        session = s;
+        sessionRef.current = s;
+        if (pendingReply.current) {
+          s.reply(pendingReply.current);
+          pendingReply.current = null;
+        }
       })
       .catch((err) => {
         statusRef.current("disconnected");
@@ -112,6 +135,7 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
   return (
     <div className="terminal-pane">
       <div className="terminal-host" ref={host} />
+      {prompt && <SessionPrompt prompt={prompt} onReply={reply} />}
     </div>
   );
 }

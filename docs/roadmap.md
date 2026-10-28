@@ -10,9 +10,10 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 - [x] SecureCRT importer
 - [x] UI shell: tree, tabs, six layouts, themes, Devices page, quick connect, updater hook
 - [ ] Wire `core-store` into the app (persist the tree via the op log)
-- [ ] SSH driver (`russh`): password, keys, agent (Windows OpenSSH / Pageant), host-key verification, jump hosts
-- [ ] Serial driver (`serialport`): port picker, presets, BREAK; XMODEM/YMODEM
-- [ ] Connection editor dialog with inherited values shown
+- [x] SSH driver (`russh`): password, keyboard-interactive, agent (Windows OpenSSH / Pageant), unencrypted key files, host-key verification with known_hosts, legacy algorithms for older gear
+- [ ] SSH: passphrase-protected keys, jump hosts, reconnect
+- [x] Connection editor dialog
+- [ ] Show inherited values in the connection editor
 - [ ] Credential vault on the OS keychain
 - [ ] Session logging and keyword highlighting
 - [ ] mRemoteNG, SuperPuTTY, PuTTY, ssh_config importers + import preview wizard

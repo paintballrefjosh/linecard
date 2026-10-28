@@ -1109,6 +1109,7 @@ select {
 /* The padding lives on the outer pane: FitAddon measures the host's computed
    size, which would include padding under border-box and overflow the panel. */
 .terminal-pane {
+  position: relative;
   height: 100%;
   overflow: hidden;
   padding: 6px 0 0 8px;
@@ -1119,6 +1120,104 @@ select {
 }
 .terminal-host {
   height: 100%;
+}
+
+/* ---- session prompts (host key, password) --------------------------------- */
+
+.session-prompt {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(8 12 18 / 0.55);
+}
+.prompt-card {
+  width: min(440px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 16px 18px 14px;
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--bg-main);
+  color: var(--text);
+  box-shadow: var(--shadow-pop);
+  font-family: var(--font-ui);
+}
+.prompt-card.is-danger {
+  border-top-color: var(--chg-deleted);
+}
+.prompt-card h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.prompt-card h2 svg {
+  flex: none;
+  color: var(--accent);
+}
+.prompt-card.is-danger h2 svg {
+  color: var(--chg-deleted);
+}
+.prompt-card p {
+  margin: 0 0 12px;
+  color: var(--text-quiet);
+}
+.prompt-card p b {
+  color: var(--text);
+  font-weight: 600;
+}
+.prompt-instructions {
+  white-space: pre-wrap;
+}
+.fingerprint {
+  margin: 0 0 14px;
+  padding: 8px 10px;
+  border-radius: var(--radius-s);
+  background: var(--bg-side);
+  border: 1px solid var(--line);
+}
+.fingerprint dt {
+  font-size: 11px;
+  color: var(--text-quiet);
+}
+.fingerprint dd {
+  margin: 2px 0 0;
+}
+.fingerprint code {
+  font: 12.5px var(--font-mono);
+  word-break: break-all;
+  user-select: all;
+}
+.prompt-field {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.prompt-field span {
+  color: var(--text-quiet);
+}
+.prompt-field input {
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--bg-side);
+}
+.prompt-field input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 .terminal-host .xterm {
   height: 100%;

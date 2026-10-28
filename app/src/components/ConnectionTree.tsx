@@ -184,11 +184,7 @@ function Row({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
           <KindIcon kind={d.kind} />
         </>
       )}
-      {node.isEditing ? (
-        <RenameInput node={node} />
-      ) : (
-        <span className="tree-name">{d.name}</span>
-      )}
+      {node.isEditing ? <RenameInput node={node} /> : <span className="tree-name">{d.name}</span>}
       {d.type === "connection" && !node.isEditing && <span className="tree-endpoint">{d.endpoint}</span>}
       {change && (
         <span className="chg-glyph" aria-label={changeLabel[change.kind]}>
@@ -254,7 +250,12 @@ export function ConnectionTree({ tree, actions, onOpen, onAck, onAckAll, onRever
       ];
     }
     const d = n.data;
-    const rename: MenuItem = { label: "Rename", icon: <TextCursorInput size={15} />, shortcut: "F2", onSelect: () => n.edit() };
+    const rename: MenuItem = {
+      label: "Rename",
+      icon: <TextCursorInput size={15} />,
+      shortcut: "F2",
+      onSelect: () => n.edit(),
+    };
     const del: MenuItem = {
       label: "Delete",
       icon: <Trash2 size={15} />,

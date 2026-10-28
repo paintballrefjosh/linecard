@@ -1,9 +1,11 @@
-import type { ConnectionDraft, ConnectionNode, Device, SessionEvent, SyncState, TreeNode } from "./types";
+import type { ConnectionDraft, ConnectionNode, Device, PromptReply, SessionEvent, SyncState, TreeNode } from "./types";
 import { mockBackend } from "./mock";
 
 export interface SessionHandle {
   write(data: string): void;
   resize(cols: number, rows: number): void;
+  /** Answer a hostKey / auth event. */
+  reply(r: PromptReply): void;
   close(): void;
 }
 
@@ -75,6 +77,7 @@ async function tauriBackend(): Promise<Backend> {
       return {
         write: (data) => void invoke("session_write", { sessionId, data: Array.from(encoder.encode(data)) }),
         resize: (cols, rows) => void invoke("session_resize", { sessionId, cols, rows }),
+        reply: (reply) => void invoke("session_reply", { sessionId, reply }),
         close: () => void invoke("session_close", { sessionId }),
       };
     },
