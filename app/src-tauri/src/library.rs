@@ -91,6 +91,15 @@ impl Library {
         &self.tree
     }
 
+    /// Per-device value that never syncs (UI preferences, window state).
+    pub fn local_setting(&self, key: &str) -> Result<Option<String>> {
+        self.store.setting(key).map_err(err)
+    }
+
+    pub fn set_local_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.store.set_setting(key, value).map_err(err)
+    }
+
     /// Remote changes awaiting acknowledgement on this device.
     pub fn changes(&self) -> &ChangeTracker {
         &self.replica.changes

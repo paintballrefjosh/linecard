@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import type { DockviewApi } from "dockview";
-import { Download, Laptop, ListTree, Monitor, Moon, Sun } from "lucide-react";
+import { Download, Laptop, ListTree, Monitor, Moon, Settings as SettingsIcon, Sun } from "lucide-react";
 import { getBackend, type Backend } from "./api";
 import { useTheme, type ThemePref } from "./theme";
 import { useUpdater } from "./updater";
+import { PrefsContext, defaultPrefs, withDefaults, type Preferences } from "./prefs";
 import type { ConnectionDraft, ConnectionKind, ConnectionNode, Device, LayoutId, SyncState, TreeNode } from "./types";
 import { ConnectionEditor, blankDraft } from "./components/ConnectionEditor";
 import { ConnectionTree, relativeTime, type TreeActions } from "./components/ConnectionTree";
 import { DevicesPage, versionMismatch } from "./components/DevicesPage";
 import { LayoutPicker, layoutShortcut } from "./components/LayoutPicker";
+import { SettingsPage } from "./components/SettingsPage";
 import { SidebarResizer, useSidebarWidth } from "./components/SidebarResizer";
 import { Workspace, applyLayout, openConnection } from "./components/Workspace";
 
-type View = "connections" | "devices";
+type View = "connections" | "devices" | "settings";
 
 /** "ssh admin@10.0.0.1:2222", "telnet cs1 2005", "COM3 9600" → ad-hoc connection. */
 export function parseQuickConnect(input: string): ConnectionNode | null {
@@ -65,6 +67,21 @@ export default function App() {
   const dock = useRef<DockviewApi | null>(null);
   const [sidebarWidth, setSidebarWidth] = useSidebarWidth();
   const [editing, setEditing] = useState<ConnectionDraft | null>(null);
+  const [prefs, setPrefs] = useState<Preferences>(defaultPrefs);
+
+  const prefsValue = useMemo(
+    () => ({
+      prefs,
+      update(patch: Partial<Preferences>) {
+        setPrefs((cur) => {
+          const next = { ...cur, ...patch };
+          void backend?.setPreferences(next);
+          return next;
+        });
+      },
+    }),
+    [prefs, backend],
+  );
 
   const treeActions = useMemo<TreeActions | null>(
     () =>
@@ -91,6 +108,7 @@ export default function App() {
     getBackend().then((b) => {
       setBackend(b);
       b.appVersion().then(setVersion);
+      b.getPreferences().then((p) => setPrefs(withDefaults(p)));
       refresh(b);
       unsub = b.onTreeChanged(() => refresh(b));
     });
@@ -135,114 +153,125 @@ export default function App() {
   const ThemeIcon = pref === "system" ? Monitor : pref === "light" ? Sun : Moon;
 
   return (
-    <div className="app" style={{ "--sidebar-w": `${sidebarWidth}px` } as CSSProperties}>
-      <nav className="rail" aria-label="Views">
-        <button
-          className={view === "connections" ? "is-active" : ""}
-          onClick={() => setView("connections")}
-          title="Connections"
-          aria-label="Connections"
-        >
-          <ListTree size={20} />
-        </button>
-        <button
-          className={view === "devices" ? "is-active" : ""}
-          onClick={() => setView("devices")}
-          title="Devices"
-          aria-label="Devices"
-        >
-          <Laptop size={20} />
-          {mismatch && <span className="rail-dot" aria-label="Version mismatch" />}
-        </button>
-        <div className="rail-spacer" />
-        <button
-          onClick={() => setPref(themeCycle[pref])}
-          title={`Theme: ${pref}`}
-          aria-label={`Theme: ${pref}. Change theme`}
-        >
-          <ThemeIcon size={18} />
-        </button>
-      </nav>
+    <PrefsContext.Provider value={prefsValue}>
+      <div className="app" style={{ "--sidebar-w": `${sidebarWidth}px` } as CSSProperties}>
+        <nav className="rail" aria-label="Views">
+          <button
+            className={view === "connections" ? "is-active" : ""}
+            onClick={() => setView("connections")}
+            title="Connections"
+            aria-label="Connections"
+          >
+            <ListTree size={20} />
+          </button>
+          <button
+            className={view === "devices" ? "is-active" : ""}
+            onClick={() => setView("devices")}
+            title="Devices"
+            aria-label="Devices"
+          >
+            <Laptop size={20} />
+            {mismatch && <span className="rail-dot" aria-label="Version mismatch" />}
+          </button>
+          <div className="rail-spacer" />
+          <button
+            onClick={() => setPref(themeCycle[pref])}
+            title={`Theme: ${pref}`}
+            aria-label={`Theme: ${pref}. Change theme`}
+          >
+            <ThemeIcon size={18} />
+          </button>
+          <button
+            className={view === "settings" ? "is-active" : ""}
+            onClick={() => setView("settings")}
+            title="Settings"
+            aria-label="Settings"
+          >
+            <SettingsIcon size={19} />
+          </button>
+        </nav>
 
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-            <i />
-          </span>
-          Linecard
-        </div>
-        {backend && treeActions && (
-          <ConnectionTree
-            tree={tree}
-            actions={treeActions}
-            onOpen={open}
-            onAck={(id) => backend.ackChange(id)}
-            onAckAll={() => backend.ackAll()}
-            onRevert={(op) => backend.revert(op)}
-            onMove={(id, parent, index) => backend.moveNode(id, parent, index)}
+        <aside className="sidebar">
+          <div className="brand">
+            <span className="brand-mark" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+              <i />
+            </span>
+            Linecard
+          </div>
+          {backend && treeActions && (
+            <ConnectionTree
+              tree={tree}
+              actions={treeActions}
+              onOpen={open}
+              onAck={(id) => backend.ackChange(id)}
+              onAckAll={() => backend.ackAll()}
+              onRevert={(op) => backend.revert(op)}
+              onMove={(id, parent, index) => backend.moveNode(id, parent, index)}
+            />
+          )}
+          <SidebarResizer width={sidebarWidth} onChange={setSidebarWidth} />
+        </aside>
+
+        {editing && backend && (
+          <ConnectionEditor
+            initial={editing}
+            location={folderPath(tree, editing.folderId)}
+            onSave={async (d) => void (await backend.saveConnection(d))}
+            onClose={() => setEditing(null)}
           />
         )}
-        <SidebarResizer width={sidebarWidth} onChange={setSidebarWidth} />
-      </aside>
 
-      {editing && backend && (
-        <ConnectionEditor
-          initial={editing}
-          location={folderPath(tree, editing.folderId)}
-          onSave={async (d) => void (await backend.saveConnection(d))}
-          onClose={() => setEditing(null)}
-        />
-      )}
+        <main className="main">
+          <header className="toolbar">
+            <form className={`quick-connect ${quickError ? "has-error" : ""}`} onSubmit={submitQuick}>
+              <input
+                value={quick}
+                onChange={(e) => {
+                  setQuick(e.target.value);
+                  setQuickError(false);
+                }}
+                placeholder="Quick connect: ssh admin@10.0.0.1, telnet cs1 2005, COM3 9600"
+                aria-label="Quick connect"
+                aria-invalid={quickError}
+              />
+            </form>
+            <LayoutPicker value={layout} onChange={changeLayout} />
+          </header>
 
-      <main className="main">
-        <header className="toolbar">
-          <form className={`quick-connect ${quickError ? "has-error" : ""}`} onSubmit={submitQuick}>
-            <input
-              value={quick}
-              onChange={(e) => {
-                setQuick(e.target.value);
-                setQuickError(false);
-              }}
-              placeholder="Quick connect: ssh admin@10.0.0.1, telnet cs1 2005, COM3 9600"
-              aria-label="Quick connect"
-              aria-invalid={quickError}
-            />
-          </form>
-          <LayoutPicker value={layout} onChange={changeLayout} />
-        </header>
-
-        <div className="content">
-          <div className="workspace-wrap" hidden={view !== "connections"}>
-            <Workspace
-              theme={theme}
-              onReady={(api) => {
-                dock.current = api;
-              }}
-            />
+          <div className="content">
+            <div className="workspace-wrap" hidden={view !== "connections"}>
+              <Workspace
+                theme={theme}
+                onReady={(api) => {
+                  dock.current = api;
+                }}
+              />
+            </div>
+            {view === "devices" && <DevicesPage devices={devices} />}
+            {view === "settings" && <SettingsPage theme={pref} onTheme={setPref} />}
           </div>
-          {view === "devices" && <DevicesPage devices={devices} />}
-        </div>
 
-        <footer className="statusbar">
-          <SyncStatus sync={sync} />
-          {mismatch && (
-            <button className="status-link warn" onClick={() => setView("devices")}>
-              Devices on different versions
-            </button>
-          )}
-          <span className="status-spacer" />
-          {update && (
-            <button className="status-link accent" onClick={() => update.installAndRestart()} title={update.notes}>
-              <Download size={13} /> Update {update.version} ready — restart to install
-            </button>
-          )}
-          <span className="status-version">v{version}</span>
-        </footer>
-      </main>
-    </div>
+          <footer className="statusbar">
+            <SyncStatus sync={sync} />
+            {mismatch && (
+              <button className="status-link warn" onClick={() => setView("devices")}>
+                Devices on different versions
+              </button>
+            )}
+            <span className="status-spacer" />
+            {update && (
+              <button className="status-link accent" onClick={() => update.installAndRestart()} title={update.notes}>
+                <Download size={13} /> Update {update.version} ready — restart to install
+              </button>
+            )}
+            <span className="status-version">v{version}</span>
+          </footer>
+        </main>
+      </div>
+    </PrefsContext.Provider>
   );
 }
 

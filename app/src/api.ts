@@ -1,5 +1,6 @@
 import type { ConnectionDraft, ConnectionNode, Device, PromptReply, SessionEvent, SyncState, TreeNode } from "./types";
 import { mockBackend } from "./mock";
+import type { Preferences } from "./prefs";
 
 export interface SessionHandle {
   write(data: string): void;
@@ -30,6 +31,11 @@ export interface Backend {
   deleteNode(id: string): Promise<void>;
   /** Returns the copy's id. */
   duplicateConnection(id: string): Promise<string>;
+  /** This device's stored preferences (null on first run). */
+  getPreferences(): Promise<Partial<Preferences> | null>;
+  setPreferences(p: Preferences): Promise<void>;
+  clipboardRead(): Promise<string>;
+  clipboardWrite(text: string): Promise<void>;
   /** Open a session. Saved connections are looked up by id; quick-connect
    *  entries (not in the tree) are opened from `kind` + `endpoint`. */
   openSession(
@@ -47,6 +53,7 @@ async function tauriBackend(): Promise<Backend> {
   const { invoke, Channel } = await import("@tauri-apps/api/core");
   const { listen } = await import("@tauri-apps/api/event");
   const { getVersion } = await import("@tauri-apps/api/app");
+  const clipboard = import("@tauri-apps/plugin-clipboard-manager");
 
   return {
     appVersion: () => getVersion(),
@@ -63,6 +70,11 @@ async function tauriBackend(): Promise<Backend> {
     renameNode: (id, name) => invoke("rename_node", { id, name }),
     deleteNode: (id) => invoke("delete_node", { id }),
     duplicateConnection: (id) => invoke<string>("duplicate_connection", { id }),
+    getPreferences: () => invoke<Partial<Preferences> | null>("get_preferences"),
+    setPreferences: (preferences) => invoke("set_preferences", { preferences }),
+    // The clipboard plugin: WebView2 can refuse navigator.clipboard reads.
+    clipboardRead: async () => (await clipboard).readText().catch(() => ""),
+    clipboardWrite: async (text) => (await clipboard).writeText(text),
     async openSession(conn, size, onEvent) {
       const channel = new Channel<SessionEvent>();
       channel.onmessage = onEvent;

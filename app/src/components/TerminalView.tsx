@@ -6,8 +6,11 @@ import "@xterm/xterm/css/xterm.css";
 import { getBackend, type SessionHandle } from "../api";
 import { terminalThemes, type Theme } from "../theme";
 import type { AuthEvent, ConnectionNode, HostKeyEvent, PromptReply } from "../types";
+import { ClipboardPaste, Copy, Eraser, TextSelect } from "lucide-react";
+import { pasteLineCount, usePrefs } from "../prefs";
+import { ContextMenu } from "./ContextMenu";
 import { KindIcon, kindLabel } from "./icons";
-import { SessionPrompt } from "./SessionPrompt";
+import { PasteConfirm, SessionPrompt } from "./SessionPrompt";
 
 export type SessionStatus = "connecting" | "connected" | "disconnected";
 
@@ -33,10 +36,34 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
   /** An answer given before openSession resolved; sent once it does. */
   const pendingReply = useRef<PromptReply | null>(null);
 
+  const { prefs } = usePrefs();
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
+  /** Multi-line text waiting for the user to confirm the paste. */
+  const [pending, setPending] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+
   const reply = (r: PromptReply) => {
     setPrompt(null);
     if (sessionRef.current) sessionRef.current.reply(r);
     else pendingReply.current = r;
+    term.current?.focus();
+  };
+
+  /** Every paste (right-click, keys, menu, Ctrl+V) comes through here. */
+  const pasteText = (text: string) => {
+    if (!text || !term.current) return;
+    if (prefsRef.current.confirmMultilinePaste && pasteLineCount(text) > 1) setPending(text);
+    else term.current.paste(text);
+  };
+  const pasteClipboard = () => void getBackend().then((b) => b.clipboardRead().then(pasteText));
+  const copySelection = () => {
+    const text = term.current?.getSelection();
+    if (text) void getBackend().then((b) => b.clipboardWrite(text));
+  };
+  const finishPaste = (ok: boolean) => {
+    if (ok && pending) term.current?.paste(pending);
+    setPending(null);
     term.current?.focus();
   };
 
@@ -101,6 +128,39 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
       });
 
     const input = t.onData((d) => session?.write(d));
+
+    // Copy on select: wait for the drag to settle rather than copying every step.
+    let copyTimer = 0;
+    const selection = t.onSelectionChange(() => {
+      window.clearTimeout(copyTimer);
+      if (!prefsRef.current.copyOnSelect || !t.hasSelection()) return;
+      copyTimer = window.setTimeout(copySelection, 150);
+    });
+    t.attachCustomKeyEventHandler((e) => {
+      const copyKey = (e.ctrlKey && e.shiftKey && e.code === "KeyC") || (e.ctrlKey && e.key === "Insert");
+      const pasteKey = (e.ctrlKey && e.shiftKey && e.code === "KeyV") || (e.shiftKey && e.key === "Insert");
+      if (!copyKey && !pasteKey) return true;
+      if (e.type === "keydown") {
+        e.preventDefault();
+        if (copyKey) copySelection();
+        else pasteClipboard();
+      }
+      return false;
+    });
+    // Ctrl+V and other native pastes: route through the same confirm step.
+    const el = host.current;
+    const onPaste = (e: ClipboardEvent) => {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      pasteText(e.clipboardData?.getData("text/plain") ?? "");
+    };
+    const onContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      if (prefsRef.current.rightClick === "paste") pasteClipboard();
+      else setMenu({ x: e.clientX, y: e.clientY });
+    };
+    el.addEventListener("paste", onPaste, true);
+    el.addEventListener("contextmenu", onContextMenu);
     const resize = t.onResize(({ cols, rows }) => session?.resize(cols, rows));
     // Refit once per frame, never synchronously inside the observer callback.
     let frame = 0;
@@ -119,7 +179,11 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
     return () => {
       disposed = true;
       cancelAnimationFrame(frame);
+      window.clearTimeout(copyTimer);
       ro.disconnect();
+      el.removeEventListener("paste", onPaste, true);
+      el.removeEventListener("contextmenu", onContextMenu);
+      selection.dispose();
       input.dispose();
       resize.dispose();
       session?.close();
@@ -136,6 +200,31 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
     <div className="terminal-pane">
       <div className="terminal-host" ref={host} />
       {prompt && <SessionPrompt prompt={prompt} onReply={reply} />}
+      {pending !== null && <PasteConfirm text={pending} onDone={finishPaste} />}
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          label="Terminal"
+          onClose={() => {
+            setMenu(null);
+            term.current?.focus();
+          }}
+          items={[
+            {
+              label: "Copy",
+              icon: <Copy size={15} />,
+              shortcut: "Ctrl+Shift+C",
+              disabled: !term.current?.hasSelection(),
+              onSelect: copySelection,
+            },
+            { label: "Paste", icon: <ClipboardPaste size={15} />, shortcut: "Ctrl+Shift+V", onSelect: pasteClipboard },
+            "separator",
+            { label: "Select all", icon: <TextSelect size={15} />, onSelect: () => term.current?.selectAll() },
+            { label: "Clear scrollback", icon: <Eraser size={15} />, onSelect: () => term.current?.clear() },
+          ]}
+        />
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { KeyRound, ShieldAlert, ShieldQuestion } from "lucide-react";
+import { ClipboardPaste, KeyRound, ShieldAlert, ShieldQuestion } from "lucide-react";
+import { pasteLineCount } from "../prefs";
 import type { AuthEvent, HostKeyEvent, PromptReply } from "../types";
 
 /** Shown over a terminal while its session waits for the user. Lives in the
@@ -18,6 +19,42 @@ export function SessionPrompt({
       ) : (
         <AuthCard prompt={prompt} onReply={onReply} />
       )}
+    </div>
+  );
+}
+
+/** Multi-line paste preview, so a stray clipboard can't run a batch of
+ *  commands on a device. Enter pastes, Escape cancels. */
+export function PasteConfirm({ text, onDone }: { text: string; onDone(ok: boolean): void }) {
+  const ok = useRef<HTMLButtonElement>(null);
+  useEffect(() => ok.current?.focus(), []);
+  const lines = pasteLineCount(text);
+  return (
+    <div className="session-prompt" role="presentation">
+      <div
+        className="prompt-card"
+        role="alertdialog"
+        aria-labelledby="paste-title"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onDone(false);
+        }}
+      >
+        <h2 id="paste-title">
+          <ClipboardPaste size={18} />
+          Paste {lines} lines?
+        </h2>
+        <pre className="paste-preview" tabIndex={0} aria-label="Text to paste">
+          {text}
+        </pre>
+        <div className="prompt-actions">
+          <button className="btn" onClick={() => onDone(false)}>
+            Cancel
+          </button>
+          <button ref={ok} className="btn btn-primary" onClick={() => onDone(true)}>
+            Paste
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

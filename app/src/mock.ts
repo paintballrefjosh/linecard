@@ -176,6 +176,8 @@ export function mockBackend(): Backend {
 
   /** Endpoints whose host key was saved this run (the mock's known_hosts). */
   const trustedHosts = new Set<string>();
+  /** Used when the browser denies clipboard access (e.g. automated previews). */
+  let memClipboard = "";
 
   // Fields the tree nodes don't carry, as the Rust side stores them.
   const extra = new Map<string, { username: string | null; notes: string; serial: SerialSettings | null }>();
@@ -314,6 +316,31 @@ export function mockBackend(): Backend {
       if (x) extra.set(copy.id, structuredClone(x));
       emit();
       return copy.id;
+    },
+    async getPreferences() {
+      try {
+        return JSON.parse(localStorage.getItem("linecard.prefs") ?? "null");
+      } catch {
+        return null;
+      }
+    },
+    async setPreferences(p) {
+      try {
+        localStorage.setItem("linecard.prefs", JSON.stringify(p));
+      } catch {
+        /* storage unavailable: keep in memory only */
+      }
+    },
+    async clipboardRead() {
+      try {
+        return await navigator.clipboard.readText();
+      } catch {
+        return memClipboard;
+      }
+    },
+    async clipboardWrite(text) {
+      memClipboard = text;
+      await navigator.clipboard.writeText(text).catch(() => {});
     },
     async openSession(node, _size, onEvent): Promise<SessionHandle> {
       const send = (s: string) => onEvent({ event: "data", data: Array.from(new TextEncoder().encode(s)) });

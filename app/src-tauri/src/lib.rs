@@ -267,6 +267,27 @@ fn revert_op(app: AppHandle, state: State<AppState>, op_id: String) -> CmdResult
     Ok(())
 }
 
+// ---- preferences -------------------------------------------------------------
+
+const PREFERENCES_KEY: &str = "preferences";
+
+/// This device's UI preferences as the UI stored them (defaults live in the
+/// UI), or null on first run.
+#[tauri::command]
+fn get_preferences(state: State<AppState>) -> CmdResult<Option<serde_json::Value>> {
+    let raw = state.lib.lock().map_err(err)?.local_setting(PREFERENCES_KEY)?;
+    Ok(raw.and_then(|s| serde_json::from_str(&s).ok()))
+}
+
+#[tauri::command]
+fn set_preferences(state: State<AppState>, preferences: serde_json::Value) -> CmdResult<()> {
+    state
+        .lib
+        .lock()
+        .map_err(err)?
+        .set_local_setting(PREFERENCES_KEY, &preferences.to_string())
+}
+
 // ---- devices & sync ----------------------------------------------------------
 
 #[tauri::command]
@@ -431,6 +452,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let data = app.path().app_data_dir()?;
             let lib = Library::open(&data.join("library.db"), seed_starter)
@@ -457,6 +479,8 @@ pub fn run() {
             ack_change,
             ack_all,
             revert_op,
+            get_preferences,
+            set_preferences,
             get_devices,
             get_sync_state,
             open_session,
