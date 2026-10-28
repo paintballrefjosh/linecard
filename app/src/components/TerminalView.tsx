@@ -6,7 +6,7 @@ import "@xterm/xterm/css/xterm.css";
 import { getBackend, type SessionHandle } from "../api";
 import { terminalThemes, type Theme } from "../theme";
 import type { AuthEvent, ConnectionNode, HostKeyEvent, PromptReply } from "../types";
-import { ClipboardPaste, Copy, Eraser, TextSelect } from "lucide-react";
+import { ClipboardPaste, Copy, Eraser, RotateCw, TextSelect } from "lucide-react";
 import { pasteLineCount, usePrefs } from "../prefs";
 import { ContextMenu } from "./ContextMenu";
 import { KindIcon, kindLabel } from "./icons";
@@ -42,6 +42,13 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
   /** Multi-line text waiting for the user to confirm the paste. */
   const [pending, setPending] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [status, setStatus] = useState<SessionStatus>("connecting");
+  const report = (st: SessionStatus) => {
+    setStatus(st);
+    statusRef.current(st);
+  };
+  /** Reconnect if the session has ended (set by the session effect). */
+  const reconnectRef = useRef<() => void>(() => {});
 
   const reply = (r: PromptReply) => {
     setPrompt(null);
@@ -90,44 +97,75 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
 
     let session: SessionHandle | null = null;
     let disposed = false;
-    statusRef.current("connecting");
-    t.write(`\x1b[2mConnecting to ${conn.endpoint}…\x1b[0m\r\n`);
+    /** True between a disconnect and the next connect: Enter reconnects. */
+    let ended = false;
+    /** Each attempt gets a number so late events from an old one are ignored. */
+    let attempt = 0;
 
-    getBackend()
-      .then((b) =>
-        b.openSession(conn, { cols: t.cols, rows: t.rows }, (e) => {
-          if (e.event === "data") {
-            t.write(new Uint8Array(e.data));
-            outputRef.current?.();
-          } else if (e.event === "hostKey" || e.event === "auth") {
-            setPrompt(e);
-            outputRef.current?.();
-          } else if (e.event === "connected") {
-            setPrompt(null);
-            statusRef.current("connected");
-          } else if (e.event === "title") document.title = `${e.title} · Linecard`;
-          else if (e.event === "disconnected") {
-            setPrompt(null);
-            statusRef.current("disconnected");
-            t.write(`\r\n\x1b[2m[Disconnected${e.reason ? `: ${e.reason}` : ""}]\x1b[0m\r\n`);
+    const ended_ = (reason: string | null) => {
+      ended = true;
+      setPrompt(null);
+      report("disconnected");
+      const why = reason ? `: ${reason}` : "";
+      t.write(`\r\n\x1b[2m[Disconnected${why}] Press Enter to reconnect.\x1b[0m\r\n`);
+    };
+
+    const start = () => {
+      const mine = ++attempt;
+      ended = false;
+      report("connecting");
+      t.write(`\x1b[2mConnecting to ${conn.endpoint}…\x1b[0m\r\n`);
+      getBackend()
+        .then((b) =>
+          b.openSession(conn, { cols: t.cols, rows: t.rows }, (e) => {
+            if (mine !== attempt) return;
+            if (e.event === "data") {
+              t.write(new Uint8Array(e.data));
+              outputRef.current?.();
+            } else if (e.event === "hostKey" || e.event === "auth") {
+              setPrompt(e);
+              outputRef.current?.();
+            } else if (e.event === "connected") {
+              setPrompt(null);
+              report("connected");
+            } else if (e.event === "title") document.title = `${e.title} · Linecard`;
+            else if (e.event === "disconnected") {
+              // Free the backend's handle; this attempt is over.
+              session?.close();
+              session = null;
+              sessionRef.current = null;
+              ended_(e.reason);
+            }
+          }),
+        )
+        .then((s) => {
+          if (disposed || mine !== attempt) return s.close();
+          if (ended) return s.close(); // it already dropped
+          session = s;
+          sessionRef.current = s;
+          if (pendingReply.current) {
+            s.reply(pendingReply.current);
+            pendingReply.current = null;
           }
-        }),
-      )
-      .then((s) => {
-        if (disposed) return s.close();
-        session = s;
-        sessionRef.current = s;
-        if (pendingReply.current) {
-          s.reply(pendingReply.current);
-          pendingReply.current = null;
-        }
-      })
-      .catch((err) => {
-        statusRef.current("disconnected");
-        t.write(`\x1b[31mCould not connect: ${err}\x1b[0m\r\n`);
-      });
+        })
+        .catch((err) => {
+          if (mine !== attempt) return;
+          t.write(`\x1b[31mCould not connect: ${err}\x1b[0m`);
+          ended_(null);
+        });
+    };
+    reconnectRef.current = () => {
+      if (ended) start();
+    };
+    start();
 
-    const input = t.onData((d) => session?.write(d));
+    const input = t.onData((d) => {
+      if (ended) {
+        if (d === "\r") start();
+        return;
+      }
+      session?.write(d);
+    });
 
     // Copy on select: wait for the drag to settle rather than copying every step.
     let copyTimer = 0;
@@ -220,6 +258,12 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
             },
             { label: "Paste", icon: <ClipboardPaste size={15} />, shortcut: "Ctrl+Shift+V", onSelect: pasteClipboard },
             "separator",
+            {
+              label: "Reconnect",
+              icon: <RotateCw size={15} />,
+              disabled: status !== "disconnected",
+              onSelect: () => reconnectRef.current(),
+            },
             { label: "Select all", icon: <TextSelect size={15} />, onSelect: () => term.current?.selectAll() },
             { label: "Clear scrollback", icon: <Eraser size={15} />, onSelect: () => term.current?.clear() },
           ]}

@@ -417,6 +417,10 @@ export function mockBackend(): Backend {
               const cmd = line.trim();
               line = "";
               send("\r\n");
+              if (cmd === "exit") {
+                onEvent({ event: "disconnected", reason: null });
+                return;
+              }
               if (cmd === "show version") send("Linecard demo OS, Version 0.1.0\r\nUptime is 42 days\r\n");
               else if (cmd === "show int status") {
                 send(
