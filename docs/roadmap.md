@@ -9,7 +9,7 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 - [x] Telnet driver
 - [x] SecureCRT importer
 - [x] UI shell: tree, tabs, six layouts, themes, Devices page, quick connect, updater hook
-- [ ] Wire `core-store` into the app (persist the tree via the op log)
+- [x] Wire `core-store` into the app: every edit is an op in SQLite; the tree is projected from the replica; stable device id
 - [x] SSH driver (`russh`): password, keyboard-interactive, agent (Windows OpenSSH / Pageant), unencrypted key files, host-key verification with known_hosts, legacy algorithms for older gear
 - [ ] SSH: passphrase-protected keys, jump hosts, reconnect
 - [x] Connection editor dialog

@@ -5,12 +5,14 @@
 //! docs/roadmap.md).
 
 mod dto;
+mod library;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use library::{now_ms, Library};
 use linecard_core_model::{Connection, ConnectionKind, Endpoint, Folder, Settings, Tree};
-use linecard_core_sync::{Hlc, Replica};
+use linecard_core_sync::Hlc;
 use linecard_proto::{Session, SshOptions, TerminalTarget};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -18,9 +20,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use dto::{ConnectionDraftDto, DeviceDto, PromptReplyDto, SessionEventDto, SyncStateDto, TreeNodeDto};
 
 struct AppState {
-    device: String,
-    tree: Mutex<Tree>,
-    replica: Mutex<Replica>,
+    /// Connections and folders, persisted as an op log (see library.rs).
+    lib: Mutex<Library>,
     sessions: Mutex<HashMap<String, Box<dyn Session>>>,
     ssh: SshOptions,
 }
@@ -46,13 +47,6 @@ fn decode_op_id(s: &str) -> Option<Hlc> {
     })
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
 fn new_id() -> String {
     uuid::Uuid::now_v7().to_string()
 }
@@ -62,11 +56,8 @@ fn notify_tree_changed(app: &AppHandle) {
 }
 
 /// First-run content so the app isn't empty.
-fn starter_tree() -> Tree {
-    let mut tree = Tree::new(Settings {
-        keepalive_secs: Some(30),
-        ..Default::default()
-    });
+fn seed_starter(tree: &mut Tree) {
+    tree.global.keepalive_secs = Some(30);
     let folder = new_id();
     tree.add_folder(Folder {
         id: folder.clone(),
@@ -92,16 +83,22 @@ fn starter_tree() -> Tree {
         tags: vec![],
     })
     .expect("starter connection");
-    tree
+}
+
+/// Run a tree edit through the library (which records it as ops) and tell
+/// the UI to refresh.
+fn edit<T>(app: &AppHandle, state: &AppState, f: impl FnOnce(&mut Tree) -> CmdResult<T>) -> CmdResult<T> {
+    let out = state.lib.lock().map_err(err)?.edit(f)?;
+    notify_tree_changed(app);
+    Ok(out)
 }
 
 // ---- tree --------------------------------------------------------------------
 
 #[tauri::command]
 fn get_tree(state: State<AppState>) -> CmdResult<Vec<TreeNodeDto>> {
-    let tree = state.tree.lock().map_err(err)?;
-    let replica = state.replica.lock().map_err(err)?;
-    Ok(dto::tree_dto(&tree, &replica.changes, None))
+    let lib = state.lib.lock().map_err(err)?;
+    Ok(dto::tree_dto(lib.tree(), lib.changes(), None))
 }
 
 #[tauri::command]
@@ -112,38 +109,34 @@ fn move_node(
     parent_id: Option<String>,
     index: usize,
 ) -> CmdResult<()> {
-    let mut tree = state.tree.lock().map_err(err)?;
-    let parent = parent_id.as_deref();
-    let is_folder = tree.folder(&id).is_ok();
-    if is_folder {
-        tree.move_folder(&id, parent).map_err(err)?;
-    } else {
-        tree.move_connection(&id, parent).map_err(err)?;
-    }
-    // Renumber siblings of the same type so `index` is respected.
-    let mut siblings: Vec<String> = if is_folder {
-        tree.child_folders(parent).iter().map(|f| f.id.clone()).collect()
-    } else {
-        tree.child_connections(parent).iter().map(|c| c.id.clone()).collect()
-    };
-    siblings.retain(|s| s != &id);
-    // The UI index counts folders before connections.
-    let offset = if is_folder { 0 } else { tree.child_folders(parent).len() };
-    siblings.insert(index.saturating_sub(offset).min(siblings.len()), id);
-    for (i, sid) in siblings.iter().enumerate() {
+    edit(&app, &state, |tree| {
+        let parent = parent_id.as_deref();
+        let is_folder = tree.folder(&id).is_ok();
         if is_folder {
-            tree.folder_mut(sid).map_err(err)?.order = i as f64;
+            tree.move_folder(&id, parent).map_err(err)?;
         } else {
-            tree.connection_mut(sid).map_err(err)?.order = i as f64;
+            tree.move_connection(&id, parent).map_err(err)?;
         }
-    }
-    drop(tree);
-    notify_tree_changed(&app);
-    Ok(())
+        // Renumber siblings of the same type so `index` is respected.
+        let mut siblings: Vec<String> = if is_folder {
+            tree.child_folders(parent).iter().map(|f| f.id.clone()).collect()
+        } else {
+            tree.child_connections(parent).iter().map(|c| c.id.clone()).collect()
+        };
+        siblings.retain(|s| s != &id);
+        // The UI index counts folders before connections.
+        let offset = if is_folder { 0 } else { tree.child_folders(parent).len() };
+        siblings.insert(index.saturating_sub(offset).min(siblings.len()), id.clone());
+        for (i, sid) in siblings.iter().enumerate() {
+            if is_folder {
+                tree.folder_mut(sid).map_err(err)?.order = i as f64;
+            } else {
+                tree.connection_mut(sid).map_err(err)?.order = i as f64;
+            }
+        }
+        Ok(())
+    })
 }
-
-// Phase 2: these edit the tree directly; once the replica is the source of
-// truth each becomes an op (create / update / delete) that syncs.
 
 /// Sort key that places a new item after its siblings.
 fn next_order(orders: impl Iterator<Item = f64>) -> f64 {
@@ -156,37 +149,35 @@ fn create_folder(app: AppHandle, state: State<AppState>, parent_id: Option<Strin
     if name.is_empty() {
         return Err("Folder name is required".into());
     }
-    let mut tree = state.tree.lock().map_err(err)?;
-    let order = next_order(tree.child_folders(parent_id.as_deref()).iter().map(|f| f.order));
-    let id = new_id();
-    tree.add_folder(Folder {
-        id: id.clone(),
-        name: name.into(),
-        parent: parent_id,
-        order,
-        color: None,
-        defaults: Settings::default(),
+    edit(&app, &state, |tree| {
+        let order = next_order(tree.child_folders(parent_id.as_deref()).iter().map(|f| f.order));
+        let id = new_id();
+        tree.add_folder(Folder {
+            id: id.clone(),
+            name: name.into(),
+            parent: parent_id,
+            order,
+            color: None,
+            defaults: Settings::default(),
+        })
+        .map_err(err)?;
+        Ok(id)
     })
-    .map_err(err)?;
-    drop(tree);
-    notify_tree_changed(&app);
-    Ok(id)
 }
 
 #[tauri::command]
 fn get_connection(state: State<AppState>, id: String) -> CmdResult<ConnectionDraftDto> {
-    let tree = state.tree.lock().map_err(err)?;
-    Ok(tree.connection(&id).map_err(err)?.into())
+    let lib = state.lib.lock().map_err(err)?;
+    Ok(lib.tree().connection(&id).map_err(err)?.into())
 }
 
 /// Create (`draft.id` is None) or update a connection. Returns its id.
 #[tauri::command]
 fn save_connection(app: AppHandle, state: State<AppState>, draft: ConnectionDraftDto) -> CmdResult<String> {
-    let mut tree = state.tree.lock().map_err(err)?;
-    let id = match &draft.id {
+    edit(&app, &state, |tree| match &draft.id {
         Some(id) => {
             draft.apply_to(tree.connection_mut(id).map_err(err)?)?;
-            id.clone()
+            Ok(id.clone())
         }
         None => {
             let folder = draft.folder_id.as_deref();
@@ -204,12 +195,9 @@ fn save_connection(app: AppHandle, state: State<AppState>, draft: ConnectionDraf
             draft.apply_to(&mut conn)?;
             let id = conn.id.clone();
             tree.add_connection(conn).map_err(err)?;
-            id
+            Ok(id)
         }
-    };
-    drop(tree);
-    notify_tree_changed(&app);
-    Ok(id)
+    })
 }
 
 #[tauri::command]
@@ -218,68 +206,63 @@ fn rename_node(app: AppHandle, state: State<AppState>, id: String, name: String)
     if name.is_empty() {
         return Err("Name is required".into());
     }
-    let mut tree = state.tree.lock().map_err(err)?;
-    match tree.folder_mut(&id) {
-        Ok(f) => f.name = name.into(),
-        Err(_) => tree.connection_mut(&id).map_err(err)?.name = name.into(),
-    }
-    drop(tree);
-    notify_tree_changed(&app);
-    Ok(())
+    edit(&app, &state, |tree| {
+        match tree.folder_mut(&id) {
+            Ok(f) => f.name = name.into(),
+            Err(_) => tree.connection_mut(&id).map_err(err)?.name = name.into(),
+        }
+        Ok(())
+    })
 }
 
 /// Delete a connection, or a folder with everything in it.
 #[tauri::command]
 fn delete_node(app: AppHandle, state: State<AppState>, id: String) -> CmdResult<()> {
-    let mut tree = state.tree.lock().map_err(err)?;
-    if tree.folder(&id).is_ok() {
-        tree.remove_folder(&id).map_err(err)?;
-    } else {
-        tree.remove_connection(&id).map_err(err)?;
-    }
-    drop(tree);
-    notify_tree_changed(&app);
-    Ok(())
+    edit(&app, &state, |tree| {
+        if tree.folder(&id).is_ok() {
+            tree.remove_folder(&id).map_err(err)?;
+        } else {
+            tree.remove_connection(&id).map_err(err)?;
+        }
+        Ok(())
+    })
 }
 
 /// Copy a connection, placed right after the original. Returns the copy's id.
 #[tauri::command]
 fn duplicate_connection(app: AppHandle, state: State<AppState>, id: String) -> CmdResult<String> {
-    let mut tree = state.tree.lock().map_err(err)?;
-    let mut copy = tree.connection(&id).map_err(err)?.clone();
-    copy.id = new_id();
-    copy.name = format!("{} (copy)", copy.name);
-    copy.order += 0.5;
-    let copy_id = copy.id.clone();
-    tree.add_connection(copy).map_err(err)?;
-    drop(tree);
-    notify_tree_changed(&app);
-    Ok(copy_id)
+    edit(&app, &state, |tree| {
+        let mut copy = tree.connection(&id).map_err(err)?.clone();
+        copy.id = new_id();
+        copy.name = format!("{} (copy)", copy.name);
+        copy.order += 0.5;
+        let copy_id = copy.id.clone();
+        tree.add_connection(copy).map_err(err)?;
+        Ok(copy_id)
+    })
 }
 
 // ---- change tracking -------------------------------------------------------
 
 #[tauri::command]
 fn ack_change(app: AppHandle, state: State<AppState>, object_id: String) -> CmdResult<()> {
-    state.replica.lock().map_err(err)?.changes.ack(&object_id);
+    state.lib.lock().map_err(err)?.changes_mut().ack(&object_id);
     notify_tree_changed(&app);
     Ok(())
 }
 
 #[tauri::command]
 fn ack_all(app: AppHandle, state: State<AppState>) -> CmdResult<()> {
-    state.replica.lock().map_err(err)?.changes.ack_all();
+    state.lib.lock().map_err(err)?.changes_mut().ack_all();
     notify_tree_changed(&app);
     Ok(())
 }
 
+/// Undo one change with a new op (which syncs, and can itself be reverted).
 #[tauri::command]
 fn revert_op(app: AppHandle, state: State<AppState>, op_id: String) -> CmdResult<()> {
     let id = decode_op_id(&op_id).ok_or("bad op id")?;
-    let mut replica = state.replica.lock().map_err(err)?;
-    let _op = replica.revert(&id, now_ms()).map_err(err)?;
-    // Phase 2: push `_op` to the sync transport and project the replica onto the tree.
-    drop(replica);
+    state.lib.lock().map_err(err)?.revert(&id)?;
     notify_tree_changed(&app);
     Ok(())
 }
@@ -287,9 +270,10 @@ fn revert_op(app: AppHandle, state: State<AppState>, op_id: String) -> CmdResult
 // ---- devices & sync ----------------------------------------------------------
 
 #[tauri::command]
-fn get_devices(app: AppHandle, state: State<AppState>) -> Vec<DeviceDto> {
-    vec![DeviceDto {
-        id: state.device.clone(),
+fn get_devices(app: AppHandle, state: State<AppState>) -> CmdResult<Vec<DeviceDto>> {
+    let device = state.lib.lock().map_err(err)?.device().to_string();
+    Ok(vec![DeviceDto {
+        id: device,
         name: std::env::var("COMPUTERNAME")
             .or_else(|_| std::env::var("HOSTNAME"))
             .unwrap_or_else(|_| "This computer".into()),
@@ -300,7 +284,7 @@ fn get_devices(app: AppHandle, state: State<AppState>) -> Vec<DeviceDto> {
         transport: "relay".into(),
         pending_ops: 0,
         is_this_device: true,
-    }]
+    }])
 }
 
 #[tauri::command]
@@ -371,7 +355,8 @@ async fn open_session(
     // Saved connections use their stored endpoint and inherited settings;
     // quick-connect uses what the UI sent.
     let target = {
-        let tree = state.tree.lock().map_err(err)?;
+        let lib = state.lib.lock().map_err(err)?;
+        let tree = lib.tree();
         match tree.connection(&connection_id) {
             Ok(c) => {
                 let Endpoint::Network { host, port } = &c.endpoint else {
@@ -447,11 +432,11 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            let device = new_id();
+            let data = app.path().app_data_dir()?;
+            let lib = Library::open(&data.join("library.db"), seed_starter)
+                .map_err(|e| format!("could not open the connection library: {e}"))?;
             app.manage(AppState {
-                replica: Mutex::new(Replica::new(device.clone())),
-                device,
-                tree: Mutex::new(starter_tree()),
+                lib: Mutex::new(lib),
                 sessions: Mutex::new(HashMap::new()),
                 ssh: ssh_options(app.handle()),
             });
@@ -536,7 +521,8 @@ mod tests {
 
     #[test]
     fn drafts_validate_and_round_trip() {
-        let tree = starter_tree();
+        let mut tree = Tree::default();
+        seed_starter(&mut tree);
         let mut conn = tree.connections().next().unwrap().clone();
 
         draft(ConnectionKind::Ssh).apply_to(&mut conn).unwrap();

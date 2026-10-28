@@ -15,7 +15,7 @@ Phase 1 scaffold. What works today:
 | SSH driver: password, keyboard-interactive, agent, key files, host-key checks, legacy algorithms | Done, tested end to end (`crates/proto/tests/ssh.rs`) |
 | Telnet driver with option negotiation (NAWS, TTYPE, ECHO, SGA) | Done, tested (`crates/proto`) |
 | SecureCRT importer | Done, tested (`crates/importers`) |
-| Local SQLite store | Written, not yet wired into the app |
+| Local persistence: edits recorded as ops in SQLite, tree rebuilt from them on start | Done, tested (`app/src-tauri/src/library.rs`) |
 | UI: tree with change highlighting + hover cards, tabs, six layouts, themes, Devices page, quick connect, updater | Written; runs against a mock backend in the browser |
 | Serial, RDP, VNC drivers; sync transports; relay accounts | Next — see [docs/roadmap.md](docs/roadmap.md) |
 
