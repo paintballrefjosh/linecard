@@ -4,7 +4,10 @@
 
 use linecard_core_model::{ConnectionKind, Endpoint};
 
+pub mod mremoteng;
+pub mod putty;
 pub mod securecrt;
+pub mod ssh_config;
 
 /// One connection found in the source.
 #[derive(Debug, Clone, PartialEq)]

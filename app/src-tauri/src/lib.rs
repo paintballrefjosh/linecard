@@ -5,6 +5,7 @@
 //! docs/roadmap.md).
 
 mod dto;
+mod import;
 mod library;
 mod logging;
 
@@ -292,6 +293,28 @@ fn set_preferences(state: State<AppState>, preferences: serde_json::Value) -> Cm
         .lock()
         .map_err(err)?
         .set_local_setting(PREFERENCES_KEY, &preferences.to_string())
+}
+
+// ---- import ----------------------------------------------------------------
+
+#[tauri::command]
+fn import_sources() -> Vec<import::ImportSourceDto> {
+    import::sources()
+}
+
+/// What an import would add, without changing anything.
+#[tauri::command]
+async fn import_preview(source: String, path: Option<String>) -> CmdResult<import::ImportPreviewDto> {
+    tauri::async_runtime::spawn_blocking(move || import::load(&source, path.as_deref()).map(|i| import::preview(&i)))
+        .await
+        .map_err(err)?
+}
+
+/// Import into a new top-level folder; returns its id.
+#[tauri::command]
+fn import_apply(app: AppHandle, state: State<AppState>, source: String, path: Option<String>) -> CmdResult<String> {
+    let data = import::load(&source, path.as_deref())?;
+    edit(&app, &state, |tree| import::apply(tree, &data, new_id))
 }
 
 // ---- session logging defaults ----------------------------------------------------
@@ -666,6 +689,9 @@ pub fn run() {
             set_preferences,
             list_saved_passwords,
             get_logging,
+            import_sources,
+            import_preview,
+            import_apply,
             set_logging,
             forget_saved_password,
             get_devices,

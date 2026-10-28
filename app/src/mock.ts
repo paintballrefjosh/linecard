@@ -358,8 +358,58 @@ export function mockBackend(): Backend {
     async forgetSavedPassword(key) {
       savedPasswords.delete(key.replace(/^ssh:/, ""));
     },
+    async importSources() {
+      return [
+        {
+          id: "securecrt",
+          label: "SecureCRT",
+          path: "C:\\Users\\you\\AppData\\Roaming\\VanDyke\\Config\\Sessions",
+          found: true,
+          hint: "The Config\Sessions folder",
+        },
+        { id: "putty", label: "PuTTY", path: null, found: false, hint: "Saved sessions are read from the registry" },
+        { id: "mremoteng", label: "mRemoteNG", path: null, found: false, hint: "confCons.xml (unencrypted)" },
+        {
+          id: "ssh_config",
+          label: "OpenSSH config",
+          path: "C:\\Users\\you\\.ssh\\config",
+          found: true,
+          hint: "Usually ~/.ssh/config",
+        },
+      ];
+    },
+    async importPreview(source) {
+      if (source === "putty") throw new Error("no PuTTY sessions found");
+      return {
+        summary: "3 sessions in 2 folders, 1 warning",
+        warnings: ["Skipped 'modem': TAPI sessions are not supported"],
+        rows: [
+          { folder: "DC2", name: "core1", kind: "ssh", endpoint: "10.30.0.1:22", username: "netadmin" },
+          { folder: "DC2 / Edge", name: "edge1", kind: "ssh", endpoint: "10.30.9.1:22", username: null },
+          { folder: "", name: "cs2", kind: "telnet", endpoint: "10.30.99.5:2003", username: null },
+        ],
+      };
+    },
+    async importApply(source) {
+      const id = newId();
+      const conn = (name: string, endpoint: string): ConnectionNode => ({
+        type: "connection",
+        id: newId(),
+        name,
+        kind: "ssh",
+        endpoint,
+      });
+      tree.push({
+        type: "folder",
+        id,
+        name: source === "ssh_config" ? "Imported from ssh_config" : "Imported from SecureCRT",
+        children: [{ type: "folder", id: newId(), name: "DC2", children: [conn("core1", "10.30.0.1:22")] }],
+      });
+      emit();
+      return id;
+    },
     async getLogging() {
-      return { ...logging, defaultFolder: "C:\Users\you\Documents\Linecard Logs" };
+      return { ...logging, defaultFolder: "C:\\Users\\you\\Documents\\Linecard Logs" };
     },
     async setLogging(l) {
       logging = { enabled: l.enabled, folder: l.folder, timestamps: l.timestamps };

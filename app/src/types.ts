@@ -158,3 +158,20 @@ export interface LoggingSettings {
   timestamps: boolean;
   defaultFolder?: string | null;
 }
+
+export type ImportSourceId = "securecrt" | "putty" | "mremoteng" | "ssh_config";
+
+export interface ImportSource {
+  id: ImportSourceId;
+  label: string;
+  /** Default location; null for the registry (PuTTY). */
+  path: string | null;
+  found: boolean;
+  hint: string;
+}
+
+export interface ImportPreview {
+  summary: string;
+  warnings: string[];
+  rows: { folder: string; name: string; kind: ConnectionKind; endpoint: string; username: string | null }[];
+}

@@ -2,6 +2,9 @@ import type {
   ConnectionDraft,
   ConnectionNode,
   Device,
+  ImportPreview,
+  ImportSource,
+  ImportSourceId,
   LoggingSettings,
   PromptReply,
   SavedPassword,
@@ -48,6 +51,10 @@ export interface Backend {
   setPreferences(p: Preferences): Promise<void>;
   listSavedPasswords(): Promise<SavedPassword[]>;
   forgetSavedPassword(key: string): Promise<void>;
+  importSources(): Promise<ImportSource[]>;
+  importPreview(source: ImportSourceId, path: string | null): Promise<ImportPreview>;
+  /** Returns the id of the new "Imported from …" folder. */
+  importApply(source: ImportSourceId, path: string | null): Promise<string>;
   getLogging(): Promise<LoggingSettings>;
   setLogging(l: LoggingSettings): Promise<void>;
   /** Serial ports present right now. */
@@ -92,6 +99,9 @@ async function tauriBackend(): Promise<Backend> {
     setPreferences: (preferences) => invoke("set_preferences", { preferences }),
     listSavedPasswords: () => invoke<SavedPassword[]>("list_saved_passwords"),
     forgetSavedPassword: (key) => invoke("forget_saved_password", { key }),
+    importSources: () => invoke<ImportSource[]>("import_sources"),
+    importPreview: (source, path) => invoke<ImportPreview>("import_preview", { source, path }),
+    importApply: (source, path) => invoke<string>("import_apply", { source, path }),
     getLogging: () => invoke<LoggingSettings>("get_logging"),
     setLogging: (logging) => invoke("set_logging", { logging }),
     listSerialPorts: () => invoke("list_serial_ports"),

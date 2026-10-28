@@ -17,6 +17,7 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   Copy,
+  FileInput,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -40,6 +41,7 @@ export interface TreeActions {
   rename(id: string, name: string): Promise<void>;
   remove(id: string): Promise<void>;
   duplicate(id: string): Promise<string>;
+  importConnections(): void;
 }
 
 interface Props {
@@ -244,6 +246,8 @@ export function ConnectionTree({ tree, actions, onOpen, onAck, onAckAll, onRever
     if (!n) {
       return [
         ...create(null),
+        "separator",
+        { label: "Import connections…", icon: <FileInput size={15} />, onSelect: actions.importConnections },
         "separator",
         { label: "Expand all", icon: <ChevronsUpDown size={15} />, onSelect: () => treeApi.current?.openAll() },
         { label: "Collapse all", icon: <ChevronsDownUp size={15} />, onSelect: () => treeApi.current?.closeAll() },

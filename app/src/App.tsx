@@ -7,6 +7,7 @@ import { useUpdater } from "./updater";
 import { PrefsContext, defaultPrefs, withDefaults, type Preferences } from "./prefs";
 import type { ConnectionDraft, ConnectionKind, ConnectionNode, Device, LayoutId, SyncState, TreeNode } from "./types";
 import { ConnectionEditor, blankDraft } from "./components/ConnectionEditor";
+import { ImportDialog } from "./components/ImportDialog";
 import { ConnectionTree, relativeTime, type TreeActions } from "./components/ConnectionTree";
 import { DevicesPage, versionMismatch } from "./components/DevicesPage";
 import { LayoutPicker, layoutShortcut } from "./components/LayoutPicker";
@@ -73,6 +74,7 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useSidebarWidth();
   const [editing, setEditing] = useState<ConnectionDraft | null>(null);
   const [prefs, setPrefs] = useState<Preferences>(defaultPrefs);
+  const [importing, setImporting] = useState(false);
 
   const prefsValue = useMemo(
     () => ({
@@ -97,6 +99,7 @@ export default function App() {
         rename: (id, name) => backend.renameNode(id, name),
         remove: (id) => backend.deleteNode(id),
         duplicate: (id) => backend.duplicateConnection(id),
+        importConnections: () => setImporting(true),
       },
     [backend],
   );
@@ -219,6 +222,8 @@ export default function App() {
           )}
           <SidebarResizer width={sidebarWidth} onChange={setSidebarWidth} />
         </aside>
+
+        {importing && <ImportDialog onClose={() => setImporting(false)} onImported={() => setView("connections")} />}
 
         {editing && backend && (
           <ConnectionEditor

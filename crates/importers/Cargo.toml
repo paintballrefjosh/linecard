@@ -7,5 +7,7 @@ license.workspace = true
 
 [dependencies]
 linecard-core-model = { workspace = true }
-# For the XML-based importers (mRemoteNG confCons.xml, SuperPuTTY Sessions.xml):
-# roxmltree = "0.20"
+roxmltree = "0.20"   # mRemoteNG confCons.xml
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"      # PuTTY keeps sessions in the registry
