@@ -32,6 +32,7 @@ export function blankDraft(folderId: string | null): ConnectionDraft {
     username: null,
     tabColor: null,
     jumpHost: null,
+    log: null,
     notes: "",
   };
 }
@@ -247,6 +248,17 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
           spellCheck={false}
           autoComplete="off"
         />
+
+        <label htmlFor="ce-log">Session log</label>
+        <select
+          id="ce-log"
+          value={d.log === null ? "" : d.log ? "on" : "off"}
+          onChange={(e) => set({ log: e.target.value === "" ? null : e.target.value === "on" })}
+        >
+          <option value="">From folder or Settings</option>
+          <option value="on">Always log this connection</option>
+          <option value="off">Never log this connection</option>
+        </select>
 
         <span className="form-label">Tab color</span>
         <div className="swatches" role="radiogroup" aria-label="Tab color">

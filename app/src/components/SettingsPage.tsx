@@ -1,8 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { X } from "lucide-react";
 import { getBackend } from "../api";
+import { colorFor, defaultRules, type HighlightColor, type HighlightRule } from "../highlight";
 import type { ThemePref } from "../theme";
 import { usePrefs } from "../prefs";
-import type { SavedPassword } from "../types";
+import type { LoggingSettings, SavedPassword } from "../types";
 import { relativeTime } from "./ConnectionTree";
 
 interface Props {
@@ -69,8 +71,140 @@ export function SettingsPage({ theme, onTheme }: Props) {
         </p>
       </Section>
 
+      <KeywordHighlighting />
+
+      <SessionLogging />
+
       <SavedPasswords />
     </div>
+  );
+}
+
+const highlightColors: { value: HighlightColor; label: string }[] = [
+  { value: "red", label: "Red" },
+  { value: "amber", label: "Amber" },
+  { value: "green", label: "Green" },
+  { value: "blue", label: "Blue" },
+  { value: "purple", label: "Purple" },
+];
+
+/** Keywords colored in terminal output (display only: logs and copies are untouched). */
+function KeywordHighlighting() {
+  const { prefs, update } = usePrefs();
+  const rules = prefs.highlightRules;
+  const setRules = (highlightRules: HighlightRule[]) => update({ highlightRules });
+  const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+  return (
+    <Section title="Keyword highlighting">
+      <Row
+        label="Color keywords in output"
+        hint="Whole words, any case. Only the display changes; copies and logs keep the original text."
+        htmlFor="set-hl"
+      >
+        <Toggle id="set-hl" checked={prefs.highlightKeywords} onChange={(v) => update({ highlightKeywords: v })} />
+      </Row>
+      {prefs.highlightKeywords && (
+        <div className="settings-row settings-row-wide">
+          <div className="settings-text">
+            <ul className="hl-rules" aria-label="Keywords">
+              {rules.map((r, i) => (
+                <li key={i}>
+                  <input
+                    className="settings-input"
+                    value={r.text}
+                    aria-label="Keyword"
+                    spellCheck={false}
+                    style={{ color: colorFor(r.color, theme) }}
+                    onChange={(e) => setRules(rules.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))}
+                  />
+                  <select
+                    aria-label={`Color for ${r.text || "keyword"}`}
+                    value={r.color}
+                    onChange={(e) =>
+                      setRules(rules.map((x, j) => (j === i ? { ...x, color: e.target.value as HighlightColor } : x)))
+                    }
+                  >
+                    {highlightColors.map((c) => (
+                      <option key={c.value} value={c.value}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="icon-btn"
+                    aria-label={`Remove ${r.text || "keyword"}`}
+                    onClick={() => setRules(rules.filter((_, j) => j !== i))}
+                  >
+                    <X size={15} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="hl-actions">
+              <button className="btn" onClick={() => setRules([...rules, { text: "", color: "amber" }])}>
+                Add keyword
+              </button>
+              <button className="btn" onClick={() => setRules(defaultRules)}>
+                Reset to defaults
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </Section>
+  );
+}
+
+/** App-wide logging defaults. These sync like connections do; folders and
+ *  connections can override them. */
+function SessionLogging() {
+  const [l, setL] = useState<LoggingSettings | null>(null);
+  const [folder, setFolder] = useState("");
+  useEffect(() => {
+    void getBackend().then((b) =>
+      b.getLogging().then((v) => {
+        setL(v);
+        setFolder(v.folder ?? "");
+      }),
+    );
+  }, []);
+  if (!l) return null;
+  const save = (patch: Partial<LoggingSettings>) => {
+    const next = { ...l, ...patch };
+    setL(next);
+    void getBackend().then((b) => b.setLogging(next));
+  };
+  return (
+    <Section title="Session logging">
+      <Row
+        label="Log every session"
+        hint="Saves what each terminal shows as plain text. A folder or connection can override this."
+        htmlFor="set-log"
+      >
+        <Toggle id="set-log" checked={l.enabled} onChange={(v) => save({ enabled: v })} />
+      </Row>
+      <Row label="Timestamp each line" htmlFor="set-log-ts">
+        <Toggle id="set-log-ts" checked={l.timestamps} onChange={(v) => save({ timestamps: v })} />
+      </Row>
+      <div className="settings-row settings-row-wide">
+        <div className="settings-text">
+          <label htmlFor="set-log-dir">Log folder</label>
+          <p>
+            Files are named <code>name_date_time.log</code>. For your own naming, enter a full path using %name, %host,
+            %Y, %m, %d, %H, %M, %S.
+          </p>
+          <input
+            id="set-log-dir"
+            className="settings-input"
+            value={folder}
+            placeholder={l.defaultFolder ?? ""}
+            spellCheck={false}
+            onChange={(e) => setFolder(e.target.value)}
+            onBlur={() => folder !== (l.folder ?? "") && save({ folder: folder.trim() || null })}
+          />
+        </div>
+      </div>
+    </Section>
   );
 }
 

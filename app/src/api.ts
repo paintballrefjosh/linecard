@@ -2,6 +2,7 @@ import type {
   ConnectionDraft,
   ConnectionNode,
   Device,
+  LoggingSettings,
   PromptReply,
   SavedPassword,
   SessionEvent,
@@ -47,6 +48,8 @@ export interface Backend {
   setPreferences(p: Preferences): Promise<void>;
   listSavedPasswords(): Promise<SavedPassword[]>;
   forgetSavedPassword(key: string): Promise<void>;
+  getLogging(): Promise<LoggingSettings>;
+  setLogging(l: LoggingSettings): Promise<void>;
   /** Serial ports present right now. */
   listSerialPorts(): Promise<{ name: string; description: string | null }[]>;
   clipboardRead(): Promise<string>;
@@ -89,6 +92,8 @@ async function tauriBackend(): Promise<Backend> {
     setPreferences: (preferences) => invoke("set_preferences", { preferences }),
     listSavedPasswords: () => invoke<SavedPassword[]>("list_saved_passwords"),
     forgetSavedPassword: (key) => invoke("forget_saved_password", { key }),
+    getLogging: () => invoke<LoggingSettings>("get_logging"),
+    setLogging: (logging) => invoke("set_logging", { logging }),
     listSerialPorts: () => invoke("list_serial_ports"),
     // The clipboard plugin: WebView2 can refuse navigator.clipboard reads.
     clipboardRead: async () => (await clipboard).readText().catch(() => ""),

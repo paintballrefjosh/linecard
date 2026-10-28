@@ -7,6 +7,7 @@ import { getBackend, type SessionHandle } from "../api";
 import { terminalThemes, type Theme } from "../theme";
 import type { AuthEvent, ConnectionNode, HostKeyEvent, PromptReply } from "../types";
 import { ClipboardPaste, Copy, Eraser, RotateCw, TextSelect, Zap } from "lucide-react";
+import { attachHighlighter } from "../highlight";
 import { pasteLineCount, usePrefs } from "../prefs";
 import { ContextMenu } from "./ContextMenu";
 import { KindIcon, kindLabel } from "./icons";
@@ -39,6 +40,8 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
   const { prefs } = usePrefs();
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   /** Multi-line text waiting for the user to confirm the paste. */
   const [pending, setPending] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -159,6 +162,12 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
     };
     start();
 
+    const highlighter = attachHighlighter(t, () => ({
+      enabled: prefsRef.current.highlightKeywords,
+      rules: prefsRef.current.highlightRules,
+      theme: themeRef.current,
+    }));
+
     const input = t.onData((d) => {
       if (ended) {
         if (d === "\r") start();
@@ -224,6 +233,7 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
       el.removeEventListener("paste", onPaste, true);
       el.removeEventListener("contextmenu", onContextMenu);
       selection.dispose();
+      highlighter.dispose();
       input.dispose();
       resize.dispose();
       session?.close();

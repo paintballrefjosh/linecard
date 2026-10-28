@@ -1,4 +1,5 @@
 import { createContext, useContext } from "react";
+import { defaultRules, type HighlightRule } from "./highlight";
 
 /** Per-device preferences (never synced). Stored by the backend; defaults
  *  live here so new options need no migration. */
@@ -9,12 +10,17 @@ export interface Preferences {
   rightClick: "paste" | "menu";
   /** Show multi-line text before pasting it into a session. */
   confirmMultilinePaste: boolean;
+  /** Color keywords (down, err-disabled, up…) in terminal output. */
+  highlightKeywords: boolean;
+  highlightRules: HighlightRule[];
 }
 
 export const defaultPrefs: Preferences = {
   copyOnSelect: true,
   rightClick: "paste",
   confirmMultilinePaste: true,
+  highlightKeywords: true,
+  highlightRules: defaultRules,
 };
 
 export function withDefaults(stored: Partial<Preferences> | null | undefined): Preferences {

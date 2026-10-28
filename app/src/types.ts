@@ -73,6 +73,8 @@ export interface ConnectionDraft {
   tabColor: string | null;
   /** Id of an SSH connection to tunnel through; null = from the folder, or direct. */
   jumpHost: string | null;
+  /** Session logging for this connection; null = from the folder or Settings. */
+  log: boolean | null;
   notes: string;
 }
 
@@ -146,4 +148,13 @@ export interface SavedPassword {
   /** e.g. "admin@10.0.0.1" */
   label: string;
   savedAt: number;
+}
+
+/** App-wide session logging defaults. */
+export interface LoggingSettings {
+  enabled: boolean;
+  /** Folder, or a template like D:logs%host_%Y%m%d.log; null = default. */
+  folder: string | null;
+  timestamps: boolean;
+  defaultFolder?: string | null;
 }

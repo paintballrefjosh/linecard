@@ -133,6 +133,9 @@ pub struct ConnectionDraftDto {
     /// Id of an SSH connection to tunnel through; empty = inherit.
     #[serde(default)]
     pub jump_host: Option<String>,
+    /// Session logging for this connection; null = inherit.
+    #[serde(default)]
+    pub log: Option<bool>,
     pub notes: String,
 }
 
@@ -164,6 +167,7 @@ impl From<&Connection> for ConnectionDraftDto {
             username: c.overrides.username.clone(),
             tab_color: c.overrides.tab_color.clone(),
             jump_host: c.overrides.jump_host.clone(),
+            log: c.overrides.log_enabled,
             notes: c.notes.clone(),
         }
     }
@@ -214,6 +218,7 @@ impl ConnectionDraftDto {
         conn.kind = self.kind;
         conn.overrides.username = non_empty(&self.username);
         conn.overrides.tab_color = non_empty(&self.tab_color);
+        conn.overrides.log_enabled = self.log;
         conn.overrides.jump_host = non_empty(&self.jump_host).filter(|j| Some(j) != self.id.as_ref());
         conn.notes = self.notes.clone();
         Ok(())
@@ -363,4 +368,17 @@ impl From<PromptReplyDto> for linecard_proto::PromptReply {
 pub struct SerialPortDto {
     pub name: String,
     pub description: Option<String>,
+}
+
+/// App-wide session logging defaults, as Settings shows them.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoggingDto {
+    pub enabled: bool,
+    /// Folder (or full template); null = the default folder.
+    pub folder: Option<String>,
+    pub timestamps: bool,
+    /// Shown as the placeholder; ignored when saving.
+    #[serde(default)]
+    pub default_folder: Option<String>,
 }

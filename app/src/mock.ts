@@ -7,6 +7,7 @@ import type {
   ConnectionNode,
   Device,
   FolderNode,
+  LoggingSettings,
   PendingChange,
   SerialSettings,
   TreeNode,
@@ -178,13 +179,20 @@ export function mockBackend(): Backend {
   const trustedHosts = new Set<string>();
   /** Used when the browser denies clipboard access (e.g. automated previews). */
   let memClipboard = "";
+  let logging: LoggingSettings = { enabled: false, folder: null, timestamps: false };
   /** login label -> saved-at, standing in for the OS keychain. */
   const savedPasswords = new Map<string, number>();
 
   // Fields the tree nodes don't carry, as the Rust side stores them.
   const extra = new Map<
     string,
-    { username: string | null; notes: string; serial: SerialSettings | null; jumpHost: string | null }
+    {
+      username: string | null;
+      notes: string;
+      serial: SerialSettings | null;
+      jumpHost: string | null;
+      log: boolean | null;
+    }
   >();
   const newId = () => `m-${Math.random().toString(36).slice(2, 9)}`;
   const childrenOf = (parentId: string | null): TreeNode[] => {
@@ -279,6 +287,7 @@ export function mockBackend(): Backend {
         username: x?.username ?? null,
         tabColor: n.tabColor ?? null,
         jumpHost: x?.jumpHost ?? null,
+        log: x?.log ?? null,
         notes: x?.notes ?? "",
       };
     },
@@ -298,7 +307,13 @@ export function mockBackend(): Backend {
         id = newId();
         childrenOf(d.folderId).push({ type: "connection", id, ...fields });
       }
-      extra.set(id!, { username: d.username?.trim() || null, notes: d.notes, serial: d.serial, jumpHost: d.jumpHost });
+      extra.set(id!, {
+        username: d.username?.trim() || null,
+        notes: d.notes,
+        serial: d.serial,
+        jumpHost: d.jumpHost,
+        log: d.log,
+      });
       emit();
       return id!;
     },
@@ -342,6 +357,12 @@ export function mockBackend(): Backend {
     },
     async forgetSavedPassword(key) {
       savedPasswords.delete(key.replace(/^ssh:/, ""));
+    },
+    async getLogging() {
+      return { ...logging, defaultFolder: "C:\Users\you\Documents\Linecard Logs" };
+    },
+    async setLogging(l) {
+      logging = { enabled: l.enabled, folder: l.folder, timestamps: l.timestamps };
     },
     async listSerialPorts() {
       return [

@@ -18,7 +18,7 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 - [x] Connection editor dialog
 - [ ] Show inherited values in the connection editor
 - [x] Credential vault: saved passwords in the OS keychain (Windows Credential Manager), "Save password" on login prompts, list and remove in Settings
-- [ ] Session logging and keyword highlighting
+- [x] Session logging (plain text, optional timestamps, global/folder/connection settings) and keyword highlighting (editable rules)
 - [ ] mRemoteNG, SuperPuTTY, PuTTY, ssh_config importers + import preview wizard
 - [ ] Saved workspaces
 

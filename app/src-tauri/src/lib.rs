@@ -6,6 +6,7 @@
 
 mod dto;
 mod library;
+mod logging;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -15,6 +16,7 @@ use linecard_core_model::{Connection, ConnectionKind, Endpoint, Folder, Settings
 use linecard_core_sync::Hlc;
 use linecard_proto::{SerialSettings, Session, SshOptions, TerminalTarget};
 use linecard_vault::{SavedCredential, Secret, Vault};
+use logging::SessionLog;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -26,6 +28,8 @@ struct AppState {
     sessions: Mutex<HashMap<String, Box<dyn Session>>>,
     ssh: SshOptions,
     vault: Arc<Vault>,
+    /// Where session logs go unless a folder is configured.
+    log_dir: std::path::PathBuf,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -290,6 +294,31 @@ fn set_preferences(state: State<AppState>, preferences: serde_json::Value) -> Cm
         .set_local_setting(PREFERENCES_KEY, &preferences.to_string())
 }
 
+// ---- session logging defaults ----------------------------------------------------
+
+/// The app-wide logging defaults (folders and connections can override them).
+#[tauri::command]
+fn get_logging(state: State<AppState>) -> CmdResult<dto::LoggingDto> {
+    let lib = state.lib.lock().map_err(err)?;
+    let g = &lib.tree().global;
+    Ok(dto::LoggingDto {
+        enabled: g.log_enabled == Some(true),
+        folder: g.log_path_template.clone(),
+        timestamps: g.log_timestamps == Some(true),
+        default_folder: Some(state.log_dir.display().to_string()),
+    })
+}
+
+#[tauri::command]
+fn set_logging(app: AppHandle, state: State<AppState>, logging: dto::LoggingDto) -> CmdResult<()> {
+    edit(&app, &state, |tree| {
+        tree.global.log_enabled = Some(logging.enabled);
+        tree.global.log_timestamps = Some(logging.timestamps);
+        tree.global.log_path_template = logging.folder.map(|f| f.trim().to_string()).filter(|f| !f.is_empty());
+        Ok(())
+    })
+}
+
 // ---- saved passwords ---------------------------------------------------------
 
 /// What's saved in the keychain (labels only, never secrets).
@@ -353,6 +382,15 @@ fn parse_endpoint(endpoint: &str, kind: ConnectionKind) -> Option<(Option<String
         None => kind.default_port()?,
     };
     Some((user, host.to_string(), port))
+}
+
+/// DocumentsLinecard Logs (falls back to the app data folder).
+fn default_log_dir(app: &AppHandle) -> std::path::PathBuf {
+    app.path()
+        .document_dir()
+        .or_else(|_| app.path().app_data_dir())
+        .unwrap_or_else(|_| std::env::temp_dir())
+        .join("Linecard Logs")
 }
 
 /// Saved passwords for the SSH driver, kept in the OS keychain.
@@ -472,28 +510,71 @@ async fn open_session(
     }
     // Saved connections use their stored endpoint and inherited settings;
     // quick-connect uses what the UI sent.
-    let plan = {
+    let (plan, settings, name) = {
         let lib = state.lib.lock().map_err(err)?;
         let tree = lib.tree();
         match tree.connection(&connection_id) {
-            Ok(c) => match &c.endpoint {
-                Endpoint::Serial(s) => Plan::Serial(s.clone()),
-                Endpoint::Network { .. } => Plan::Network(c.kind, network_target(tree, &c.id, 0)?),
-            },
+            Ok(c) => {
+                let settings = tree.resolve(&c.id).map_err(err)?.settings;
+                let plan = match &c.endpoint {
+                    Endpoint::Serial(s) => Plan::Serial(s.clone()),
+                    Endpoint::Network { .. } => Plan::Network(c.kind, network_target(tree, &c.id, 0)?),
+                };
+                (plan, settings, c.name.clone())
+            }
             Err(_) if kind == ConnectionKind::Serial => {
-                Plan::Serial(parse_serial(&endpoint).ok_or("expected a port and baud rate, e.g. COM3 9600")?)
+                let s = parse_serial(&endpoint).ok_or("expected a port and baud rate, e.g. COM3 9600")?;
+                let name = s.port.clone();
+                (Plan::Serial(s), tree.global.clone(), name)
             }
             Err(_) => {
                 let (user, host, port) = parse_endpoint(&endpoint, kind).ok_or("could not read host and port")?;
-                let mut t = TerminalTarget::new(host, port);
+                let mut t = TerminalTarget::new(host.clone(), port);
                 t.username = user;
                 t.keepalive_secs = tree.global.keepalive_secs;
-                Plan::Network(kind, t)
+                (Plan::Network(kind, t), tree.global.clone(), host)
             }
         }
     };
+
+    // Session log, if this connection (or its folder, or the global default) asks for one.
+    let mut log = None;
+    if settings.log_enabled == Some(true) {
+        let path = logging::log_path(
+            settings.log_path_template.as_deref(),
+            &state.log_dir,
+            &name,
+            &endpoint,
+            chrono::Local::now(),
+        );
+        match SessionLog::open(path.clone(), settings.log_timestamps == Some(true)) {
+            Ok(mut l) => {
+                l.note(&format!("{name} ({endpoint}) session opened"));
+                let _ = on_event.send(SessionEventDto::Data {
+                    data: format!("\x1b[2mLogging to {}\x1b[0m\r\n", path.display()).into_bytes(),
+                });
+                log = Some(l);
+            }
+            Err(e) => {
+                let _ = on_event.send(SessionEventDto::Data {
+                    data: format!("\x1b[33mCould not start the session log: {e}\x1b[0m\r\n").into_bytes(),
+                });
+            }
+        }
+    }
+
     let ssh = state.ssh.clone();
     let sink: linecard_proto::EventSink = Box::new(move |e| {
+        if let Some(l) = &mut log {
+            match &e {
+                linecard_proto::SessionEvent::Data(d) => l.write(d),
+                linecard_proto::SessionEvent::Disconnected { reason } => l.note(&format!(
+                    "session closed{}",
+                    reason.as_ref().map(|r| format!(": {r}")).unwrap_or_default()
+                )),
+                _ => {}
+            }
+        }
         let _ = on_event.send(SessionEventDto::from(e));
     });
     // Telnet and serial connect before returning; SSH returns at once and
@@ -562,6 +643,7 @@ pub fn run() {
                 sessions: Mutex::new(HashMap::new()),
                 ssh: ssh_options(app.handle(), vault.clone()),
                 vault,
+                log_dir: default_log_dir(app.handle()),
             });
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_title("Linecard");
@@ -583,6 +665,8 @@ pub fn run() {
             get_preferences,
             set_preferences,
             list_saved_passwords,
+            get_logging,
+            set_logging,
             forget_saved_password,
             get_devices,
             get_sync_state,
@@ -645,6 +729,7 @@ mod tests {
             username: Some("  ".into()),
             tab_color: Some("#d64545".into()),
             jump_host: None,
+            log: None,
             notes: String::new(),
         }
     }
