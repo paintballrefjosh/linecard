@@ -88,10 +88,7 @@ docs/              Roadmap, sync protocol, releasing
 
 ## Maintainer setup
 
-Still to do before the first release:
-
-1. Add `LICENSE-APACHE` (GitHub's "Add file → Create new file → LICENSE-APACHE → Choose a license template → Apache 2.0").
-2. Generate the update-signing key and add the repository secrets — see [docs/releasing.md](docs/releasing.md).
+Releases are built by GitHub Actions from a version tag; the one-time update-signing key setup and the release steps are in [docs/releasing.md](docs/releasing.md).
 
 ## License
 
