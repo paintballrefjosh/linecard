@@ -8,6 +8,7 @@ pub mod mremoteng;
 pub mod putty;
 pub mod securecrt;
 pub mod ssh_config;
+pub mod superputty;
 
 /// One connection found in the source.
 #[derive(Debug, Clone, PartialEq)]

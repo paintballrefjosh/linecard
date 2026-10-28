@@ -159,7 +159,7 @@ export interface LoggingSettings {
   defaultFolder?: string | null;
 }
 
-export type ImportSourceId = "securecrt" | "putty" | "mremoteng" | "ssh_config";
+export type ImportSourceId = "securecrt" | "putty" | "superputty" | "mremoteng" | "ssh_config";
 
 export interface ImportSource {
   id: ImportSourceId;

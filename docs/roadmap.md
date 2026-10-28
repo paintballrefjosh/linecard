@@ -20,7 +20,7 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 - [x] Credential vault: saved passwords in the OS keychain (Windows Credential Manager), "Save password" on login prompts, list and remove in Settings
 - [x] Session logging (plain text, optional timestamps, global/folder/connection settings) and keyword highlighting (editable rules)
 - [x] Importers: SecureCRT, PuTTY (registry, / folders), mRemoteNG (confCons.xml), OpenSSH config; import dialog with preview
-- [ ] SuperPuTTY Sessions.xml folders
+- [x] SuperPuTTY Sessions.xml (folders from session paths)
 - [x] Saved workspaces: open tabs and layout saved by name, restored with reconnects
 
 ## Phase 2 — Sync (v0.4–0.6)

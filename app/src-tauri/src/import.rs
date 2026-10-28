@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use linecard_core_model::{Connection, Folder, Settings, Tree};
-use linecard_importers::{mremoteng, putty, securecrt, ssh_config, Import};
+use linecard_importers::{mremoteng, putty, securecrt, ssh_config, superputty, Import};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -68,6 +68,11 @@ pub fn sources() -> Vec<ImportSourceDto> {
     vec![
         src("securecrt", "SecureCRT", "The Config\\Sessions folder"),
         src("putty", "PuTTY", "Saved sessions are read from the registry"),
+        src(
+            "superputty",
+            "SuperPuTTY",
+            "Sessions.xml (folders come from the session paths)",
+        ),
         src("mremoteng", "mRemoteNG", "confCons.xml (unencrypted)"),
         src("ssh_config", "OpenSSH config", "Usually ~/.ssh/config"),
     ]
@@ -88,6 +93,7 @@ pub fn load(source: &str, path: Option<&str>) -> Result<Import, String> {
         "securecrt" => securecrt::import_dir(&need()?).map_err(io),
         "putty" => putty::import_registry().map_err(io),
         "mremoteng" => mremoteng::import_file(&need()?).map_err(io)?,
+        "superputty" => superputty::import_file(&need()?).map_err(io)?,
         "ssh_config" => ssh_config::import_file(&need()?).map_err(io),
         other => Err(format!("unknown import source {other}")),
     }
