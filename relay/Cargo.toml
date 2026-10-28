@@ -1,0 +1,12 @@
+[package]
+name = "linecard-relay"
+description = "Self-hostable Linecard sync relay: stores and forwards end-to-end encrypted ops"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+axum = "0.8"
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

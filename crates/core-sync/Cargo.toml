@@ -1,0 +1,13 @@
+[package]
+name = "linecard-core-sync"
+description = "Linecard sync engine: hybrid logical clocks, operation log, per-field LWW merge, change tracking"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { workspace = true, optional = true }

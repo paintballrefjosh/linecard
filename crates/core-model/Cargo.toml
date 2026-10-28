@@ -1,0 +1,13 @@
+[package]
+name = "linecard-core-model"
+description = "Linecard object model: folders, connections, inherited settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { workspace = true, optional = true }

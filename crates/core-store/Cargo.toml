@@ -1,0 +1,12 @@
+[package]
+name = "linecard-core-store"
+description = "Linecard local persistence (SQLite): op log, sync cursors, local settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+linecard-core-sync = { workspace = true, features = ["serde"] }
+rusqlite = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

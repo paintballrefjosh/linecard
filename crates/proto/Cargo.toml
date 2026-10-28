@@ -1,0 +1,15 @@
+[package]
+name = "linecard-proto"
+description = "Linecard session drivers (SSH, Telnet, Serial, RDP, VNC) behind one Session trait"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+linecard-core-model = { workspace = true }
+
+# Added as each driver lands (see docs/roadmap.md):
+# russh = "0.5x"          # proto-ssh
+# serialport = "4"        # serial
+# ironrdp = "..."         # RDP on macOS/Linux
+# windows = { version = "...", features = [...] }  # native RDP ActiveX host on Windows

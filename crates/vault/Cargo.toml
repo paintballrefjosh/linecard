@@ -1,0 +1,12 @@
+[package]
+name = "linecard-vault"
+description = "Linecard credential vault: OS keychain storage, optional encrypted sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# keyring = "3"              # Windows Credential Manager / macOS Keychain / libsecret
+# chacha20poly1305 = "0.10"   # XChaCha20-Poly1305 for the synced vault blob
+# argon2 = "0.5"              # vault passphrase -> key
+# zeroize = "1"

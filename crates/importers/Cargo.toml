@@ -1,0 +1,11 @@
+[package]
+name = "linecard-importers"
+description = "Import saved sessions from SecureCRT, mRemoteNG, SuperPuTTY, PuTTY and ssh_config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+linecard-core-model = { workspace = true }
+# For the XML-based importers (mRemoteNG confCons.xml, SuperPuTTY Sessions.xml):
+# roxmltree = "0.20"
