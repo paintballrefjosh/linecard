@@ -188,6 +188,16 @@ impl Vault {
         })
     }
 
+    /// Store a secret that isn't a saved password (sync keys): kept in the
+    /// keychain but not listed in Settings.
+    pub fn save_hidden(&self, key: &str, secret: Secret) -> Result<(), VaultError> {
+        self.store.lock().map_err(|_| VaultError::Locked)?.set(key, secret)
+    }
+
+    pub fn forget_hidden(&self, key: &str) -> Result<(), VaultError> {
+        self.store.lock().map_err(|_| VaultError::Locked)?.delete(key)
+    }
+
     pub fn forget(&self, key: &str) -> Result<(), VaultError> {
         self.store.lock().map_err(|_| VaultError::Locked)?.delete(key)?;
         self.update_index(|idx| idx.retain(|c| c.key != key))

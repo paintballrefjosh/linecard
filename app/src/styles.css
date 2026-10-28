@@ -1719,3 +1719,41 @@ kbd {
   color: var(--text-quiet);
   white-space: nowrap;
 }
+
+.sync-actions {
+  display: flex;
+  gap: 8px;
+}
+.sync-show {
+  margin-top: 8px;
+}
+.sync-location {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.sync-location .settings-input {
+  margin: 0;
+}
+.sync-location .btn {
+  flex: none;
+}
+.sync-phrase-input {
+  height: 64px;
+  padding: 6px 8px;
+  resize: vertical;
+}
+.sync-phrase ol {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 4px 14px;
+  margin: 10px 0;
+  padding: 10px 12px 10px 34px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--bg-main);
+  font: 12.5px var(--font-mono);
+}
+.sync-phrase li::marker {
+  color: var(--text-quiet);
+}

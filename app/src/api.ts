@@ -10,7 +10,9 @@ import type {
   PromptReply,
   SavedPassword,
   SessionEvent,
+  SyncConfig,
   SyncState,
+  SyncTransport,
   TransferProtocol,
   TreeNode,
 } from "./types";
@@ -36,6 +38,16 @@ export interface Backend {
   getTree(): Promise<TreeNode[]>;
   getDevices(): Promise<Device[]>;
   getSyncState(): Promise<SyncState>;
+  /** null when sync is off. */
+  getSyncConfig(): Promise<SyncConfig | null>;
+  /** Start a new sync group (phrase null) or join one. Returns the phrase. */
+  syncSetup(transport: SyncTransport, location: string, phrase: string | null): Promise<string>;
+  /** The 24-word phrase, to add another computer. */
+  syncPhrase(): Promise<string | null>;
+  syncNow(): Promise<void>;
+  syncDisable(): Promise<void>;
+  /** Fires when the sync status changes. */
+  onSyncChanged(cb: () => void): () => void;
   ackChange(objectId: string): Promise<void>;
   ackAll(): Promise<void>;
   /** Revert one remote op; becomes a new op that syncs everywhere. */
@@ -66,6 +78,8 @@ export interface Backend {
   setLogging(l: LoggingSettings): Promise<void>;
   /** Serial ports present right now. */
   listSerialPorts(): Promise<{ name: string; description: string | null }[]>;
+  /** Native folder picker; null if canceled. */
+  pickFolder(title: string): Promise<string | null>;
   /** Native file picker; null if canceled. */
   pickFile(mode: "open" | "save", title: string): Promise<string | null>;
   clipboardRead(): Promise<string>;
@@ -94,6 +108,15 @@ async function tauriBackend(): Promise<Backend> {
     getTree: () => invoke<TreeNode[]>("get_tree"),
     getDevices: () => invoke<Device[]>("get_devices"),
     getSyncState: () => invoke<SyncState>("get_sync_state"),
+    getSyncConfig: () => invoke<SyncConfig | null>("get_sync_config"),
+    syncSetup: (transport, location, phrase) => invoke<string>("sync_setup", { transport, location, phrase }),
+    syncPhrase: () => invoke<string | null>("sync_phrase"),
+    syncNow: () => invoke("sync_now"),
+    syncDisable: () => invoke("sync_disable"),
+    onSyncChanged(cb) {
+      const unlisten = listen("sync-changed", () => cb());
+      return () => void unlisten.then((u) => u());
+    },
     ackChange: (objectId) => invoke("ack_change", { objectId }),
     ackAll: () => invoke("ack_all"),
     revert: (opId) => invoke("revert_op", { opId }),
@@ -115,6 +138,11 @@ async function tauriBackend(): Promise<Backend> {
     getLogging: () => invoke<LoggingSettings>("get_logging"),
     setLogging: (logging) => invoke("set_logging", { logging }),
     listSerialPorts: () => invoke("list_serial_ports"),
+    async pickFolder(title) {
+      const dialog = await import("@tauri-apps/plugin-dialog");
+      const picked = await dialog.open({ title, multiple: false, directory: true });
+      return typeof picked === "string" ? picked : null;
+    },
     async pickFile(mode, title) {
       const dialog = await import("@tauri-apps/plugin-dialog");
       const picked =

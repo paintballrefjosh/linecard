@@ -10,6 +10,7 @@ import type {
   LoggingSettings,
   PendingChange,
   SerialSettings,
+  SyncConfig,
   TreeNode,
 } from "./types";
 
@@ -123,6 +124,12 @@ export function mockBackend(): Backend {
     }
   }, 12_000);
 
+  let syncConfig: SyncConfig | null = { transport: "relay", location: "https://relay.example.com" };
+  const mockPhrase =
+    "abandon ability able about above absent absorb abstract absurd abuse access accident account accuse achieve acid acoustic acquire across act action actor actress actual";
+  let syncPhraseWords = mockPhrase;
+  const syncListeners = new Set<() => void>();
+
   const devices: Device[] = [
     {
       id: "d1",
@@ -216,7 +223,34 @@ export function mockBackend(): Backend {
     appVersion: async () => "0.1.0-dev",
     getTree: async () => structuredClone(tree),
     getDevices: async () => devices,
-    getSyncState: async () => ({ state: "synced", transport: "relay", at: now() - 3000 }),
+    getSyncState: async () =>
+      syncConfig
+        ? {
+            state: "synced",
+            transport: syncConfig.transport === "folder" ? "shared folder" : "relay",
+            at: now() - 3000,
+          }
+        : { state: "off" },
+    getSyncConfig: async () => syncConfig,
+    async syncSetup(transport, location, phrase) {
+      if (!location.trim()) throw "enter a folder or relay address";
+      if (phrase !== null && phrase.trim().split(/s+/).length !== 24) throw "that isn't a valid 24-word sync phrase";
+      syncConfig = { transport, location };
+      syncPhraseWords = phrase ?? mockPhrase;
+      syncListeners.forEach((l) => l());
+      return syncPhraseWords;
+    },
+    syncPhrase: async () => (syncConfig ? syncPhraseWords : null),
+    syncNow: async () => {},
+    async syncDisable() {
+      syncConfig = null;
+      syncListeners.forEach((l) => l());
+    },
+    onSyncChanged(cb) {
+      syncListeners.add(cb);
+      return () => syncListeners.delete(cb);
+    },
+    pickFolder: async () => "\\\\nas\\share\\Linecard",
     async ackChange(id) {
       const hit = find(tree, id);
       if (hit?.node.change?.kind === "deleted") hit.siblings.splice(hit.siblings.indexOf(hit.node), 1);

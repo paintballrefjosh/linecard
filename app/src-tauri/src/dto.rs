@@ -239,10 +239,14 @@ pub struct DeviceDto {
     pub is_this_device: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "lowercase")]
 pub enum SyncStateDto {
     Off,
+    Synced { transport: String, at: u64 },
+    Syncing { transport: String },
+    Offline { pending: u32 },
+    Error { message: String },
 }
 
 #[derive(Clone, Serialize)]

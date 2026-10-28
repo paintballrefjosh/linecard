@@ -1,10 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { Copy, X } from "lucide-react";
 import { getBackend } from "../api";
 import { colorFor, defaultRules, type HighlightColor, type HighlightRule } from "../highlight";
 import type { ThemePref } from "../theme";
 import { usePrefs } from "../prefs";
-import type { LoggingSettings, SavedPassword } from "../types";
+import type { LoggingSettings, SavedPassword, SyncConfig, SyncTransport } from "../types";
+import { ConfirmDialog } from "./Dialog";
 import { relativeTime } from "./ConnectionTree";
 
 interface Props {
@@ -34,6 +35,8 @@ export function SettingsPage({ theme, onTheme }: Props) {
           />
         </Row>
       </Section>
+
+      <SyncSettings />
 
       <Section title="Terminal mouse and clipboard">
         <Row
@@ -78,6 +81,217 @@ export function SettingsPage({ theme, onTheme }: Props) {
       <SavedPasswords />
 
       <Workspaces />
+    </div>
+  );
+}
+
+/** Set up end-to-end encrypted sync of the connection tree. */
+function SyncSettings() {
+  const [config, setConfig] = useState<SyncConfig | null | undefined>(undefined);
+  const [mode, setMode] = useState<"new" | "join">("new");
+  const [transport, setTransport] = useState<SyncTransport>("folder");
+  const [location, setLocation] = useState("");
+  const [phraseInput, setPhraseInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  /** Shown after starting a group, or on request. */
+  const [phrase, setPhrase] = useState<string | null>(null);
+  const [confirmOff, setConfirmOff] = useState(false);
+
+  const load = () => void getBackend().then((b) => b.getSyncConfig().then(setConfig));
+  useEffect(load, []);
+  if (config === undefined) return null;
+
+  const turnOn = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const b = await getBackend();
+      const p = await b.syncSetup(transport, location.trim(), mode === "join" ? phraseInput : null);
+      if (mode === "new") setPhrase(p);
+      setPhraseInput("");
+      load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (config) {
+    return (
+      <Section title="Sync">
+        <div className="settings-row">
+          <div className="settings-text">
+            <span>Syncing through {config.transport === "folder" ? "a shared folder" : "a relay"}</span>
+            <p>
+              <code>{config.location}</code>
+            </p>
+          </div>
+          <div className="settings-control sync-actions">
+            <button className="btn" onClick={() => void getBackend().then((b) => b.syncNow())}>
+              Sync now
+            </button>
+            <button className="btn" onClick={() => setConfirmOff(true)}>
+              Turn off
+            </button>
+          </div>
+        </div>
+        <div className="settings-row settings-row-wide">
+          <div className="settings-text">
+            <span>Sync phrase</span>
+            <p>
+              To add another computer, enter these 24 words there under Settings → Sync → Join with a phrase. Anyone
+              with the phrase can read and change your connections, so keep it somewhere safe, like a password manager.
+            </p>
+            {phrase ? (
+              <PhraseWords phrase={phrase} onHide={() => setPhrase(null)} />
+            ) : (
+              <button
+                className="btn sync-show"
+                onClick={() => void getBackend().then((b) => b.syncPhrase().then(setPhrase))}
+              >
+                Show phrase
+              </button>
+            )}
+          </div>
+        </div>
+        {confirmOff && (
+          <ConfirmDialog
+            title="Turn off sync?"
+            message="This computer stops sending and receiving changes and forgets the sync phrase. Your connections stay here, and your other computers keep syncing with each other."
+            confirmLabel="Turn off sync"
+            danger
+            onConfirm={async () => {
+              await (await getBackend()).syncDisable();
+              setPhrase(null);
+              load();
+            }}
+            onClose={() => setConfirmOff(false)}
+          />
+        )}
+      </Section>
+    );
+  }
+
+  return (
+    <Section title="Sync">
+      <p className="settings-note">
+        Keep your connections the same on every computer. Changes are encrypted on this computer before they leave, so
+        the folder or relay only ever stores ciphertext. Saved passwords stay in each computer's keychain.
+      </p>
+      <Row label="This computer" htmlFor="set-sync-mode">
+        <Segmented<"new" | "join">
+          id="set-sync-mode"
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: "new", label: "Start a new sync group" },
+            { value: "join", label: "Join with a phrase" },
+          ]}
+        />
+      </Row>
+      <Row
+        label="Sync through"
+        hint={
+          transport === "folder"
+            ? "Any folder all your computers can reach: a NAS share, OneDrive, Dropbox, Syncthing."
+            : "A Linecard relay server you run (see relay/ in the source). Changes arrive within seconds."
+        }
+        htmlFor="set-sync-transport"
+      >
+        <Segmented<SyncTransport>
+          id="set-sync-transport"
+          value={transport}
+          onChange={setTransport}
+          options={[
+            { value: "folder", label: "Shared folder" },
+            { value: "relay", label: "Relay" },
+          ]}
+        />
+      </Row>
+      <div className="settings-row settings-row-wide">
+        <div className="settings-text">
+          <label htmlFor="set-sync-location">{transport === "folder" ? "Folder" : "Relay address"}</label>
+          <div className="sync-location">
+            <input
+              id="set-sync-location"
+              className="settings-input"
+              value={location}
+              placeholder={transport === "folder" ? "\\\\nas\\share\\Linecard" : "https://relay.example.com"}
+              spellCheck={false}
+              onChange={(e) => setLocation(e.target.value)}
+            />
+            {transport === "folder" && (
+              <button
+                className="btn"
+                onClick={async () => {
+                  const picked = await (await getBackend()).pickFolder("Folder to sync through");
+                  if (picked) setLocation(picked);
+                }}
+              >
+                Browse…
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+      {mode === "join" && (
+        <div className="settings-row settings-row-wide">
+          <div className="settings-text">
+            <label htmlFor="set-sync-phrase">Sync phrase</label>
+            <p>The 24 words from a computer already in the group (Settings → Sync → Show phrase there).</p>
+            <textarea
+              id="set-sync-phrase"
+              className="settings-input sync-phrase-input"
+              value={phraseInput}
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(e) => setPhraseInput(e.target.value)}
+            />
+          </div>
+        </div>
+      )}
+      <div className="settings-row">
+        <div className="settings-text">{error && <p className="form-error">{error}</p>}</div>
+        <div className="settings-control">
+          <button
+            className="btn btn-primary"
+            disabled={busy || !location.trim() || (mode === "join" && !phraseInput.trim())}
+            onClick={() => void turnOn()}
+          >
+            {busy ? "Connecting…" : mode === "new" ? "Start syncing" : "Join"}
+          </button>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+function PhraseWords({ phrase, onHide }: { phrase: string; onHide(): void }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="sync-phrase">
+      <ol>
+        {phrase.split(" ").map((w, i) => (
+          <li key={i}>{w}</li>
+        ))}
+      </ol>
+      <div className="hl-actions">
+        <button
+          className="btn"
+          onClick={() =>
+            void getBackend()
+              .then((b) => b.clipboardWrite(phrase))
+              .then(() => setCopied(true))
+          }
+        >
+          <Copy size={13} /> {copied ? "Copied" : "Copy"}
+        </button>
+        <button className="btn" onClick={onHide}>
+          Hide
+        </button>
+      </div>
     </div>
   );
 }

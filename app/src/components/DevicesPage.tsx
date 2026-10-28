@@ -20,7 +20,9 @@ export function versionMismatch(devices: Device[]): boolean {
   return new Set(live.map((d) => d.appVersion)).size > 1;
 }
 
-export function DevicesPage({ devices }: { devices: Device[] }) {
+const transportLabel: Record<string, string> = { folder: "Shared folder", relay: "Relay" };
+
+export function DevicesPage({ devices, syncOn }: { devices: Device[]; syncOn: boolean }) {
   const newest = devices.reduce((v, d) => (compareVersions(d.appVersion, v) > 0 ? d.appVersion : v), "0");
   const me = devices.find((d) => d.isThisDevice);
   const behind = me && compareVersions(me.appVersion, newest) < 0;
@@ -29,7 +31,11 @@ export function DevicesPage({ devices }: { devices: Device[] }) {
   return (
     <div className="devices-page">
       <h1>Devices</h1>
-      <p className="lede">Every device in this sync group, with the app version it last reported.</p>
+      <p className="lede">
+        {syncOn
+          ? "Every device in this sync group, with the app version it last reported."
+          : "Sync is off, so this is the only device. Turn it on in Settings → Sync to see your other computers here."}
+      </p>
 
       {mismatch && (
         <div className="notice notice-warn" role="status">
@@ -68,7 +74,7 @@ export function DevicesPage({ devices }: { devices: Device[] }) {
                   {old && !stale && <span className="tag tag-warn">Update available</span>}
                 </td>
                 <td>v{d.protocolVersion}</td>
-                <td>{d.transport}</td>
+                <td>{transportLabel[d.transport] ?? "—"}</td>
                 <td>{stale ? `${relativeTime(d.lastSeen)} — consider removing` : relativeTime(d.lastSeen)}</td>
                 <td>{d.pendingOps || "—"}</td>
               </tr>

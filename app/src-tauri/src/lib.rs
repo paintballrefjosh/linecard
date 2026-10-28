@@ -8,6 +8,7 @@ mod dto;
 mod import;
 mod library;
 mod logging;
+mod sync;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -31,6 +32,7 @@ struct AppState {
     vault: Arc<Vault>,
     /// Where session logs go unless a folder is configured.
     log_dir: std::path::PathBuf,
+    sync: sync::SyncEngine,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -97,6 +99,7 @@ fn seed_starter(tree: &mut Tree) {
 fn edit<T>(app: &AppHandle, state: &AppState, f: impl FnOnce(&mut Tree) -> CmdResult<T>) -> CmdResult<T> {
     let out = state.lib.lock().map_err(err)?.edit(f)?;
     notify_tree_changed(app);
+    state.sync.poke();
     Ok(out)
 }
 
@@ -418,15 +421,44 @@ fn get_devices(app: AppHandle, state: State<AppState>) -> CmdResult<Vec<DeviceDt
         app_version: app.package_info().version.to_string(),
         protocol_version: linecard_core_sync::SYNC_PROTOCOL_VERSION,
         last_seen: now_ms(),
-        transport: "relay".into(),
-        pending_ops: 0,
+        transport: sync::SyncEngine::config(&app).map(|c| c.transport).unwrap_or_default(),
+        pending_ops: sync::unpushed(&app).unwrap_or(0) as u32,
         is_this_device: true,
-    }])
+    }]
+    .into_iter()
+    .chain(sync::SyncEngine::devices(&app))
+    .collect())
 }
 
 #[tauri::command]
-fn get_sync_state() -> SyncStateDto {
-    SyncStateDto::Off
+fn get_sync_state(state: State<AppState>) -> SyncStateDto {
+    state.sync.status()
+}
+
+#[tauri::command]
+fn get_sync_config(app: AppHandle) -> Option<sync::SyncConfig> {
+    sync::SyncEngine::config(&app)
+}
+
+/// Create a sync group (no phrase) or join one; returns the phrase.
+#[tauri::command]
+async fn sync_setup(app: AppHandle, transport: String, location: String, phrase: Option<String>) -> CmdResult<String> {
+    sync::SyncEngine::setup(&app, sync::SyncConfig { transport, location }, phrase).await
+}
+
+#[tauri::command]
+fn sync_phrase(app: AppHandle) -> Option<String> {
+    sync::SyncEngine::phrase(&app)
+}
+
+#[tauri::command]
+fn sync_now(state: State<AppState>) {
+    state.sync.poke();
+}
+
+#[tauri::command]
+fn sync_disable(app: AppHandle) -> CmdResult<()> {
+    sync::SyncEngine::disable(&app)
 }
 
 // ---- sessions ----------------------------------------------------------------
@@ -741,7 +773,12 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let data = app.path().app_data_dir()?;
+            // LINECARD_DATA_DIR runs a separate profile (e.g. a second
+            // "computer" for trying sync on one machine).
+            let data = match std::env::var_os("LINECARD_DATA_DIR") {
+                Some(dir) => std::path::PathBuf::from(dir),
+                None => app.path().app_data_dir()?,
+            };
             let lib = Library::open(&data.join("library.db"), seed_starter)
                 .map_err(|e| format!("could not open the connection library: {e}"))?;
             // Secrets live in the OS keychain; this file only lists what's saved.
@@ -752,7 +789,9 @@ pub fn run() {
                 ssh: ssh_options(app.handle(), vault.clone()),
                 vault,
                 log_dir: default_log_dir(app.handle()),
+                sync: sync::SyncEngine::default(),
             });
+            sync::SyncEngine::start(app.handle());
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_title("Linecard");
             }
@@ -782,6 +821,11 @@ pub fn run() {
             forget_saved_password,
             get_devices,
             get_sync_state,
+            get_sync_config,
+            sync_setup,
+            sync_phrase,
+            sync_now,
+            sync_disable,
             open_session,
             session_write,
             session_resize,

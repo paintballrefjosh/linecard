@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+**Sync**
+- Settings → Sync: start a sync group or join one with its 24-word phrase. Connections, folders and app-wide settings stay the same on every computer; changes from other computers are highlighted and can be reverted one by one.
+- Sync through any shared folder (NAS share, OneDrive, Dropbox, Syncthing) or a self-hosted relay (`relay/`, Docker image).
+- End-to-end encrypted: XChaCha20-Poly1305 with the group key, each batch signed by its device; the folder or relay only stores ciphertext. Sync keys live in the OS keychain.
+- The Devices page lists every computer in the group with its app version and last check-in; the status bar shows sync status and changes waiting to be sent.
+
 ## v0.1.0 — first release
 
 The core terminal, for Windows (macOS and Linux builds are included but less tested).

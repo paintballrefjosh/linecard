@@ -25,12 +25,20 @@ A revert is a new op whose `changes` are the target op's `prev` values (a missin
 
 Remote ops whose writes change a visible value become pending changes: `added`, `edited`, `moved` (only `folder`/`parent`/`order` changed), `deleted`, `restored`, `reverted`. Added-then-deleted before acknowledgement collapses to nothing. A local edit clears the pending highlight for that object.
 
-## Encryption (Phase 2)
+## Encryption (`crates/sync`)
 
-- Group key: 256-bit, shown as a 24-word phrase / QR for pairing.
-- Op batches: XChaCha20-Poly1305 with the group key; each batch signed by the device's Ed25519 key.
-- Removing a device rotates the group key.
-- Optional secrets sync uses a separate vault key from a vault passphrase (Argon2id).
+- Group key: 256 random bits, shown as a 24-word BIP-39 phrase for pairing. HKDF-SHA256 derives three independent values from it: the group id (16 bytes, hex; names the group on a relay or in a folder), the relay token (the relay stores only its SHA-256, and the first writer claims the group), and the encryption key.
+- Device key: Ed25519, generated per device. The group key and device key live in the OS keychain.
+- Everything a transport stores is a sealed item: `{v, device, key, nonce, data, sig}`. `data` is the JSON payload encrypted with XChaCha20-Poly1305 (AAD `group_id\0device`); `sig` is the device key's signature over `group_id\0device\0nonce||data`. A receiver pins each device's public key the first time it sees it and rejects items signed by another key.
+- Payloads: a `Batch { ops }` of up to 400 of the sender's own ops, or a `DeviceInfo` heartbeat (`id, name, os, appVersion, protocolVersion, sentAt`), published every minute.
+- Planned: removing a device rotates the group key; optional secrets sync with a separate vault key from a vault passphrase (Argon2id).
+
+## Transports
+
+- **Shared folder**: `<folder>/linecard-<group id>/ops/<device>/<seq:012>.json` and `devices/<device>.json`. Files are written to a temp name and renamed, each device only writes its own directory, and readers keep a per-device cursor and stop at the first missing or partial file (cloud-sync clients deliver files out of order).
+- **Relay** (`relay/`): `POST/GET /v1/groups/{group}/ops` (paged by sequence number), `PUT /v1/groups/{group}/devices/{device}`, `GET /v1/groups/{group}/devices`, bearer token. The relay keeps blobs in SQLite in arrival order, up to a per-group limit.
+
+Clients push their unsent ops, pull everything after their cursor, and repeat every 5 s (relay) or 10 s (folder), or immediately after a local edit.
 
 ## Versioning
 

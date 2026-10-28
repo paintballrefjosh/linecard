@@ -25,10 +25,12 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 
 ## Phase 2 — Sync (v0.4–0.6)
 
-- [ ] Encryption, pairing phrase/QR, device keys
-- [ ] Relay: accounts and tokens (multi-user), WebSocket push, SQLite, quotas, admin CLI
+- [x] Encryption, pairing phrase, device keys (QR: later)
+- [x] Relay: SQLite, per-group tokens, quotas, Docker image
+- [ ] Relay: WebSocket push, multi-user accounts, admin CLI
+- [x] Shared-folder transport (NAS, OneDrive, Dropbox, Syncthing)
 - [ ] GitHub transport (30 s default poll), LAN peer transport
-- [ ] Device heartbeats and version-mismatch banners
+- [x] Device heartbeats and version-mismatch banners
 - [ ] Optional encrypted secrets sync
 - [ ] Port forwarding, URL handlers, CLI
 

@@ -17,6 +17,8 @@ linecard-core-model = { workspace = true, features = ["serde"] }
 linecard-core-sync = { workspace = true, features = ["serde"] }
 linecard-core-store = { workspace = true }
 linecard-vault = { workspace = true }
+linecard-sync = { workspace = true }
+tokio = { workspace = true }
 linecard-importers = { workspace = true }
 linecard-proto = { workspace = true }
 

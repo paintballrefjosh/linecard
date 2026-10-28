@@ -22,6 +22,7 @@ pub type Result<T> = std::result::Result<T, String>;
 
 const DEVICE_KEY: &str = "device_id";
 const SEEDED_KEY: &str = "seeded";
+const SEED_UNTIL_KEY: &str = "seed_until";
 /// Object id of the app-wide default settings.
 const GLOBAL_ID: &str = "global";
 
@@ -79,8 +80,98 @@ impl Library {
                 Ok(())
             })?;
             lib.store.set_setting(SEEDED_KEY, "1").map_err(err)?;
+            // Remember where the starter content ends, so joining a sync
+            // group from an untouched install doesn't push another copy.
+            if let Some(last) = lib.last_own_op() {
+                lib.store
+                    .set_setting(SEED_UNTIL_KEY, &serde_json::to_string(&last).map_err(err)?)
+                    .map_err(err)?;
+            }
         }
         Ok(lib)
+    }
+
+    // ---- sync ----------------------------------------------------------------
+
+    /// This device's newest op.
+    pub fn last_own_op(&self) -> Option<Hlc> {
+        let me = self.device();
+        self.replica
+            .log()
+            .iter()
+            .filter(|o| o.id.device == me)
+            .map(|o| o.id.clone())
+            .max()
+    }
+
+    /// The last op of the starter content, if this install seeded it.
+    pub fn seeded_until(&self) -> Option<Hlc> {
+        self.local_setting(SEED_UNTIL_KEY)
+            .ok()
+            .flatten()
+            .and_then(|s| serde_json::from_str(&s).ok())
+    }
+
+    /// Joining a sync group: an install nobody has touched yet drops its
+    /// starter content (the group has its own). Returns the op to treat as
+    /// already pushed, so neither the starter nor its removal is sent;
+    /// `None` if the user has made changes (everything gets pushed).
+    pub fn drop_untouched_seed(&mut self) -> Result<Option<Hlc>> {
+        let seed = self.seeded_until();
+        if seed.is_none() || self.last_own_op() != seed {
+            return Ok(None);
+        }
+        self.edit(|t| {
+            let roots: Vec<String> = t.child_folders(None).iter().map(|f| f.id.clone()).collect();
+            for id in roots {
+                t.remove_folder(&id).map_err(err)?;
+            }
+            let loose: Vec<String> = t.child_connections(None).iter().map(|c| c.id.clone()).collect();
+            for id in loose {
+                t.remove_connection(&id).map_err(err)?;
+            }
+            Ok(())
+        })?;
+        Ok(self.last_own_op())
+    }
+
+    /// Ops made on this device after `after` (all of them for `None`),
+    /// oldest first: what still needs pushing.
+    pub fn own_ops_after(&self, after: Option<&Hlc>) -> Vec<Op> {
+        let me = self.device();
+        let mut ops: Vec<Op> = self
+            .replica
+            .log()
+            .iter()
+            .filter(|o| o.id.device == me && after.is_none_or(|a| o.id > *a))
+            .cloned()
+            .collect();
+        ops.sort_by(|a, b| a.id.cmp(&b.id));
+        ops
+    }
+
+    /// Merge ops from other devices. Returns how many were new; those are
+    /// stored and show up as highlighted changes.
+    pub fn apply_remote(&mut self, ops: Vec<Op>) -> Result<usize> {
+        let now = now_ms();
+        let fresh: Vec<Op> = ops
+            .into_iter()
+            .filter(|op| self.replica.apply_remote(op.clone(), now))
+            .collect();
+        if fresh.is_empty() {
+            return Ok(0);
+        }
+        self.store.append_ops(&fresh).map_err(err)?;
+        self.tree = project(&self.replica);
+        Ok(fresh.len())
+    }
+
+    pub fn sync_cursor(&self, name: &str) -> Result<Option<String>> {
+        self.store.cursor(name).map_err(err)
+    }
+
+    pub fn set_sync_cursor(&self, name: &str, value: &str) -> Result<()> {
+        self.store.set_cursor(name, value).map_err(err)
     }
 
     pub fn device(&self) -> &str {
@@ -498,6 +589,67 @@ mod tests {
             Some("spine")
         );
         assert_eq!(lib.tree().folders().count(), 2);
+    }
+
+    #[test]
+    fn two_libraries_converge_and_remote_changes_are_highlighted() {
+        let mut a = Library::open_in_memory(sample).unwrap();
+        let mut b = Library::open_in_memory(|_| {}).unwrap();
+        // Only the app-wide settings object (same id on every device).
+        assert!(b.own_ops_after(None).iter().all(|o| o.object == GLOBAL_ID));
+
+        // A's whole history arrives at B.
+        let n = b.apply_remote(a.own_ops_after(None)).unwrap();
+        assert!(n > 0);
+        assert_eq!(
+            b.tree().connection("spine01").unwrap(),
+            a.tree().connection("spine01").unwrap()
+        );
+        assert_eq!(b.apply_remote(a.own_ops_after(None)).unwrap(), 0, "duplicates ignored");
+        assert!(b.changes().get("spine01").is_some(), "highlighted as added");
+
+        // B edits; A gets just that.
+        b.changes_mut().ack_all();
+        let before = b.last_own_op();
+        b.edit(|t| {
+            t.connection_mut("spine01").map_err(err)?.name = "spine-1".into();
+            Ok(())
+        })
+        .unwrap();
+        let new = b.own_ops_after(before.as_ref());
+        assert_eq!(new.len(), 1);
+        a.apply_remote(new).unwrap();
+        assert_eq!(a.tree().connection("spine01").unwrap().name, "spine-1");
+        assert_eq!(
+            a.changes().get("spine01").unwrap().kind,
+            linecard_core_sync::ChangeKind::Edited
+        );
+    }
+
+    #[test]
+    fn seeding_is_remembered() {
+        let a = Library::open_in_memory(sample).unwrap();
+        assert_eq!(a.seeded_until(), a.last_own_op());
+        assert!(a.seeded_until().is_some());
+    }
+
+    #[test]
+    fn joining_drops_only_an_untouched_starter() {
+        let mut fresh = Library::open_in_memory(sample).unwrap();
+        let until = fresh.drop_untouched_seed().unwrap().expect("untouched");
+        assert_eq!(fresh.tree().folders().count() + fresh.tree().connections().count(), 0);
+        assert!(fresh.own_ops_after(Some(&until)).is_empty(), "nothing left to push");
+
+        let mut used = Library::open_in_memory(sample).unwrap();
+        used.edit(|t| {
+            let id = t.connections().next().unwrap().id.clone();
+            t.connection_mut(&id).unwrap().name = "mine".into();
+            Ok(())
+        })
+        .unwrap();
+        let before = used.tree().connections().count();
+        assert_eq!(used.drop_untouched_seed().unwrap(), None);
+        assert_eq!(used.tree().connections().count(), before, "user content is kept");
     }
 
     #[test]

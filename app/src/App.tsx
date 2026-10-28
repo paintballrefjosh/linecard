@@ -130,7 +130,12 @@ export default function App() {
       b.appVersion().then(setVersion);
       b.getPreferences().then((p) => setPrefs(withDefaults(p)));
       refresh(b);
-      unsub = b.onTreeChanged(() => refresh(b));
+      const offTree = b.onTreeChanged(() => refresh(b));
+      const offSync = b.onSyncChanged(() => refresh(b));
+      unsub = () => {
+        offTree();
+        offSync();
+      };
     });
     return () => unsub();
   }, [refresh]);
@@ -274,7 +279,7 @@ export default function App() {
                 }}
               />
             </div>
-            {view === "devices" && <DevicesPage devices={devices} />}
+            {view === "devices" && <DevicesPage devices={devices} syncOn={sync.state !== "off"} />}
             {view === "settings" && <SettingsPage theme={pref} onTheme={setPref} />}
           </div>
 

@@ -25,8 +25,10 @@ You don't need Rust, Node.js or anything else in the next section to use Linecar
 | Copy on highlight, right-click paste, confirmation before multi-line pastes | Done |
 | Session logging, keyword highlighting, reconnect, saved workspaces, six pane layouts | Done |
 | Import from SecureCRT, PuTTY, SuperPuTTY, mRemoteNG and OpenSSH config | Done |
-| Local storage as an op log (the basis for sync and per-change revert) | Done |
-| Sync between computers, relay, RDP and VNC | Next — see [docs/roadmap.md](docs/roadmap.md) |
+| Local storage as an op log, with per-change revert | Done |
+| End-to-end encrypted sync through a shared folder or a self-hosted relay; 24-word pairing phrase; Devices page | Done |
+| Port forwarding, ssh:// and telnet:// links, command-line launcher | Next |
+| RDP and VNC | Later — see [docs/roadmap.md](docs/roadmap.md) |
 
 ## Building from source
 

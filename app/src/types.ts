@@ -85,9 +85,18 @@ export interface Device {
   appVersion: string;
   protocolVersion: number;
   lastSeen: number;
-  transport: "relay" | "git" | "lan";
+  /** "folder", "relay", or "" when sync is off. */
+  transport: string;
   pendingOps: number;
   isThisDevice: boolean;
+}
+
+export type SyncTransport = "folder" | "relay";
+
+export interface SyncConfig {
+  transport: SyncTransport;
+  /** Folder path or relay URL. */
+  location: string;
 }
 
 export type SyncState =
