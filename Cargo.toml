@@ -15,7 +15,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/OWNER/linecard"
+repository = "https://github.com/paintballrefjosh/linecard"
 rust-version = "1.89"  # russh
 
 [workspace.dependencies]

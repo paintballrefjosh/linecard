@@ -56,7 +56,7 @@ Release build: `npm run tauri build` → installer in `target/release/bundle/nsi
 
 ## First-time repo setup
 
-1. Create `github.com/<you>/linecard` (the `linecard` GitHub org is taken by an unrelated project) and replace `OWNER` in `Cargo.toml` and `app/src-tauri/tauri.conf.json`.
+1. The repository is `github.com/paintballrefjosh/linecard` (the `linecard` GitHub org is taken by an unrelated project).
 2. Run `npm install` in `app/` and commit `app/package-lock.json` and `Cargo.lock` — CI uses them.
 3. Add `LICENSE-APACHE` (GitHub's "Add file → Create new file → LICENSE-APACHE → Choose a license template → Apache 2.0").
 4. Generate the update-signing key and add the repo secrets — see [docs/releasing.md](docs/releasing.md).
