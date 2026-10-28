@@ -117,6 +117,8 @@ export interface AuthEvent {
   title: string;
   instructions: string;
   fields: PromptField[];
+  /** Offer "Save password" with this initial state; null = don't offer. */
+  remember: boolean | null;
 }
 
 export type SessionEvent =
@@ -130,6 +132,16 @@ export type SessionEvent =
 export type HostKeyDecision = "acceptAndSave" | "acceptOnce" | "reject";
 
 export type PromptReply =
-  { type: "hostKey"; decision: HostKeyDecision } | { type: "fields"; values: string[] } | { type: "cancel" };
+  | { type: "hostKey"; decision: HostKeyDecision }
+  | { type: "fields"; values: string[]; remember: boolean }
+  | { type: "cancel" };
 
 export type LayoutId = "1" | "2v" | "2h" | "3c" | "1+2" | "4";
+
+/** A password saved in the OS keychain (the secret itself never reaches the UI). */
+export interface SavedPassword {
+  key: string;
+  /** e.g. "admin@10.0.0.1" */
+  label: string;
+  savedAt: number;
+}

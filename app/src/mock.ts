@@ -178,6 +178,8 @@ export function mockBackend(): Backend {
   const trustedHosts = new Set<string>();
   /** Used when the browser denies clipboard access (e.g. automated previews). */
   let memClipboard = "";
+  /** login label -> saved-at, standing in for the OS keychain. */
+  const savedPasswords = new Map<string, number>();
 
   // Fields the tree nodes don't carry, as the Rust side stores them.
   const extra = new Map<string, { username: string | null; notes: string; serial: SerialSettings | null }>();
@@ -331,6 +333,12 @@ export function mockBackend(): Backend {
         /* storage unavailable: keep in memory only */
       }
     },
+    async listSavedPasswords() {
+      return [...savedPasswords].map(([label, savedAt]) => ({ key: `ssh:${label}`, label, savedAt }));
+    },
+    async forgetSavedPassword(key) {
+      savedPasswords.delete(key.replace(/^ssh:/, ""));
+    },
     async clipboardRead() {
       try {
         return await navigator.clipboard.readText();
@@ -357,16 +365,20 @@ export function mockBackend(): Backend {
       // SSH walks through the same prompts as the real driver: host key on
       // first contact, then a password ("wrong" is refused).
       const [hostname] = node.endpoint.split(":");
+      const login = `admin@${hostname}`;
       const askPassword = () =>
         onEvent({
           event: "auth",
-          title: `Password for admin@${hostname}`,
+          title: `Password for ${login}`,
           instructions: "",
           fields: [{ label: "Password", echo: false }],
+          remember: savedPasswords.has(login),
         });
+      // A saved password logs straight in, as the real driver does.
+      const authenticate = () => (savedPasswords.has(login) ? connect() : askPassword());
       if (node.kind === "ssh") {
         setTimeout(() => {
-          if (trustedHosts.has(node.endpoint)) return askPassword();
+          if (trustedHosts.has(node.endpoint)) return authenticate();
           onEvent({
             event: "hostKey",
             host: hostname,
@@ -386,11 +398,14 @@ export function mockBackend(): Backend {
             onEvent({ event: "disconnected", reason: r.type === "cancel" ? "canceled" : "host key not accepted" });
           } else if (r.type === "hostKey") {
             if (r.decision === "acceptAndSave") trustedHosts.add(node.endpoint);
-            setTimeout(askPassword, 200);
+            setTimeout(authenticate, 200);
           } else if (r.values[0] === "wrong" || !r.values[0]) {
             send("\x1b[31mAccess denied\x1b[0m\r\n");
             setTimeout(askPassword, 200);
-          } else setTimeout(connect, 200);
+          } else {
+            if (r.remember) savedPasswords.set(login, Date.now());
+            setTimeout(connect, 200);
+          }
         },
         write(data) {
           for (const ch of data) {

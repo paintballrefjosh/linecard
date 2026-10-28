@@ -1,4 +1,13 @@
-import type { ConnectionDraft, ConnectionNode, Device, PromptReply, SessionEvent, SyncState, TreeNode } from "./types";
+import type {
+  ConnectionDraft,
+  ConnectionNode,
+  Device,
+  PromptReply,
+  SavedPassword,
+  SessionEvent,
+  SyncState,
+  TreeNode,
+} from "./types";
 import { mockBackend } from "./mock";
 import type { Preferences } from "./prefs";
 
@@ -34,6 +43,8 @@ export interface Backend {
   /** This device's stored preferences (null on first run). */
   getPreferences(): Promise<Partial<Preferences> | null>;
   setPreferences(p: Preferences): Promise<void>;
+  listSavedPasswords(): Promise<SavedPassword[]>;
+  forgetSavedPassword(key: string): Promise<void>;
   clipboardRead(): Promise<string>;
   clipboardWrite(text: string): Promise<void>;
   /** Open a session. Saved connections are looked up by id; quick-connect
@@ -72,6 +83,8 @@ async function tauriBackend(): Promise<Backend> {
     duplicateConnection: (id) => invoke<string>("duplicate_connection", { id }),
     getPreferences: () => invoke<Partial<Preferences> | null>("get_preferences"),
     setPreferences: (preferences) => invoke("set_preferences", { preferences }),
+    listSavedPasswords: () => invoke<SavedPassword[]>("list_saved_passwords"),
+    forgetSavedPassword: (key) => invoke("forget_saved_password", { key }),
     // The clipboard plugin: WebView2 can refuse navigator.clipboard reads.
     clipboardRead: async () => (await clipboard).readText().catch(() => ""),
     clipboardWrite: async (text) => (await clipboard).writeText(text),

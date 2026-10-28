@@ -2,14 +2,16 @@
 //! on 127.0.0.1: host-key prompts and known_hosts, password and
 //! keyboard-interactive auth, shell I/O, resize, cancel and close.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use linecard_proto::ssh::SshSession;
 use linecard_proto::{
-    EventSink, HostKeyDecision, HostKeyStatus, PromptReply, Session, SessionEvent, SshOptions, TerminalTarget,
+    Credentials, EventSink, HostKeyDecision, HostKeyStatus, PromptReply, Session, SessionEvent, SshOptions,
+    TerminalTarget,
 };
 use russh::keys::PrivateKey;
 use russh::server::{self, Auth, Msg, Response};
@@ -32,7 +34,7 @@ const OTHER_PUBLIC: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICRKKT184R+EfAIX
 
 // ---- test server ---------------------------------------------------------------
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum Mode {
     Password,
     KeyboardInteractive,
@@ -181,10 +183,24 @@ fn temp_known_hosts() -> PathBuf {
 fn options(known_hosts: PathBuf) -> SshOptions {
     // No agent or identity files: the developer's own keys must not leak into tests.
     SshOptions {
+        credentials: None,
         known_hosts,
         extra_known_hosts: vec![],
         identity_files: vec![],
         use_agent: false,
+    }
+}
+
+/// In-memory stand-in for the OS keychain.
+#[derive(Debug, Default)]
+struct MemoryCreds(Mutex<HashMap<String, String>>);
+
+impl Credentials for MemoryCreds {
+    fn password(&self, key: &str) -> Option<String> {
+        self.0.lock().unwrap().get(key).cloned()
+    }
+    fn save_password(&self, key: &str, _label: &str, password: &str) {
+        self.0.lock().unwrap().insert(key.into(), password.into());
     }
 }
 
@@ -243,7 +259,10 @@ impl Probe {
     }
 
     fn password(&mut self, p: &str) {
-        self.reply(PromptReply::Fields(vec![p.into()]));
+        self.reply(PromptReply::Fields {
+            values: vec![p.into()],
+            remember: false,
+        });
     }
 }
 
@@ -327,7 +346,10 @@ async fn keyboard_interactive_asks_for_username_first() {
         }
         other => panic!("expected a username prompt, got {other:?}"),
     }
-    c.reply(PromptReply::Fields(vec!["admin".into()]));
+    c.reply(PromptReply::Fields {
+        values: vec!["admin".into()],
+        remember: false,
+    });
 
     match c.event().await {
         SessionEvent::Auth(p) => {
@@ -389,6 +411,73 @@ async fn changed_host_key_warns_and_can_be_replaced() {
         "no prompt after replacing"
     );
     c.session.close().unwrap();
+}
+
+#[tokio::test]
+async fn saved_passwords_are_offered_used_and_updated() {
+    for mode in [Mode::Password, Mode::KeyboardInteractive] {
+        let port = start_server(mode).await;
+        let creds = Arc::new(MemoryCreds::default());
+        let mut opts = options(temp_known_hosts());
+        opts.credentials = Some(creds.clone());
+        let key = format!("ssh:admin@127.0.0.1:{port}");
+
+        // First login: "Save password" offered unticked; ticking it saves.
+        let mut c = connect(port, Some("admin"), &opts);
+        assert!(matches!(c.event().await, SessionEvent::HostKey(_)));
+        c.reply(PromptReply::HostKey(HostKeyDecision::AcceptAndSave));
+        match c.event().await {
+            SessionEvent::Auth(p) => assert_eq!(p.remember, Some(false)),
+            other => panic!("expected a password prompt, got {other:?}"),
+        }
+        c.reply(PromptReply::Fields {
+            values: vec!["secret".into()],
+            remember: true,
+        });
+        assert_eq!(c.event().await, SessionEvent::Connected);
+        c.session.close().unwrap();
+        assert_eq!(creds.password(&key).as_deref(), Some("secret"));
+
+        // Next login uses it without asking.
+        let mut c = connect(port, Some("admin"), &opts);
+        assert_eq!(
+            c.event().await,
+            SessionEvent::Connected,
+            "{mode:?}: no prompt with a saved password"
+        );
+        c.session.close().unwrap();
+
+        // The device's password changed: say so, ask with the box ticked, update.
+        creds.save_password(&key, "admin@127.0.0.1", "old-password");
+        let mut c = connect(port, Some("admin"), &opts);
+        match c.event().await {
+            SessionEvent::Auth(p) => assert_eq!(p.remember, Some(true)),
+            other => panic!("expected a re-prompt, got {other:?}"),
+        }
+        assert!(c.screen.contains("Saved password was not accepted"), "{}", c.screen);
+        c.reply(PromptReply::Fields {
+            values: vec!["secret".into()],
+            remember: true,
+        });
+        assert_eq!(c.event().await, SessionEvent::Connected);
+        c.session.close().unwrap();
+        assert_eq!(creds.password(&key).as_deref(), Some("secret"));
+    }
+}
+
+#[tokio::test]
+async fn unticked_passwords_are_not_saved() {
+    let port = start_server(Mode::Password).await;
+    let creds = Arc::new(MemoryCreds::default());
+    let mut opts = options(temp_known_hosts());
+    opts.credentials = Some(creds.clone());
+    let mut c = connect(port, Some("admin"), &opts);
+    c.event().await;
+    c.reply(PromptReply::HostKey(HostKeyDecision::AcceptOnce));
+    c.event().await;
+    c.password("secret");
+    assert_eq!(c.event().await, SessionEvent::Connected);
+    assert!(creds.0.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

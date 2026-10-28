@@ -14,7 +14,7 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 - [ ] SSH: passphrase-protected keys, jump hosts, reconnect
 - [x] Connection editor dialog
 - [ ] Show inherited values in the connection editor
-- [ ] Credential vault on the OS keychain
+- [x] Credential vault: saved passwords in the OS keychain (Windows Credential Manager), "Save password" on login prompts, list and remove in Settings
 - [ ] Session logging and keyword highlighting
 - [ ] mRemoteNG, SuperPuTTY, PuTTY, ssh_config importers + import preview wizard
 - [ ] Saved workspaces

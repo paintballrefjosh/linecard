@@ -270,6 +270,8 @@ pub enum SessionEventDto {
         title: String,
         instructions: String,
         fields: Vec<PromptFieldDto>,
+        /// Offer "Save password" with this initial state; null = don't offer.
+        remember: Option<bool>,
     },
     Disconnected {
         reason: Option<String>,
@@ -307,6 +309,7 @@ impl From<linecard_proto::SessionEvent> for SessionEventDto {
                         echo: f.echo,
                     })
                     .collect(),
+                remember: p.remember,
             },
             E::Disconnected { reason } => SessionEventDto::Disconnected { reason },
         }
@@ -325,8 +328,14 @@ pub enum HostKeyDecisionDto {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum PromptReplyDto {
-    HostKey { decision: HostKeyDecisionDto },
-    Fields { values: Vec<String> },
+    HostKey {
+        decision: HostKeyDecisionDto,
+    },
+    Fields {
+        values: Vec<String>,
+        #[serde(default)]
+        remember: bool,
+    },
     Cancel,
 }
 
@@ -339,7 +348,7 @@ impl From<PromptReplyDto> for linecard_proto::PromptReply {
                 HostKeyDecisionDto::AcceptOnce => D::AcceptOnce,
                 HostKeyDecisionDto::Reject => D::Reject,
             }),
-            PromptReplyDto::Fields { values } => R::Fields(values),
+            PromptReplyDto::Fields { values, remember } => R::Fields { values, remember },
             PromptReplyDto::Cancel => R::Cancel,
         }
     }

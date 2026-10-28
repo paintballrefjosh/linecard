@@ -6,8 +6,10 @@
 //! callback given at connect time. Tabs, panes, logging and reconnect
 //! therefore work the same for every protocol.
 
+use std::fmt;
 use std::io;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub use linecard_core_model::ConnectionKind;
 
@@ -70,6 +72,9 @@ pub struct AuthPrompt {
     /// Server-supplied text (keyboard-interactive), may be empty.
     pub instructions: String,
     pub fields: Vec<PromptField>,
+    /// Offer "Save password" with this initial state (`None` = don't offer,
+    /// e.g. for usernames and one-time codes).
+    pub remember: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,8 +88,12 @@ pub struct PromptField {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PromptReply {
     HostKey(HostKeyDecision),
-    /// One value per [`PromptField`], in order.
-    Fields(Vec<String>),
+    /// One value per [`PromptField`], in order; `remember` is the "Save
+    /// password" checkbox (ignored when the prompt didn't offer it).
+    Fields {
+        values: Vec<String>,
+        remember: bool,
+    },
     /// The user closed the prompt: abandon the connection.
     Cancel,
 }
@@ -122,6 +131,9 @@ pub struct TerminalTarget {
     pub username: Option<String>,
     /// SSH keepalive interval (`None` or 0 = off).
     pub keepalive_secs: Option<u32>,
+    /// Saved-password slot to use (a shared credential's id). Default:
+    /// one per `user@host:port`.
+    pub credential_key: Option<String>,
 }
 
 impl TerminalTarget {
@@ -134,13 +146,24 @@ impl TerminalTarget {
             term_type: "xterm-256color".into(),
             username: None,
             keepalive_secs: None,
+            credential_key: None,
         }
     }
+}
+
+/// Saved passwords, as the app stores them (the OS keychain). Drivers only
+/// see this interface.
+pub trait Credentials: Send + Sync + fmt::Debug {
+    fn password(&self, key: &str) -> Option<String>;
+    /// `label` is what Settings shows, e.g. "admin@10.0.0.1".
+    fn save_password(&self, key: &str, label: &str, password: &str);
 }
 
 /// App-wide SSH settings (where keys and known hosts live).
 #[derive(Debug, Clone, Default)]
 pub struct SshOptions {
+    /// Saved passwords; `None` = never save or reuse them.
+    pub credentials: Option<Arc<dyn Credentials>>,
     /// Linecard's own known_hosts; accepted keys are written here.
     pub known_hosts: PathBuf,
     /// Also trusted, never written (e.g. `~/.ssh/known_hosts`).

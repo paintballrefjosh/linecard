@@ -23,8 +23,8 @@ use russh::{cipher, kex, mac, ChannelMsg, Disconnect, MethodKind, MethodSet, Pre
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use crate::{
-    AuthPrompt, ConnectionKind, EventSink, HostKeyDecision, HostKeyPrompt, HostKeyStatus, PromptField, PromptReply,
-    Session, SessionEvent, SshOptions, TerminalTarget,
+    AuthPrompt, ConnectionKind, Credentials, EventSink, HostKeyDecision, HostKeyPrompt, HostKeyStatus, PromptField,
+    PromptReply, Session, SessionEvent, SshOptions, TerminalTarget,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -146,6 +146,11 @@ impl From<io::Error> for Failure {
 
 // ---- talking to the UI ---------------------------------------------------------
 
+struct Answer {
+    values: Vec<String>,
+    remember: bool,
+}
+
 #[derive(Clone)]
 struct Ui {
     events: Arc<Mutex<EventSink>>,
@@ -175,19 +180,19 @@ impl Ui {
             match self.next_reply().await {
                 PromptReply::HostKey(d) => return d,
                 PromptReply::Cancel => return HostKeyDecision::Reject,
-                PromptReply::Fields(_) => {} // stale answer to an earlier prompt
+                PromptReply::Fields { .. } => {} // stale answer to an earlier prompt
             }
         }
     }
 
-    async fn ask(&self, prompt: AuthPrompt) -> Result<Vec<String>, Failure> {
+    async fn ask(&self, prompt: AuthPrompt) -> Result<Answer, Failure> {
         let n = prompt.fields.len();
         self.emit(SessionEvent::Auth(prompt));
         loop {
             match self.next_reply().await {
-                PromptReply::Fields(mut v) => {
-                    v.resize(n, String::new());
-                    return Ok(v);
+                PromptReply::Fields { mut values, remember } => {
+                    values.resize(n, String::new());
+                    return Ok(Answer { values, remember });
                 }
                 PromptReply::Cancel => return Err(Failure::Canceled),
                 PromptReply::HostKey(_) => {}
@@ -430,8 +435,9 @@ async fn authenticate(
                     label: "Username".into(),
                     echo: true,
                 }],
+                remember: None,
             };
-            ui.ask(prompt).await?.remove(0)
+            ui.ask(prompt).await?.values.remove(0)
         }
     };
 
@@ -459,36 +465,104 @@ async fn authenticate(
     }
 
     let who = format!("{user}@{}", target.host);
-    for attempt in 0..AUTH_ATTEMPTS {
-        if attempt > 0 {
-            ui.print("\x1b[31mAccess denied\x1b[0m\n");
-        }
+    let mut pw = Passwords {
+        creds: opts.credentials.as_deref(),
+        key: target
+            .credential_key
+            .clone()
+            .unwrap_or_else(|| format!("ssh:{user}@{}:{}", target.host, target.port)),
+        label: who.clone(),
+        saved: None,
+        had_saved: false,
+        typed: None,
+    };
+    pw.saved = pw.creds.and_then(|c| c.password(&pw.key));
+    pw.had_saved = pw.saved.is_some();
+
+    let mut denied = 0;
+    while denied < AUTH_ATTEMPTS {
+        let used_saved = pw.saved.is_some();
         let result = if methods.contains(&MethodKind::KeyboardInteractive) {
-            keyboard_interactive(h, &user, &who, ui).await?
+            keyboard_interactive(h, &user, &who, ui, &mut pw).await?
         } else if methods.contains(&MethodKind::Password) {
-            let prompt = AuthPrompt {
-                title: format!("Password for {who}"),
-                instructions: String::new(),
-                fields: vec![PromptField {
-                    label: "Password".into(),
-                    echo: false,
-                }],
+            let password = match pw.saved.take() {
+                Some(p) => p,
+                None => {
+                    let prompt = AuthPrompt {
+                        title: format!("Password for {who}"),
+                        instructions: String::new(),
+                        fields: vec![PromptField {
+                            label: "Password".into(),
+                            echo: false,
+                        }],
+                        remember: pw.offer(),
+                    };
+                    let a = ui.ask(prompt).await?;
+                    let p = a.values.into_iter().next().unwrap_or_default();
+                    pw.typed = Some((p.clone(), a.remember));
+                    p
+                }
             };
-            let password = ui.ask(prompt).await?.remove(0);
             step(h.authenticate_password(&user, password).await?)
         } else {
             break;
         };
         match result {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                pw.keep();
+                return Ok(());
+            }
             Err(m) => methods = m,
         }
+        if used_saved && pw.saved.is_none() && pw.typed.is_none() {
+            ui.print("\x1b[2mSaved password was not accepted\x1b[0m\n");
+        } else {
+            denied += 1;
+            ui.print("\x1b[31mAccess denied\x1b[0m\n");
+        }
+        pw.typed = None;
     }
     Err(Failure::Msg(format!("authentication failed for {who}")))
 }
 
+/// The saved-password slot for one login: tried once, silently, before
+/// asking; a password the user types is saved only if they ticked the box.
+struct Passwords<'a> {
+    creds: Option<&'a dyn Credentials>,
+    key: String,
+    label: String,
+    /// Saved password not yet tried.
+    saved: Option<String>,
+    had_saved: bool,
+    /// Last typed password and its "Save password" choice.
+    typed: Option<(String, bool)>,
+}
+
+impl Passwords<'_> {
+    /// Checkbox state to offer: ticked if a saved one exists (so a changed
+    /// password updates it), absent when there's nowhere to save.
+    fn offer(&self) -> Option<bool> {
+        self.creds.map(|_| self.had_saved)
+    }
+
+    /// Login succeeded: save what was typed, if asked to.
+    fn keep(&self) {
+        if let (Some(creds), Some((p, true))) = (self.creds, &self.typed) {
+            creds.save_password(&self.key, &self.label, p);
+        }
+    }
+}
+
 /// Network gear usually prompts this way ("Password:", sometimes a token).
-async fn keyboard_interactive(h: &mut Handle<Client>, user: &str, who: &str, ui: &Ui) -> Result<Step, Failure> {
+/// A lone secret prompt is treated as the password: answered from the
+/// saved one first, and offered for saving.
+async fn keyboard_interactive(
+    h: &mut Handle<Client>,
+    user: &str,
+    who: &str,
+    ui: &Ui,
+    pw: &mut Passwords<'_>,
+) -> Result<Step, Failure> {
     let mut reply = h.authenticate_keyboard_interactive_start(user, None).await?;
     loop {
         match reply {
@@ -499,8 +573,11 @@ async fn keyboard_interactive(h: &mut Handle<Client>, user: &str, who: &str, ui:
                 instructions,
                 prompts,
             } => {
+                let is_password = prompts.len() == 1 && !prompts[0].echo;
                 let answers = if prompts.is_empty() {
                     Vec::new()
+                } else if let (true, Some(saved)) = (is_password, pw.saved.take()) {
+                    vec![saved]
                 } else {
                     let prompt = AuthPrompt {
                         title: if name.trim().is_empty() {
@@ -516,8 +593,13 @@ async fn keyboard_interactive(h: &mut Handle<Client>, user: &str, who: &str, ui:
                                 echo: p.echo,
                             })
                             .collect(),
+                        remember: if is_password { pw.offer() } else { None },
                     };
-                    ui.ask(prompt).await?
+                    let a = ui.ask(prompt).await?;
+                    if is_password {
+                        pw.typed = a.values.first().map(|p| (p.clone(), a.remember));
+                    }
+                    a.values
                 };
                 reply = h.authenticate_keyboard_interactive_respond(answers).await?;
             }

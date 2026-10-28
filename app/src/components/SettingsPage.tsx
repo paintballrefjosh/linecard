@@ -1,6 +1,9 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { getBackend } from "../api";
 import type { ThemePref } from "../theme";
 import { usePrefs } from "../prefs";
+import type { SavedPassword } from "../types";
+import { relativeTime } from "./ConnectionTree";
 
 interface Props {
   theme: ThemePref;
@@ -65,7 +68,42 @@ export function SettingsPage({ theme, onTheme }: Props) {
           or <kbd>Shift</kbd>+<kbd>Insert</kbd> pastes.
         </p>
       </Section>
+
+      <SavedPasswords />
     </div>
+  );
+}
+
+/** Passwords saved from login prompts. Secrets stay in the OS keychain;
+ *  only labels are listed here. */
+function SavedPasswords() {
+  const [items, setItems] = useState<SavedPassword[] | null>(null);
+  const load = () => void getBackend().then((b) => b.listSavedPasswords().then(setItems));
+  useEffect(load, []);
+  const forget = (key: string) => void getBackend().then((b) => b.forgetSavedPassword(key).then(load));
+
+  return (
+    <Section title="Saved passwords">
+      {items === null ? null : items.length === 0 ? (
+        <p className="settings-note settings-empty">
+          None yet. Tick <b>Save password</b> when logging in to keep one in Windows Credential Manager.
+        </p>
+      ) : (
+        items.map((c) => (
+          <div className="settings-row" key={c.key}>
+            <div className="settings-text">
+              <span className="saved-label">{c.label}</span>
+              <p>Saved {relativeTime(c.savedAt)}</p>
+            </div>
+            <div className="settings-control">
+              <button className="btn" onClick={() => forget(c.key)} aria-label={`Remove saved password for ${c.label}`}>
+                Remove
+              </button>
+            </div>
+          </div>
+        ))
+      )}
+    </Section>
   );
 }
 

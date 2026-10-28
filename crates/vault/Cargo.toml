@@ -6,7 +6,18 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-# keyring = "3"              # Windows Credential Manager / macOS Keychain / libsecret
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# OS keychain: Windows Credential Manager / macOS Keychain / kernel keyutils.
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["linux-native"] }
+
+# Synced vault (Phase 2):
 # chacha20poly1305 = "0.10"   # XChaCha20-Poly1305 for the synced vault blob
 # argon2 = "0.5"              # vault passphrase -> key
 # zeroize = "1"

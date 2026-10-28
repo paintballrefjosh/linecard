@@ -8,12 +8,13 @@ mod dto;
 mod library;
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use library::{now_ms, Library};
 use linecard_core_model::{Connection, ConnectionKind, Endpoint, Folder, Settings, Tree};
 use linecard_core_sync::Hlc;
 use linecard_proto::{Session, SshOptions, TerminalTarget};
+use linecard_vault::{SavedCredential, Secret, Vault};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -24,6 +25,7 @@ struct AppState {
     lib: Mutex<Library>,
     sessions: Mutex<HashMap<String, Box<dyn Session>>>,
     ssh: SshOptions,
+    vault: Arc<Vault>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -288,6 +290,19 @@ fn set_preferences(state: State<AppState>, preferences: serde_json::Value) -> Cm
         .set_local_setting(PREFERENCES_KEY, &preferences.to_string())
 }
 
+// ---- saved passwords ---------------------------------------------------------
+
+/// What's saved in the keychain (labels only, never secrets).
+#[tauri::command]
+fn list_saved_passwords(state: State<AppState>) -> Vec<SavedCredential> {
+    state.vault.list()
+}
+
+#[tauri::command]
+fn forget_saved_password(state: State<AppState>, key: String) -> CmdResult<()> {
+    state.vault.forget(&key).map_err(err)
+}
+
 // ---- devices & sync ----------------------------------------------------------
 
 #[tauri::command]
@@ -340,9 +355,28 @@ fn parse_endpoint(endpoint: &str, kind: ConnectionKind) -> Option<(Option<String
     Some((user, host.to_string(), port))
 }
 
+/// Saved passwords for the SSH driver, kept in the OS keychain.
+struct VaultCredentials(Arc<Vault>);
+
+impl std::fmt::Debug for VaultCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("VaultCredentials")
+    }
+}
+
+impl linecard_proto::Credentials for VaultCredentials {
+    fn password(&self, key: &str) -> Option<String> {
+        self.0.get(key).map(|s| s.expose().to_string())
+    }
+    fn save_password(&self, key: &str, label: &str, password: &str) {
+        // A failed save only means the user is asked again next time.
+        let _ = self.0.save(key, label, Secret::new(password));
+    }
+}
+
 /// Where SSH keeps keys and trusted hosts. Linecard writes its own
 /// known_hosts and only reads the user's OpenSSH one.
-fn ssh_options(app: &AppHandle) -> SshOptions {
+fn ssh_options(app: &AppHandle, vault: Arc<Vault>) -> SshOptions {
     let home = std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(std::path::PathBuf::from);
@@ -352,6 +386,7 @@ fn ssh_options(app: &AppHandle) -> SshOptions {
         .app_data_dir()
         .unwrap_or_else(|_| std::env::temp_dir().join("linecard"));
     SshOptions {
+        credentials: Some(Arc::new(VaultCredentials(vault))),
         known_hosts: data.join("known_hosts"),
         extra_known_hosts: dot_ssh.iter().map(|d| d.join("known_hosts")).collect(),
         identity_files: dot_ssh
@@ -387,6 +422,8 @@ async fn open_session(
                 let mut t = TerminalTarget::new(host.clone(), *port);
                 t.username = settings.username;
                 t.keepalive_secs = settings.keepalive_secs;
+                // A shared credential (e.g. set on a folder) pools the saved password.
+                t.credential_key = settings.credential_id.map(|id| format!("cred:{id}"));
                 (c.kind, t)
             }
             Err(_) => {
@@ -457,10 +494,13 @@ pub fn run() {
             let data = app.path().app_data_dir()?;
             let lib = Library::open(&data.join("library.db"), seed_starter)
                 .map_err(|e| format!("could not open the connection library: {e}"))?;
+            // Secrets live in the OS keychain; this file only lists what's saved.
+            let vault = Arc::new(Vault::keychain(data.join("credentials.json")));
             app.manage(AppState {
                 lib: Mutex::new(lib),
                 sessions: Mutex::new(HashMap::new()),
-                ssh: ssh_options(app.handle()),
+                ssh: ssh_options(app.handle(), vault.clone()),
+                vault,
             });
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_title("Linecard");
@@ -481,6 +521,8 @@ pub fn run() {
             revert_op,
             get_preferences,
             set_preferences,
+            list_saved_passwords,
+            forget_saved_password,
             get_devices,
             get_sync_state,
             open_session,

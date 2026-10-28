@@ -128,11 +128,12 @@ function HostKeyCard({ prompt, onReply }: { prompt: HostKeyEvent; onReply(r: Pro
 
 function AuthCard({ prompt, onReply }: { prompt: AuthEvent; onReply(r: PromptReply): void }) {
   const [values, setValues] = useState(() => prompt.fields.map(() => ""));
+  const [remember, setRemember] = useState(prompt.remember ?? false);
   const first = useRef<HTMLInputElement>(null);
   useEffect(() => first.current?.focus(), []);
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    onReply({ type: "fields", values });
+    onReply({ type: "fields", values, remember: prompt.remember !== null && remember });
   };
   return (
     <form
@@ -159,6 +160,13 @@ function AuthCard({ prompt, onReply }: { prompt: AuthEvent; onReply(r: PromptRep
           />
         </label>
       ))}
+      {prompt.remember !== null && (
+        <label className="prompt-check">
+          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+          Save password
+          <span className="prompt-check-hint">in Windows Credential Manager</span>
+        </label>
+      )}
       <div className="prompt-actions">
         <button type="button" className="btn" onClick={() => onReply({ type: "cancel" })}>
           Cancel
