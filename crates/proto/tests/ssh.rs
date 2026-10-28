@@ -13,8 +13,8 @@ use linecard_proto::{
     Credentials, EventSink, HostKeyDecision, HostKeyStatus, PromptReply, Session, SessionEvent, SshOptions,
     TerminalTarget,
 };
-use russh::keys::PrivateKey;
-use russh::server::{self, Auth, Msg, Response};
+use russh::keys::{PrivateKey, PublicKey};
+use russh::server::{self, Auth, Msg, PublicKeyOffer, Response, VerifiedPublicKey};
 use russh::{Channel, ChannelId, MethodKind, MethodSet};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
@@ -32,15 +32,37 @@ const HOST_FINGERPRINT: &str = "SHA256:iVxAQiFJZeZYlU9KKfVhxXsCjnnmVyysNOGExA17h
 const HOST_PUBLIC: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO3AnSt3obWpSgBrGPPK0DPVE//3rrKtYDAZBm2ZnQh6";
 const OTHER_PUBLIC: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICRKKT184R+EfAIXretwOCSEPkE8eN7b3FFdjjTs3VO6";
 
+/// A user key protected by the passphrase "open sesame" (throwaway, tests only).
+const USER_KEY: &str = "-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAACmFlczI1Ni1jdHIAAAAGYmNyeXB0AAAAGAAAABCZfEKMHA
+GF34YEyIQY8K5kAAAAEAAAAAEAAAAzAAAAC3NzaC1lZDI1NTE5AAAAINl6L25yBTGVbJ/l
+fx+Dy1jI4CbQQEHi0Ii96aKs7PkdAAAAoMaip1mgNDGy0wDzntUygL/W0JBw6FnAa7JcZM
+a24xA8c2U79xl+k93n7qJATXhlXNHxTHLlTNR5ORXxH6zr7YdqupiULVNeyKNtG8WhlU6p
+mMRAVFLSbTIOnKNst5I/TRSeAD6eZPCnD1JaP33pGkccKCKeZt39bceLdvbuK3MCl1blR7
+15nkaMJc0fwOU5B5bbaY65P6TjALh7hop1InQ=
+-----END OPENSSH PRIVATE KEY-----
+";
+const USER_PUBLIC: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINl6L25yBTGVbJ/lfx+Dy1jI4CbQQEHi0Ii96aKs7Pkd";
+
 // ---- test server ---------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug)]
 enum Mode {
     Password,
     KeyboardInteractive,
+    /// Public key or password; the key is authorized only if .
+    KeyOrPassword(bool),
 }
 
-struct Shell;
+struct Shell {
+    authorized: Option<PublicKey>,
+}
+
+impl Shell {
+    fn takes(&self, key: &PublicKey) -> bool {
+        self.authorized.as_ref().is_some_and(|k| k.key_data() == key.key_data())
+    }
+}
 
 /// Reject but keep offering the method, as OpenSSH and network gear do
 /// (russh's server would otherwise drop it after one failure).
@@ -53,6 +75,23 @@ fn retry(method: MethodKind) -> Auth {
 
 impl server::Handler for Shell {
     type Error = russh::Error;
+
+    /// Like a real server: say yes to the probe only for an authorized key.
+    async fn auth_publickey_offered(&mut self, _user: &str, offer: PublicKeyOffer<'_>) -> Result<Auth, Self::Error> {
+        Ok(if self.takes(offer.public_key) {
+            Auth::Accept
+        } else {
+            Auth::reject()
+        })
+    }
+
+    async fn auth_publickey(&mut self, _user: &str, key: VerifiedPublicKey<'_>) -> Result<Auth, Self::Error> {
+        Ok(if self.takes(key.public_key) {
+            Auth::Accept
+        } else {
+            Auth::reject()
+        })
+    }
 
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
         Ok(if user == "admin" && password == "secret" {
@@ -143,6 +182,11 @@ async fn start_server(mode: Mode) -> u16 {
     let methods: &[MethodKind] = match mode {
         Mode::Password => &[MethodKind::Password],
         Mode::KeyboardInteractive => &[MethodKind::KeyboardInteractive],
+        Mode::KeyOrPassword(_) => &[MethodKind::PublicKey, MethodKind::Password],
+    };
+    let authorized = match mode {
+        Mode::KeyOrPassword(true) => Some(PublicKey::from_openssh(USER_PUBLIC).unwrap()),
+        _ => None,
     };
     let config = Arc::new(server::Config {
         keys: vec![PrivateKey::from_openssh(HOST_KEY).unwrap()],
@@ -156,8 +200,11 @@ async fn start_server(mode: Mode) -> u16 {
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
             let config = config.clone();
+            let shell = Shell {
+                authorized: authorized.clone(),
+            };
             tokio::spawn(async move {
-                if let Ok(running) = server::run_stream(config, stream, Shell).await {
+                if let Ok(running) = server::run_stream(config, stream, shell).await {
                     let _ = running.await;
                 }
             });
@@ -478,6 +525,89 @@ async fn unticked_passwords_are_not_saved() {
     c.password("secret");
     assert_eq!(c.event().await, SessionEvent::Connected);
     assert!(creds.0.lock().unwrap().is_empty());
+}
+
+/// Options with the encrypted user key as the only identity file.
+fn options_with_key(creds: Option<Arc<MemoryCreds>>) -> (SshOptions, String) {
+    let known = temp_known_hosts();
+    let key_path = known.with_file_name("id_ed25519");
+    std::fs::write(&key_path, USER_KEY).unwrap();
+    let mut opts = options(known);
+    opts.identity_files = vec![key_path.clone()];
+    opts.credentials = creds.map(|c| c as Arc<dyn Credentials>);
+    (opts, format!("keyfile:{}", key_path.display()))
+}
+
+async fn past_host_key(c: &mut Probe) {
+    assert!(matches!(c.event().await, SessionEvent::HostKey(_)));
+    c.reply(PromptReply::HostKey(HostKeyDecision::AcceptOnce));
+}
+
+#[tokio::test]
+async fn encrypted_key_asks_for_its_passphrase_when_the_server_takes_it() {
+    let port = start_server(Mode::KeyOrPassword(true)).await;
+    let creds = Arc::new(MemoryCreds::default());
+    let (opts, slot) = options_with_key(Some(creds.clone()));
+
+    let mut c = connect(port, Some("admin"), &opts);
+    past_host_key(&mut c).await;
+    match c.event().await {
+        SessionEvent::Auth(p) => {
+            assert_eq!(p.title, "Passphrase for id_ed25519");
+            assert_eq!(p.remember, Some(false));
+        }
+        other => panic!("expected a passphrase prompt, got {other:?}"),
+    }
+    c.password("not it");
+    match c.event().await {
+        SessionEvent::Auth(p) => assert_eq!(p.instructions, "Wrong passphrase, try again."),
+        other => panic!("expected a retry, got {other:?}"),
+    }
+    c.reply(PromptReply::Fields {
+        values: vec!["open sesame".into()],
+        remember: true,
+    });
+    assert_eq!(c.event().await, SessionEvent::Connected);
+    c.session.close().unwrap();
+    assert_eq!(creds.password(&slot).as_deref(), Some("open sesame"));
+
+    // The saved passphrase unlocks it next time without asking.
+    let mut c = connect(port, Some("admin"), &opts);
+    past_host_key(&mut c).await;
+    assert_eq!(c.event().await, SessionEvent::Connected);
+    c.session.close().unwrap();
+}
+
+#[tokio::test]
+async fn unaccepted_keys_never_ask_for_a_passphrase() {
+    let port = start_server(Mode::KeyOrPassword(false)).await;
+    let (opts, _) = options_with_key(None);
+    let mut c = connect(port, Some("admin"), &opts);
+    past_host_key(&mut c).await;
+    match c.event().await {
+        SessionEvent::Auth(p) => assert_eq!(p.title, "Password for admin@127.0.0.1", "straight to the password"),
+        other => panic!("expected a password prompt, got {other:?}"),
+    }
+    c.password("secret");
+    assert_eq!(c.event().await, SessionEvent::Connected);
+    c.session.close().unwrap();
+}
+
+#[tokio::test]
+async fn canceling_a_passphrase_falls_back_to_password() {
+    let port = start_server(Mode::KeyOrPassword(true)).await;
+    let (opts, _) = options_with_key(None);
+    let mut c = connect(port, Some("admin"), &opts);
+    past_host_key(&mut c).await;
+    assert!(matches!(c.event().await, SessionEvent::Auth(_)));
+    c.reply(PromptReply::Cancel);
+    match c.event().await {
+        SessionEvent::Auth(p) => assert_eq!(p.title, "Password for admin@127.0.0.1"),
+        other => panic!("expected a password prompt after skipping the key, got {other:?}"),
+    }
+    c.password("secret");
+    assert_eq!(c.event().await, SessionEvent::Connected);
+    c.session.close().unwrap();
 }
 
 #[tokio::test]

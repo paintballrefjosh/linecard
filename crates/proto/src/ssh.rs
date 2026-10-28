@@ -330,15 +330,10 @@ async fn until_closed(cmds: &mut UnboundedReceiver<Cmd>) {
     }
 }
 
-async fn run(
-    target: TerminalTarget,
-    opts: Arc<SshOptions>,
-    ui: Ui,
-    mut cmds: UnboundedReceiver<Cmd>,
-) -> Result<(), Failure> {
-    let config = Arc::new(client::Config {
+fn config_for(t: &TerminalTarget) -> Arc<client::Config> {
+    Arc::new(client::Config {
         preferred: preferred(),
-        keepalive_interval: target
+        keepalive_interval: t
             .keepalive_secs
             .filter(|s| *s > 0)
             .map(|s| Duration::from_secs(s.into())),
@@ -346,27 +341,71 @@ async fn run(
         inactivity_timeout: None,
         nodelay: true,
         ..Default::default()
-    });
-    let handler = Client {
-        host: target.host.clone(),
-        port: target.port,
-        ui: ui.clone(),
-        opts: opts.clone(),
-    };
+    })
+}
 
-    let connecting = tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        client::connect(config, (target.host.as_str(), target.port), handler),
-    );
-    let mut handle = tokio::select! {
-        r = connecting => r.map_err(|_| Failure::Msg("timed out connecting".into()))??,
-        _ = until_closed(&mut cmds) => return Err(Failure::Canceled),
-    };
-
-    tokio::select! {
-        r = authenticate(&mut handle, &target, &opts, &ui) => r?,
-        _ = until_closed(&mut cmds) => return Err(Failure::Canceled),
+/// Connect and log in to `target`, through its jump hosts if it has any
+/// (outermost first; each hop is tunneled through the previous one with
+/// direct-tcpip, like OpenSSH's ProxyJump). Every hop checks its own host
+/// key and asks for its own credentials.
+async fn reach(
+    target: &TerminalTarget,
+    opts: &Arc<SshOptions>,
+    ui: &Ui,
+) -> Result<(Handle<Client>, Vec<Handle<Client>>), Failure> {
+    let mut chain = vec![target];
+    while let Some(j) = &chain.last().unwrap().jump {
+        if chain.len() > 8 {
+            return Err(Failure::Msg("too many jump hosts (is there a loop?)".into()));
+        }
+        chain.push(j);
     }
+    chain.reverse();
+
+    let mut jumps: Vec<Handle<Client>> = Vec::new();
+    for (i, hop) in chain.iter().enumerate() {
+        let handler = Client {
+            host: hop.host.clone(),
+            port: hop.port,
+            ui: ui.clone(),
+            opts: opts.clone(),
+        };
+        let connecting = async {
+            match jumps.last() {
+                None => Ok(client::connect(config_for(hop), (hop.host.as_str(), hop.port), handler).await?),
+                Some(via) => {
+                    let tunnel = via
+                        .channel_open_direct_tcpip(hop.host.as_str(), hop.port.into(), "127.0.0.1", 0)
+                        .await
+                        .map_err(|e| Failure::Msg(format!("jump host could not reach {}: {e}", hop.host)))?;
+                    Ok::<_, Failure>(client::connect_stream(config_for(hop), tunnel.into_stream(), handler).await?)
+                }
+            }
+        };
+        let mut handle = tokio::time::timeout(CONNECT_TIMEOUT, connecting)
+            .await
+            .map_err(|_| Failure::Msg(format!("timed out connecting to {}", hop.host)))??;
+        authenticate(&mut handle, hop, opts, ui).await?;
+        if i + 1 < chain.len() {
+            ui.print(&format!("\x1b[2mVia jump host {}…\x1b[0m\n", hop.host));
+        }
+        jumps.push(handle);
+    }
+    let last = jumps.pop().expect("chain has at least the target");
+    Ok((last, jumps))
+}
+
+async fn run(
+    target: TerminalTarget,
+    opts: Arc<SshOptions>,
+    ui: Ui,
+    mut cmds: UnboundedReceiver<Cmd>,
+) -> Result<(), Failure> {
+    // `_jumps` keeps the jump-host sessions (and so the tunnel) alive.
+    let (handle, _jumps) = tokio::select! {
+        r = reach(&target, &opts, &ui) => r?,
+        _ = until_closed(&mut cmds) => return Err(Failure::Canceled),
+    };
 
     let channel = handle.channel_open_session().await?;
     channel
@@ -451,13 +490,39 @@ async fn authenticate(
             return Ok(());
         }
         for path in &opts.identity_files {
-            // Missing and passphrase-protected keys are skipped for now.
-            let Ok(key) = keys::load_secret_key(path, None) else {
-                continue;
+            let Some(key) = std::fs::read_to_string(path)
+                .ok()
+                .and_then(|text| keys::PrivateKey::from_openssh(text).ok())
+            else {
+                continue; // missing or not an OpenSSH key
             };
-            let hash = h.best_supported_rsa_hash().await?.flatten();
-            let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash);
-            match step(h.authenticate_publickey(&user, key).await?) {
+            let hash = if key.algorithm().is_rsa() {
+                h.best_supported_rsa_hash().await?.flatten()
+            } else {
+                None
+            };
+            let result = if key.is_encrypted() {
+                // Offer the public half; only if the server would accept it
+                // does the signer ask for the passphrase.
+                let public = key.public_key().clone();
+                let mut signer = LockedKey {
+                    key,
+                    label: path
+                        .file_name()
+                        .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned()),
+                    slot: format!("keyfile:{}", path.display()),
+                    ui: ui.clone(),
+                    creds: opts.credentials.clone(),
+                };
+                match h.authenticate_publickey_with(&user, public, hash, &mut signer).await {
+                    Ok(r) => step(r),
+                    Err(_) => continue, // skipped, or the passphrase never matched
+                }
+            } else {
+                let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash);
+                step(h.authenticate_publickey(&user, key).await?)
+            };
+            match result {
                 Ok(()) => return Ok(()),
                 Err(m) => methods = m,
             }
@@ -523,6 +588,101 @@ async fn authenticate(
         pw.typed = None;
     }
     Err(Failure::Msg(format!("authentication failed for {who}")))
+}
+
+/// A passphrase-protected key file, unlocked only when the server has said it
+/// would accept the key (so password-only devices never ask for it).
+struct LockedKey {
+    key: keys::PrivateKey,
+    /// File name shown in the prompt, e.g. "id_ed25519".
+    label: String,
+    /// Saved-passphrase slot.
+    slot: String,
+    ui: Ui,
+    creds: Option<Arc<dyn Credentials>>,
+}
+
+#[derive(Debug)]
+enum KeyError {
+    Send,
+    /// Canceled, wrong passphrase three times, or signing failed.
+    Skipped,
+}
+
+impl From<russh::SendError> for KeyError {
+    fn from(_: russh::SendError) -> Self {
+        KeyError::Send
+    }
+}
+
+impl LockedKey {
+    async fn unlock(&self) -> Option<keys::PrivateKey> {
+        if let Some(saved) = self.creds.as_ref().and_then(|c| c.password(&self.slot)) {
+            if let Ok(k) = self.key.decrypt(saved) {
+                return Some(k);
+            }
+        }
+        for attempt in 0..AUTH_ATTEMPTS {
+            let prompt = AuthPrompt {
+                title: format!("Passphrase for {}", self.label),
+                instructions: if attempt == 0 {
+                    "The server accepts this key. Cancel to log in another way.".into()
+                } else {
+                    "Wrong passphrase, try again.".into()
+                },
+                fields: vec![PromptField {
+                    label: "Passphrase".into(),
+                    echo: false,
+                }],
+                remember: self.creds.as_ref().map(|_| false),
+            };
+            let answer = self.ui.ask(prompt).await.ok()?;
+            let passphrase = answer.values.into_iter().next().unwrap_or_default();
+            if let Ok(k) = self.key.decrypt(&passphrase) {
+                if let (true, Some(c)) = (answer.remember, &self.creds) {
+                    c.save_password(&self.slot, &format!("key {}", self.label), &passphrase);
+                }
+                return Some(k);
+            }
+        }
+        None
+    }
+}
+
+/// Sign `data` the way russh's own key auth does, appending the encoded
+/// signature (russh keeps its helper private).
+fn sign(key: &PrivateKeyWithHashAlg, data: &[u8]) -> Option<Vec<u8>> {
+    use russh::keys::signature::Signer as _;
+    use russh::keys::ssh_encoding::Encode;
+    use russh::keys::ssh_key::private::KeypairData;
+    let sig = match key.key_data() {
+        KeypairData::Rsa(rsa) => {
+            let keys::Algorithm::Rsa { hash } = key.algorithm() else {
+                return None;
+            };
+            (rsa, hash).try_sign(data).ok()?
+        }
+        keypair => keypair.try_sign(data).ok()?,
+    };
+    sig.encode_vec().ok()
+}
+
+impl russh::Signer for LockedKey {
+    type Error = KeyError;
+
+    async fn auth_sign(
+        &mut self,
+        _key: &keys::agent::AgentIdentity,
+        hash_alg: Option<HashAlg>,
+        mut to_sign: Vec<u8>,
+    ) -> Result<Vec<u8>, Self::Error> {
+        use russh::keys::ssh_encoding::Encode;
+        let unlocked = self.unlock().await.ok_or(KeyError::Skipped)?;
+        let key = PrivateKeyWithHashAlg::new(Arc::new(unlocked), hash_alg);
+        let sig = sign(&key, &to_sign).ok_or(KeyError::Skipped)?;
+        sig.as_slice().encode(&mut to_sign).map_err(|_| KeyError::Skipped)?;
+        Ok(to_sign)
+    }
 }
 
 /// The saved-password slot for one login: tried once, silently, before

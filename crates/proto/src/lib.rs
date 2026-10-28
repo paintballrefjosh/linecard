@@ -134,6 +134,8 @@ pub struct TerminalTarget {
     /// Saved-password slot to use (a shared credential's id). Default:
     /// one per `user@host:port`.
     pub credential_key: Option<String>,
+    /// SSH jump host (ProxyJump) to tunnel through; may itself have one.
+    pub jump: Option<Box<TerminalTarget>>,
 }
 
 impl TerminalTarget {
@@ -147,6 +149,7 @@ impl TerminalTarget {
             username: None,
             keepalive_secs: None,
             credential_key: None,
+            jump: None,
         }
     }
 }
