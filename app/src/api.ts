@@ -11,6 +11,7 @@ import type {
   SavedPassword,
   SessionEvent,
   SyncState,
+  TransferProtocol,
   TreeNode,
 } from "./types";
 import { mockBackend } from "./mock";
@@ -23,6 +24,9 @@ export interface SessionHandle {
   reply(r: PromptReply): void;
   /** BREAK on a serial line (password recovery, ROMMON). */
   sendBreak(): void;
+  /** XMODEM/YMODEM on serial lines; progress arrives as transfer events. */
+  startTransfer(send: boolean, protocol: TransferProtocol, path: string): Promise<void>;
+  cancelTransfer(): void;
   close(): void;
 }
 
@@ -62,6 +66,8 @@ export interface Backend {
   setLogging(l: LoggingSettings): Promise<void>;
   /** Serial ports present right now. */
   listSerialPorts(): Promise<{ name: string; description: string | null }[]>;
+  /** Native file picker; null if canceled. */
+  pickFile(mode: "open" | "save", title: string): Promise<string | null>;
   clipboardRead(): Promise<string>;
   clipboardWrite(text: string): Promise<void>;
   /** Open a session. Saved connections are looked up by id; quick-connect
@@ -109,6 +115,14 @@ async function tauriBackend(): Promise<Backend> {
     getLogging: () => invoke<LoggingSettings>("get_logging"),
     setLogging: (logging) => invoke("set_logging", { logging }),
     listSerialPorts: () => invoke("list_serial_ports"),
+    async pickFile(mode, title) {
+      const dialog = await import("@tauri-apps/plugin-dialog");
+      const picked =
+        mode === "open"
+          ? await dialog.open({ title, multiple: false, directory: false })
+          : await dialog.save({ title });
+      return typeof picked === "string" ? picked : null;
+    },
     // The clipboard plugin: WebView2 can refuse navigator.clipboard reads.
     clipboardRead: async () => (await clipboard).readText().catch(() => ""),
     clipboardWrite: async (text) => (await clipboard).writeText(text),
@@ -128,6 +142,8 @@ async function tauriBackend(): Promise<Backend> {
         resize: (cols, rows) => void invoke("session_resize", { sessionId, cols, rows }),
         reply: (reply) => void invoke("session_reply", { sessionId, reply }),
         sendBreak: () => void invoke("session_break", { sessionId }),
+        startTransfer: (send, protocol, path) => invoke("session_transfer", { sessionId, send, protocol, path }),
+        cancelTransfer: () => void invoke("session_cancel_transfer", { sessionId }),
         close: () => void invoke("session_close", { sessionId }),
       };
     },

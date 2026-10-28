@@ -131,7 +131,21 @@ export type SessionEvent =
   | { event: "title"; title: string }
   | HostKeyEvent
   | AuthEvent
+  | TransferEvent
   | { event: "disconnected"; reason: string | null };
+
+export type TransferProtocol = "xmodem" | "xmodem1k" | "ymodem";
+
+/** XMODEM/YMODEM progress on a serial line. */
+export interface TransferEvent {
+  event: "transfer";
+  file: string;
+  sending: boolean;
+  done: number;
+  total: number | null;
+  finished: boolean;
+  error: string | null;
+}
 
 export type HostKeyDecision = "acceptAndSave" | "acceptOnce" | "reject";
 

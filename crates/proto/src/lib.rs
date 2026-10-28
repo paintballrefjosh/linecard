@@ -16,6 +16,7 @@ pub use linecard_core_model::{ConnectionKind, SerialSettings};
 pub mod serial;
 pub mod ssh;
 pub mod telnet;
+pub mod xmodem;
 
 /// Something the session reports back to the UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +32,8 @@ pub enum SessionEvent {
     /// The server asks for credentials (password, keyboard-interactive,
     /// username). Answer with [`PromptReply::Fields`].
     Auth(AuthPrompt),
+    /// Progress of a file transfer (XMODEM/YMODEM on serial lines).
+    Transfer(TransferStatus),
     /// Session ended. `reason` is `None` for a clean close.
     Disconnected {
         reason: Option<String>,
@@ -99,6 +102,27 @@ pub enum PromptReply {
     Cancel,
 }
 
+/// Start a file transfer on a session (serial lines only for now).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransferRequest {
+    /// Send this file; the device must be waiting (e.g. ROMMON `xmodem`).
+    Send { path: PathBuf, protocol: xmodem::Protocol },
+    /// Receive into this file.
+    Receive { path: PathBuf, protocol: xmodem::Protocol },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransferStatus {
+    /// File name shown to the user.
+    pub file: String,
+    pub sending: bool,
+    pub done: u64,
+    /// Known when sending, or for YMODEM.
+    pub total: Option<u64>,
+    /// `None` while running; then success or the reason it stopped.
+    pub result: Option<Result<(), String>>,
+}
+
 /// Callback receiving session events. Called from the driver's I/O thread.
 pub type EventSink = Box<dyn FnMut(SessionEvent) + Send + 'static>;
 
@@ -116,6 +140,15 @@ pub trait Session: Send {
             "this session has no prompts",
         ))
     }
+    /// Start an XMODEM/YMODEM transfer; progress arrives as
+    /// [`SessionEvent::Transfer`].
+    fn start_transfer(&mut self, _req: TransferRequest) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "file transfer is only available on serial sessions",
+        ))
+    }
+    fn cancel_transfer(&mut self) {}
     /// Send a BREAK (serial consoles: password recovery, ROMMON).
     fn send_break(&mut self) -> io::Result<()> {
         Err(io::Error::new(

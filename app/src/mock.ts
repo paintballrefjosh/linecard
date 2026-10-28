@@ -424,6 +424,11 @@ export function mockBackend(): Backend {
     async setLogging(l) {
       logging = { enabled: l.enabled, folder: l.folder, timestamps: l.timestamps };
     },
+    async pickFile(mode) {
+      return mode === "open"
+        ? String.raw`C:\images\c2960x-universalk9-mz.bin`
+        : String.raw`C:\images\config-backup.txt`;
+    },
     async listSerialPorts() {
       return [
         { name: "COM3", description: "USB Serial Port" },
@@ -481,6 +486,7 @@ export function mockBackend(): Backend {
         }, 300);
       } else setTimeout(connect, 250);
       let closed = false;
+      let transferCanceled = false;
       return {
         reply(r) {
           if (closed) return;
@@ -527,6 +533,27 @@ export function mockBackend(): Backend {
           }
         },
         resize() {},
+        async startTransfer(sending, _protocol, path) {
+          // Simulate a 1.2 MB image at console speed (sped up).
+          const file = path.split(/[\\/]/).pop() ?? path;
+          const total = sending ? 1_200_000 : null;
+          let done = 0;
+          transferCanceled = false;
+          const tick = () => {
+            if (transferCanceled) {
+              onEvent({ event: "transfer", file, sending, done: 0, total, finished: true, error: "canceled" });
+              return;
+            }
+            done = Math.min(total ?? 600_000, done + 60_000);
+            const finished = done >= (total ?? 600_000);
+            onEvent({ event: "transfer", file, sending, done, total, finished, error: null });
+            if (!finished) setTimeout(tick, 120);
+          };
+          setTimeout(tick, 300);
+        },
+        cancelTransfer() {
+          transferCanceled = true;
+        },
         sendBreak() {
           send("\r\n\x1b[2m[BREAK]\x1b[0m\r\nrommon 1 > ");
         },

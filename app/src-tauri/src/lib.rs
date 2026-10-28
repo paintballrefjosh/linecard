@@ -529,6 +529,41 @@ fn list_serial_ports() -> Vec<dto::SerialPortDto> {
         .collect()
 }
 
+/// Start an XMODEM/YMODEM transfer on a serial session.
+#[tauri::command]
+fn session_transfer(
+    state: State<AppState>,
+    session_id: String,
+    send: bool,
+    protocol: String,
+    path: String,
+) -> CmdResult<()> {
+    use linecard_proto::xmodem::Protocol;
+    let protocol = match protocol.as_str() {
+        "xmodem" => Protocol::Xmodem,
+        "xmodem1k" => Protocol::Xmodem1k,
+        "ymodem" => Protocol::Ymodem,
+        other => return Err(format!("unknown protocol {other}")),
+    };
+    let path = std::path::PathBuf::from(path);
+    let req = if send {
+        linecard_proto::TransferRequest::Send { path, protocol }
+    } else {
+        linecard_proto::TransferRequest::Receive { path, protocol }
+    };
+    let mut sessions = state.sessions.lock().map_err(err)?;
+    let s = sessions.get_mut(&session_id).ok_or("session closed")?;
+    s.start_transfer(req).map_err(err)
+}
+
+#[tauri::command]
+fn session_cancel_transfer(state: State<AppState>, session_id: String) -> CmdResult<()> {
+    if let Some(s) = state.sessions.lock().map_err(err)?.get_mut(&session_id) {
+        s.cancel_transfer();
+    }
+    Ok(())
+}
+
 /// Send BREAK on a serial session.
 #[tauri::command]
 async fn session_break(state: State<'_, AppState>, session_id: String) -> CmdResult<()> {
@@ -704,6 +739,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data = app.path().app_data_dir()?;
             let lib = Library::open(&data.join("library.db"), seed_starter)
@@ -751,6 +787,8 @@ pub fn run() {
             session_resize,
             session_reply,
             session_break,
+            session_transfer,
+            session_cancel_transfer,
             list_serial_ports,
             session_close,
         ])

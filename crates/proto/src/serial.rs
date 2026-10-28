@@ -1,18 +1,22 @@
 //! Serial consoles (COM ports / USB console cables) via `serialport`.
 //!
 //! A reader thread forwards bytes to the UI; writes go straight to the port.
-//! BREAK is supported for password recovery and ROMMON on network gear.
+//! BREAK is supported for password recovery and ROMMON on network gear, and
+//! XMODEM/YMODEM transfers borrow the line while they run.
 
+use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use linecard_core_model::{FlowControl, Parity, SerialSettings};
 use serialport::SerialPort;
 
-use crate::{ConnectionKind, EventSink, Session, SessionEvent};
+use crate::xmodem::{self, Link};
+use crate::{ConnectionKind, EventSink, Session, SessionEvent, TransferRequest, TransferStatus};
 
 /// How long BREAK is held (Cisco wants ≥ 250 ms; most gear accepts this).
 const BREAK_MS: u64 = 300;
@@ -89,10 +93,21 @@ fn builder(s: &SerialSettings) -> io::Result<serialport::SerialPortBuilder> {
 pub struct SerialSession {
     port: Box<dyn SerialPort>,
     stop: Arc<AtomicBool>,
+    events: Arc<Mutex<EventSink>>,
+    /// While a transfer runs, received bytes go here instead of the terminal.
+    route: Arc<Mutex<Option<Sender<Vec<u8>>>>>,
+    /// Cancel flag of the running transfer, if any.
+    transfer: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+}
+
+fn emit(events: &Mutex<EventSink>, e: SessionEvent) {
+    if let Ok(mut sink) = events.lock() {
+        sink(e);
+    }
 }
 
 impl SerialSession {
-    pub fn connect(settings: &SerialSettings, mut events: EventSink) -> io::Result<Self> {
+    pub fn connect(settings: &SerialSettings, events: EventSink) -> io::Result<Self> {
         let port = builder(settings)?.open().map_err(|e| match e.kind {
             serialport::ErrorKind::NoDevice => io::Error::new(
                 io::ErrorKind::NotFound,
@@ -102,8 +117,10 @@ impl SerialSession {
         })?;
         let mut reader = port.try_clone().map_err(|e| io::Error::other(e.description))?;
         let stop = Arc::new(AtomicBool::new(false));
-        let stop_reader = stop.clone();
-        events(SessionEvent::Connected);
+        let events = Arc::new(Mutex::new(events));
+        let route: Arc<Mutex<Option<Sender<Vec<u8>>>>> = Arc::default();
+        let (stop_reader, events_reader, route_reader) = (stop.clone(), events.clone(), route.clone());
+        emit(&events, SessionEvent::Connected);
         thread::Builder::new()
             .name(format!("serial-{}", settings.port))
             .spawn(move || {
@@ -114,16 +131,134 @@ impl SerialSession {
                     }
                     match reader.read(&mut buf) {
                         Ok(0) => {}
-                        Ok(n) => events(SessionEvent::Data(buf[..n].to_vec())),
+                        Ok(n) => {
+                            let to_transfer = route_reader.lock().ok().and_then(|r| r.clone());
+                            match to_transfer {
+                                Some(tx) => {
+                                    let _ = tx.send(buf[..n].to_vec());
+                                }
+                                None => emit(&events_reader, SessionEvent::Data(buf[..n].to_vec())),
+                            }
+                        }
                         Err(e) if e.kind() == io::ErrorKind::TimedOut => {}
                         Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                         // Cable unplugged, adapter removed…
                         Err(e) => break Some(e.to_string()),
                     }
                 };
-                events(SessionEvent::Disconnected { reason });
+                emit(&events_reader, SessionEvent::Disconnected { reason });
             })?;
-        Ok(SerialSession { port, stop })
+        Ok(SerialSession {
+            port,
+            stop,
+            events,
+            route,
+            transfer: Arc::default(),
+        })
+    }
+}
+
+/// The serial port as an XMODEM [`Link`]: writes go to the port, reads come
+/// from the reader thread while it's routing to us.
+struct PortLink {
+    port: Box<dyn SerialPort>,
+    rx: Receiver<Vec<u8>>,
+    pending: VecDeque<u8>,
+}
+
+impl Link for PortLink {
+    fn send(&mut self, data: &[u8]) -> io::Result<()> {
+        self.port.write_all(data)?;
+        self.port.flush()
+    }
+
+    fn recv(&mut self, timeout: Duration) -> io::Result<Option<u8>> {
+        if self.pending.is_empty() {
+            if let Ok(chunk) = self.rx.recv_timeout(timeout) {
+                self.pending.extend(chunk);
+            }
+        }
+        Ok(self.pending.pop_front())
+    }
+}
+
+impl SerialSession {
+    fn run_transfer(&mut self, req: TransferRequest) -> io::Result<()> {
+        let mut slot = self
+            .transfer
+            .lock()
+            .map_err(|_| io::Error::other("transfer state poisoned"))?;
+        if slot.is_some() {
+            return Err(io::Error::other("a transfer is already running on this line"));
+        }
+        let (path, protocol, sending) = match &req {
+            TransferRequest::Send { path, protocol } => (path.clone(), *protocol, true),
+            TransferRequest::Receive { path, protocol } => (path.clone(), *protocol, false),
+        };
+        let file = path
+            .file_name()
+            .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        // Read (or create) the file up front so mistakes show immediately.
+        let data = if sending { Some(std::fs::read(&path)?) } else { None };
+        let mut out = if sending {
+            None
+        } else {
+            Some(std::fs::File::create(&path)?)
+        };
+        let total = data.as_ref().map(|d| d.len() as u64);
+
+        let (tx, rx) = channel();
+        let mut link = PortLink {
+            port: self.port.try_clone().map_err(|e| io::Error::other(e.description))?,
+            rx,
+            pending: VecDeque::new(),
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        *slot = Some(cancel.clone());
+        drop(slot);
+        *self.route.lock().map_err(|_| io::Error::other("route poisoned"))? = Some(tx);
+
+        let (events, route, slot) = (self.events.clone(), self.route.clone(), self.transfer.clone());
+        let ymodem_name = file.clone();
+        let status = move |done: u64, result: Option<Result<(), String>>| {
+            SessionEvent::Transfer(TransferStatus {
+                file: file.clone(),
+                sending,
+                done,
+                total,
+                result,
+            })
+        };
+        thread::Builder::new().name("xmodem".into()).spawn(move || {
+            emit(&events, status(0, None));
+            // Progress at most ~10 times a second.
+            let mut last = Instant::now();
+            let mut progress = |done: u64| {
+                if last.elapsed() >= Duration::from_millis(100) {
+                    last = Instant::now();
+                    emit(&events, status(done, None));
+                }
+            };
+            let result = match (&data, &mut out) {
+                (Some(d), _) => {
+                    xmodem::send(&mut link, protocol, &ymodem_name, d, &cancel, &mut progress).map(|_| d.len() as u64)
+                }
+                (None, Some(f)) => xmodem::receive(&mut link, protocol, f, &cancel, &mut progress).map(|(n, _)| n),
+                _ => unreachable!("send has data, receive has a file"),
+            };
+            // Back to the terminal.
+            if let Ok(mut r) = route.lock() {
+                *r = None;
+            }
+            if let Ok(mut s) = slot.lock() {
+                *s = None;
+            }
+            match result {
+                Ok(n) => emit(&events, status(n, Some(Ok(())))),
+                Err(e) => emit(&events, status(0, Some(Err(e.to_string())))),
+            }
+        })?;
+        Ok(())
     }
 }
 
@@ -146,7 +281,18 @@ impl Session for SerialSession {
         self.port.clear_break().map_err(|e| io::Error::other(e.description))
     }
 
+    fn start_transfer(&mut self, req: TransferRequest) -> io::Result<()> {
+        self.run_transfer(req)
+    }
+
+    fn cancel_transfer(&mut self) {
+        if let Some(c) = self.transfer.lock().ok().and_then(|t| t.clone()) {
+            c.store(true, Ordering::Relaxed);
+        }
+    }
+
     fn close(&mut self) -> io::Result<()> {
+        self.cancel_transfer();
         self.stop.store(true, Ordering::Relaxed);
         Ok(())
     }

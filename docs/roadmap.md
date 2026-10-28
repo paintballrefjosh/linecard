@@ -14,7 +14,7 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 - [x] SSH: passphrase-protected keys (asked only when the server takes the key), jump hosts (chains, inherited from folders)
 - [x] Reconnect: Enter (or the terminal menu) reconnects a dropped session in the same tab
 - [x] Serial driver (`serialport`): port picker with live ports, framing, flow control, BREAK
-- [ ] XMODEM/YMODEM file transfer over serial
+- [x] XMODEM / XMODEM-1K / YMODEM send and XMODEM receive over serial, with progress and cancel
 - [x] Connection editor dialog
 - [x] Show inherited values (and where they come from) in the connection editor
 - [x] Credential vault: saved passwords in the OS keychain (Windows Credential Manager), "Save password" on login prompts, list and remove in Settings

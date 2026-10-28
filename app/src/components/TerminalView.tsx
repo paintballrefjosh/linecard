@@ -5,8 +5,8 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { getBackend, type SessionHandle } from "../api";
 import { terminalThemes, type Theme } from "../theme";
-import type { AuthEvent, ConnectionNode, HostKeyEvent, PromptReply } from "../types";
-import { ClipboardPaste, Copy, Eraser, RotateCw, TextSelect, Zap } from "lucide-react";
+import type { AuthEvent, ConnectionNode, HostKeyEvent, PromptReply, TransferEvent, TransferProtocol } from "../types";
+import { ClipboardPaste, Copy, Download, Eraser, RotateCw, TextSelect, Upload, Zap } from "lucide-react";
 import { attachHighlighter } from "../highlight";
 import { pasteLineCount, usePrefs } from "../prefs";
 import { ContextMenu } from "./ContextMenu";
@@ -45,6 +45,23 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
   /** Multi-line text waiting for the user to confirm the paste. */
   const [pending, setPending] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [transfer, setTransfer] = useState<TransferEvent | null>(null);
+
+  /** Pick a file and start an XMODEM/YMODEM transfer on this serial line. */
+  const startTransfer = async (send: boolean, protocol: TransferProtocol) => {
+    const b = await getBackend();
+    const path = await b.pickFile(send ? "open" : "save", send ? "File to send" : "Save received file as");
+    if (!path || !sessionRef.current) return;
+    if (send)
+      term.current?.write(
+        `\r\n\x1b[2m[Waiting for the device to start receiving ${path.split(/[\\/]/).pop()}…]\x1b[0m\r\n`,
+      );
+    try {
+      await sessionRef.current.startTransfer(send, protocol, path);
+    } catch (err) {
+      term.current?.write(`\r\n\x1b[31m[${err}]\x1b[0m\r\n`);
+    }
+  };
   const [status, setStatus] = useState<SessionStatus>("connecting");
   const report = (st: SessionStatus) => {
     setStatus(st);
@@ -128,6 +145,16 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
             } else if (e.event === "hostKey" || e.event === "auth") {
               setPrompt(e);
               outputRef.current?.();
+            } else if (e.event === "transfer") {
+              setTransfer(e.finished ? null : e);
+              if (e.finished) {
+                const what = `${e.sending ? "Sent" : "Received"} ${e.file} (${formatBytes(e.done)})`;
+                t.write(
+                  e.error
+                    ? `\r\n\x1b[31m[Transfer of ${e.file} failed: ${e.error}]\x1b[0m\r\n`
+                    : `\r\n\x1b[32m[${what}]\x1b[0m\r\n`,
+                );
+              }
             } else if (e.event === "connected") {
               setPrompt(null);
               report("connected");
@@ -250,6 +277,27 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
     <div className="terminal-pane">
       <div className="terminal-host" ref={host} />
       {prompt && <SessionPrompt prompt={prompt} onReply={reply} />}
+      {transfer && (
+        <div className="transfer-bar" role="status" aria-live="polite">
+          <span className="transfer-label">
+            {transfer.sending ? "Sending" : "Receiving"} <b>{transfer.file}</b>
+          </span>
+          <span className="transfer-track">
+            <span
+              className="transfer-fill"
+              style={{ width: transfer.total ? `${Math.min(100, (transfer.done / transfer.total) * 100)}%` : "100%" }}
+              data-indeterminate={transfer.total ? undefined : ""}
+            />
+          </span>
+          <span className="transfer-count">
+            {formatBytes(transfer.done)}
+            {transfer.total ? ` of ${formatBytes(transfer.total)}` : ""}
+          </span>
+          <button className="btn" onClick={() => sessionRef.current?.cancelTransfer()}>
+            Cancel
+          </button>
+        </div>
+      )}
       {pending !== null && <PasteConfirm text={pending} onDone={finishPaste} />}
       {menu && (
         <ContextMenu
@@ -272,6 +320,31 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
             "separator",
             ...(conn.kind === "serial"
               ? [
+                  {
+                    label: "Send file (XMODEM-1K)…",
+                    icon: <Upload size={15} />,
+                    disabled: status !== "connected" || !!transfer,
+                    onSelect: () => void startTransfer(true, "xmodem1k"),
+                  },
+                  {
+                    label: "Send file (XMODEM)…",
+                    icon: <Upload size={15} />,
+                    disabled: status !== "connected" || !!transfer,
+                    onSelect: () => void startTransfer(true, "xmodem"),
+                  },
+                  {
+                    label: "Send file (YMODEM)…",
+                    icon: <Upload size={15} />,
+                    disabled: status !== "connected" || !!transfer,
+                    onSelect: () => void startTransfer(true, "ymodem"),
+                  },
+                  {
+                    label: "Receive file (XMODEM)…",
+                    icon: <Download size={15} />,
+                    disabled: status !== "connected" || !!transfer,
+                    onSelect: () => void startTransfer(false, "xmodem"),
+                  },
+                  "separator" as const,
                   {
                     label: "Send Break",
                     icon: <Zap size={15} />,
@@ -306,4 +379,11 @@ export function GraphicalPlaceholder({ conn }: { conn: ConnectionNode }) {
       </p>
     </div>
   );
+}
+
+/** "1.2 MB" */
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }

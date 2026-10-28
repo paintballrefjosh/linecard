@@ -283,6 +283,15 @@ pub enum SessionEventDto {
         /// Offer "Save password" with this initial state; null = don't offer.
         remember: Option<bool>,
     },
+    /// XMODEM/YMODEM progress; `error` is set when it failed, `finished` when done.
+    Transfer {
+        file: String,
+        sending: bool,
+        done: u64,
+        total: Option<u64>,
+        finished: bool,
+        error: Option<String>,
+    },
     Disconnected {
         reason: Option<String>,
     },
@@ -320,6 +329,14 @@ impl From<linecard_proto::SessionEvent> for SessionEventDto {
                     })
                     .collect(),
                 remember: p.remember,
+            },
+            E::Transfer(t) => SessionEventDto::Transfer {
+                file: t.file,
+                sending: t.sending,
+                done: t.done,
+                total: t.total,
+                finished: t.result.is_some(),
+                error: t.result.and_then(|r| r.err()),
             },
             E::Disconnected { reason } => SessionEventDto::Disconnected { reason },
         }
