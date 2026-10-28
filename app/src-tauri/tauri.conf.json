@@ -42,7 +42,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "REPLACE_WITH_UPDATER_PUBLIC_KEY (see docs/releasing.md)",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA0MjlERjBGRUQyNzUxREIKUldUYlVTZnREOThwQkdSUlV1ZnJyZ2RjV01VZC94aG5tVzRJL1BjTm1id05wQjlsa096dTZqbEMK",
       "endpoints": [
         "https://github.com/paintballrefjosh/linecard/releases/latest/download/latest.json"
       ]
