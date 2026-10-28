@@ -358,3 +358,9 @@ impl From<PromptReplyDto> for linecard_proto::PromptReply {
         }
     }
 }
+
+#[derive(Serialize)]
+pub struct SerialPortDto {
+    pub name: String,
+    pub description: Option<String>,
+}

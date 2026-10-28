@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use library::{now_ms, Library};
 use linecard_core_model::{Connection, ConnectionKind, Endpoint, Folder, Settings, Tree};
 use linecard_core_sync::Hlc;
-use linecard_proto::{Session, SshOptions, TerminalTarget};
+use linecard_proto::{SerialSettings, Session, SshOptions, TerminalTarget};
 use linecard_vault::{SavedCredential, Secret, Vault};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -397,6 +397,36 @@ fn ssh_options(app: &AppHandle, vault: Arc<Vault>) -> SshOptions {
     }
 }
 
+/// Quick-connect serial: "COM3", "COM3 115200", "/dev/ttyUSB0 9600" (8N1).
+fn parse_serial(endpoint: &str) -> Option<SerialSettings> {
+    let mut parts = endpoint.split_whitespace();
+    let mut s = SerialSettings::console(parts.next()?);
+    if let Some(baud) = parts.next() {
+        s.baud = baud.parse().ok()?;
+    }
+    Some(s)
+}
+
+/// Ports present now, for the connection editor.
+#[tauri::command]
+fn list_serial_ports() -> Vec<dto::SerialPortDto> {
+    linecard_proto::serial::list_ports()
+        .into_iter()
+        .map(|p| dto::SerialPortDto {
+            name: p.name,
+            description: p.description,
+        })
+        .collect()
+}
+
+/// Send BREAK on a serial session.
+#[tauri::command]
+async fn session_break(state: State<'_, AppState>, session_id: String) -> CmdResult<()> {
+    let mut sessions = state.sessions.lock().map_err(err)?;
+    let s = sessions.get_mut(&session_id).ok_or("session closed")?;
+    s.send_break().map_err(err)
+}
+
 /// Where a saved connection goes, with its inherited login settings and its
 /// jump host (itself a saved SSH connection, resolved the same way).
 fn network_target(tree: &Tree, id: &str, depth: usize) -> CmdResult<TerminalTarget> {
@@ -436,35 +466,49 @@ async fn open_session(
     rows: u16,
     on_event: Channel<SessionEventDto>,
 ) -> CmdResult<String> {
+    enum Plan {
+        Network(ConnectionKind, TerminalTarget),
+        Serial(SerialSettings),
+    }
     // Saved connections use their stored endpoint and inherited settings;
     // quick-connect uses what the UI sent.
-    let target = {
+    let plan = {
         let lib = state.lib.lock().map_err(err)?;
         let tree = lib.tree();
         match tree.connection(&connection_id) {
-            Ok(c) => (c.kind, network_target(tree, &c.id, 0)?),
+            Ok(c) => match &c.endpoint {
+                Endpoint::Serial(s) => Plan::Serial(s.clone()),
+                Endpoint::Network { .. } => Plan::Network(c.kind, network_target(tree, &c.id, 0)?),
+            },
+            Err(_) if kind == ConnectionKind::Serial => {
+                Plan::Serial(parse_serial(&endpoint).ok_or("expected a port and baud rate, e.g. COM3 9600")?)
+            }
             Err(_) => {
                 let (user, host, port) = parse_endpoint(&endpoint, kind).ok_or("could not read host and port")?;
                 let mut t = TerminalTarget::new(host, port);
                 t.username = user;
                 t.keepalive_secs = tree.global.keepalive_secs;
-                (kind, t)
+                Plan::Network(kind, t)
             }
         }
     };
-    let (kind, mut target) = target;
-    target.cols = cols;
-    target.rows = rows;
     let ssh = state.ssh.clone();
     let sink: linecard_proto::EventSink = Box::new(move |e| {
         let _ = on_event.send(SessionEventDto::from(e));
     });
-    // Telnet connects before returning; SSH returns at once and reports progress as events.
-    let session =
-        tauri::async_runtime::spawn_blocking(move || linecard_proto::connect_terminal(kind, &target, &ssh, sink))
-            .await
-            .map_err(err)?
-            .map_err(err)?;
+    // Telnet and serial connect before returning; SSH returns at once and
+    // reports progress as events.
+    let session = tauri::async_runtime::spawn_blocking(move || match plan {
+        Plan::Serial(s) => linecard_proto::connect_serial(&s, sink),
+        Plan::Network(kind, mut target) => {
+            target.cols = cols;
+            target.rows = rows;
+            linecard_proto::connect_terminal(kind, &target, &ssh, sink)
+        }
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)?;
 
     let id = new_id();
     state.sessions.lock().map_err(err)?.insert(id.clone(), session);
@@ -546,6 +590,8 @@ pub fn run() {
             session_write,
             session_resize,
             session_reply,
+            session_break,
+            list_serial_ports,
             session_close,
         ])
         .run(tauri::generate_context!())
@@ -669,6 +715,15 @@ mod tests {
         tree.add_connection(ssh("a", None, Some("b"))).unwrap();
         tree.add_connection(ssh("b", None, Some("a"))).unwrap();
         assert_eq!(network_target(&tree, "a", 0).unwrap_err(), "jump hosts form a loop");
+    }
+
+    #[test]
+    fn serial_quick_connect() {
+        let s = parse_serial("COM3 115200").unwrap();
+        assert_eq!((s.port.as_str(), s.baud, s.data_bits), ("COM3", 115200, 8));
+        assert_eq!(parse_serial("COM4").unwrap().baud, 9600);
+        assert_eq!(parse_serial("COM3 fast"), None);
+        assert_eq!(parse_serial(""), None);
     }
 
     #[test]

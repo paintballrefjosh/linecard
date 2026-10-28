@@ -16,6 +16,8 @@ export interface SessionHandle {
   resize(cols: number, rows: number): void;
   /** Answer a hostKey / auth event. */
   reply(r: PromptReply): void;
+  /** BREAK on a serial line (password recovery, ROMMON). */
+  sendBreak(): void;
   close(): void;
 }
 
@@ -45,6 +47,8 @@ export interface Backend {
   setPreferences(p: Preferences): Promise<void>;
   listSavedPasswords(): Promise<SavedPassword[]>;
   forgetSavedPassword(key: string): Promise<void>;
+  /** Serial ports present right now. */
+  listSerialPorts(): Promise<{ name: string; description: string | null }[]>;
   clipboardRead(): Promise<string>;
   clipboardWrite(text: string): Promise<void>;
   /** Open a session. Saved connections are looked up by id; quick-connect
@@ -85,6 +89,7 @@ async function tauriBackend(): Promise<Backend> {
     setPreferences: (preferences) => invoke("set_preferences", { preferences }),
     listSavedPasswords: () => invoke<SavedPassword[]>("list_saved_passwords"),
     forgetSavedPassword: (key) => invoke("forget_saved_password", { key }),
+    listSerialPorts: () => invoke("list_serial_ports"),
     // The clipboard plugin: WebView2 can refuse navigator.clipboard reads.
     clipboardRead: async () => (await clipboard).readText().catch(() => ""),
     clipboardWrite: async (text) => (await clipboard).writeText(text),
@@ -103,6 +108,7 @@ async function tauriBackend(): Promise<Backend> {
         write: (data) => void invoke("session_write", { sessionId, data: Array.from(encoder.encode(data)) }),
         resize: (cols, rows) => void invoke("session_resize", { sessionId, cols, rows }),
         reply: (reply) => void invoke("session_reply", { sessionId, reply }),
+        sendBreak: () => void invoke("session_break", { sessionId }),
         close: () => void invoke("session_close", { sessionId }),
       };
     },

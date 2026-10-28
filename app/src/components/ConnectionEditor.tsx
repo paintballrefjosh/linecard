@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { getBackend } from "../api";
 import type { ConnectionDraft, ConnectionKind, FlowControl, Parity, SerialSettings } from "../types";
 import { Modal } from "./Dialog";
 import { kindLabel } from "./icons";
@@ -54,6 +55,11 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
     setD((cur) => ({ ...cur, serial: { ...(cur.serial ?? consoleDefaults()), ...patch } }));
   const isNew = initial.id === null;
   const serial = d.kind === "serial";
+  /** Ports present now (USB adapters come and go), refreshed when Serial is picked. */
+  const [ports, setPorts] = useState<{ name: string; description: string | null }[]>([]);
+  useEffect(() => {
+    if (serial) void getBackend().then((b) => b.listSerialPorts().then(setPorts));
+  }, [serial]);
 
   const changeKind = (kind: ConnectionKind) => {
     // Follow the protocol's default port unless the user picked a custom one.
@@ -125,8 +131,10 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
                 required
               />
               <datalist id="ce-com-list">
-                {Array.from({ length: 9 }, (_, i) => (
-                  <option key={i} value={`COM${i + 1}`} />
+                {ports.map((p) => (
+                  <option key={p.name} value={p.name}>
+                    {p.description ?? undefined}
+                  </option>
                 ))}
               </datalist>
               <select

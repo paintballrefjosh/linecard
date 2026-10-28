@@ -11,8 +11,9 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub use linecard_core_model::ConnectionKind;
+pub use linecard_core_model::{ConnectionKind, SerialSettings};
 
+pub mod serial;
 pub mod ssh;
 pub mod telnet;
 
@@ -115,6 +116,13 @@ pub trait Session: Send {
             "this session has no prompts",
         ))
     }
+    /// Send a BREAK (serial consoles: password recovery, ROMMON).
+    fn send_break(&mut self) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "BREAK is only available on serial sessions",
+        ))
+    }
     fn close(&mut self) -> io::Result<()>;
 }
 
@@ -197,4 +205,9 @@ pub fn connect_terminal(
             format!("{other:?} driver not implemented yet (see docs/roadmap.md)"),
         )),
     }
+}
+
+/// Open a serial console. Connects before returning.
+pub fn connect_serial(settings: &SerialSettings, events: EventSink) -> io::Result<Box<dyn Session>> {
+    Ok(Box::new(serial::SerialSession::connect(settings, events)?))
 }

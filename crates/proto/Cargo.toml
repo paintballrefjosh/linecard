@@ -11,8 +11,9 @@ tokio = { workspace = true }
 # `ring` instead of the default aws-lc-rs backend: no CMake/NASM needed to
 # build on Windows, and ring is already in the tree via rustls.
 russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2"] }
+# No default features: skips libudev on Linux (port names still list).
+serialport = { version = "4", default-features = false }
 
 # Added as each driver lands (see docs/roadmap.md):
-# serialport = "4"        # serial
 # ironrdp = "..."         # RDP on macOS/Linux
 # windows = { version = "...", features = [...] }  # native RDP ActiveX host on Windows

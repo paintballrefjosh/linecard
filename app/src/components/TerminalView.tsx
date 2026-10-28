@@ -6,7 +6,7 @@ import "@xterm/xterm/css/xterm.css";
 import { getBackend, type SessionHandle } from "../api";
 import { terminalThemes, type Theme } from "../theme";
 import type { AuthEvent, ConnectionNode, HostKeyEvent, PromptReply } from "../types";
-import { ClipboardPaste, Copy, Eraser, RotateCw, TextSelect } from "lucide-react";
+import { ClipboardPaste, Copy, Eraser, RotateCw, TextSelect, Zap } from "lucide-react";
 import { pasteLineCount, usePrefs } from "../prefs";
 import { ContextMenu } from "./ContextMenu";
 import { KindIcon, kindLabel } from "./icons";
@@ -177,10 +177,12 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
     t.attachCustomKeyEventHandler((e) => {
       const copyKey = (e.ctrlKey && e.shiftKey && e.code === "KeyC") || (e.ctrlKey && e.key === "Insert");
       const pasteKey = (e.ctrlKey && e.shiftKey && e.code === "KeyV") || (e.shiftKey && e.key === "Insert");
-      if (!copyKey && !pasteKey) return true;
+      const breakKey = conn.kind === "serial" && e.ctrlKey && e.shiftKey && e.code === "KeyB";
+      if (!copyKey && !pasteKey && !breakKey) return true;
       if (e.type === "keydown") {
         e.preventDefault();
         if (copyKey) copySelection();
+        else if (breakKey) session?.sendBreak();
         else pasteClipboard();
       }
       return false;
@@ -258,6 +260,17 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
             },
             { label: "Paste", icon: <ClipboardPaste size={15} />, shortcut: "Ctrl+Shift+V", onSelect: pasteClipboard },
             "separator",
+            ...(conn.kind === "serial"
+              ? [
+                  {
+                    label: "Send Break",
+                    icon: <Zap size={15} />,
+                    shortcut: "Ctrl+Shift+B",
+                    disabled: status !== "connected",
+                    onSelect: () => sessionRef.current?.sendBreak(),
+                  },
+                ]
+              : []),
             {
               label: "Reconnect",
               icon: <RotateCw size={15} />,

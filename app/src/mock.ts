@@ -343,6 +343,12 @@ export function mockBackend(): Backend {
     async forgetSavedPassword(key) {
       savedPasswords.delete(key.replace(/^ssh:/, ""));
     },
+    async listSerialPorts() {
+      return [
+        { name: "COM3", description: "USB Serial Port" },
+        { name: "COM4", description: "Prolific USB-to-Serial" },
+      ];
+    },
     async clipboardRead() {
       try {
         return await navigator.clipboard.readText();
@@ -440,6 +446,9 @@ export function mockBackend(): Backend {
           }
         },
         resize() {},
+        sendBreak() {
+          send("\r\n\x1b[2m[BREAK]\x1b[0m\r\nrommon 1 > ");
+        },
         close() {},
       };
     },
