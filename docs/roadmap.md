@@ -13,6 +13,8 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 - [x] SSH driver (`russh`): password, keyboard-interactive, agent (Windows OpenSSH / Pageant), unencrypted key files, host-key verification with known_hosts, legacy algorithms for older gear
 - [x] SSH: passphrase-protected keys (asked only when the server takes the key), jump hosts (chains, inherited from folders)
 - [x] Reconnect: Enter (or the terminal menu) reconnects a dropped session in the same tab
+- [x] Serial driver (`serialport`): port picker with live ports, framing, flow control, BREAK
+- [ ] XMODEM/YMODEM file transfer over serial
 - [x] Connection editor dialog
 - [ ] Show inherited values in the connection editor
 - [x] Credential vault: saved passwords in the OS keychain (Windows Credential Manager), "Save password" on login prompts, list and remove in Settings
