@@ -6,3 +6,7 @@ app/src-tauri/gen/
 *.log
 .DS_Store
 .env
+
+# Update-signing keys (never commit; the private key lives in GitHub secrets)
+.tauri/
+*.key
