@@ -15,7 +15,7 @@ use linecard_proto::{Session, TerminalTarget};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use dto::{DeviceDto, SessionEventDto, SyncStateDto, TreeNodeDto};
+use dto::{ConnectionDraftDto, DeviceDto, SessionEventDto, SyncStateDto, TreeNodeDto};
 
 struct AppState {
     device: String,
@@ -139,6 +139,121 @@ fn move_node(
     drop(tree);
     notify_tree_changed(&app);
     Ok(())
+}
+
+// Phase 2: these edit the tree directly; once the replica is the source of
+// truth each becomes an op (create / update / delete) that syncs.
+
+/// Sort key that places a new item after its siblings.
+fn next_order(orders: impl Iterator<Item = f64>) -> f64 {
+    orders.fold(-1.0, f64::max) + 1.0
+}
+
+#[tauri::command]
+fn create_folder(app: AppHandle, state: State<AppState>, parent_id: Option<String>, name: String) -> CmdResult<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Folder name is required".into());
+    }
+    let mut tree = state.tree.lock().map_err(err)?;
+    let order = next_order(tree.child_folders(parent_id.as_deref()).iter().map(|f| f.order));
+    let id = new_id();
+    tree.add_folder(Folder {
+        id: id.clone(),
+        name: name.into(),
+        parent: parent_id,
+        order,
+        color: None,
+        defaults: Settings::default(),
+    })
+    .map_err(err)?;
+    drop(tree);
+    notify_tree_changed(&app);
+    Ok(id)
+}
+
+#[tauri::command]
+fn get_connection(state: State<AppState>, id: String) -> CmdResult<ConnectionDraftDto> {
+    let tree = state.tree.lock().map_err(err)?;
+    Ok(tree.connection(&id).map_err(err)?.into())
+}
+
+/// Create (`draft.id` is None) or update a connection. Returns its id.
+#[tauri::command]
+fn save_connection(app: AppHandle, state: State<AppState>, draft: ConnectionDraftDto) -> CmdResult<String> {
+    let mut tree = state.tree.lock().map_err(err)?;
+    let id = match &draft.id {
+        Some(id) => {
+            draft.apply_to(tree.connection_mut(id).map_err(err)?)?;
+            id.clone()
+        }
+        None => {
+            let folder = draft.folder_id.as_deref();
+            let mut conn = Connection {
+                id: new_id(),
+                name: String::new(),
+                folder: draft.folder_id.clone(),
+                order: next_order(tree.child_connections(folder).iter().map(|c| c.order)),
+                kind: draft.kind,
+                endpoint: Endpoint::network(draft.kind, ""),
+                overrides: Settings::default(),
+                notes: String::new(),
+                tags: vec![],
+            };
+            draft.apply_to(&mut conn)?;
+            let id = conn.id.clone();
+            tree.add_connection(conn).map_err(err)?;
+            id
+        }
+    };
+    drop(tree);
+    notify_tree_changed(&app);
+    Ok(id)
+}
+
+#[tauri::command]
+fn rename_node(app: AppHandle, state: State<AppState>, id: String, name: String) -> CmdResult<()> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Name is required".into());
+    }
+    let mut tree = state.tree.lock().map_err(err)?;
+    match tree.folder_mut(&id) {
+        Ok(f) => f.name = name.into(),
+        Err(_) => tree.connection_mut(&id).map_err(err)?.name = name.into(),
+    }
+    drop(tree);
+    notify_tree_changed(&app);
+    Ok(())
+}
+
+/// Delete a connection, or a folder with everything in it.
+#[tauri::command]
+fn delete_node(app: AppHandle, state: State<AppState>, id: String) -> CmdResult<()> {
+    let mut tree = state.tree.lock().map_err(err)?;
+    if tree.folder(&id).is_ok() {
+        tree.remove_folder(&id).map_err(err)?;
+    } else {
+        tree.remove_connection(&id).map_err(err)?;
+    }
+    drop(tree);
+    notify_tree_changed(&app);
+    Ok(())
+}
+
+/// Copy a connection, placed right after the original. Returns the copy's id.
+#[tauri::command]
+fn duplicate_connection(app: AppHandle, state: State<AppState>, id: String) -> CmdResult<String> {
+    let mut tree = state.tree.lock().map_err(err)?;
+    let mut copy = tree.connection(&id).map_err(err)?.clone();
+    copy.id = new_id();
+    copy.name = format!("{} (copy)", copy.name);
+    copy.order += 0.5;
+    let copy_id = copy.id.clone();
+    tree.add_connection(copy).map_err(err)?;
+    drop(tree);
+    notify_tree_changed(&app);
+    Ok(copy_id)
 }
 
 // ---- change tracking -------------------------------------------------------
@@ -286,6 +401,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_tree,
             move_node,
+            create_folder,
+            get_connection,
+            save_connection,
+            rename_node,
+            delete_node,
+            duplicate_connection,
             ack_change,
             ack_all,
             revert_op,
@@ -322,5 +443,50 @@ mod tests {
             Some(("sw1".into(), 2222))
         );
         assert_eq!(parse_host_port("sw1", ConnectionKind::Telnet), Some(("sw1".into(), 23)));
+    }
+
+    fn draft(kind: ConnectionKind) -> ConnectionDraftDto {
+        ConnectionDraftDto {
+            id: None,
+            folder_id: None,
+            name: " core1 ".into(),
+            kind,
+            host: " 10.0.0.1 ".into(),
+            port: 22,
+            serial: None,
+            username: Some("  ".into()),
+            tab_color: Some("#d64545".into()),
+            notes: String::new(),
+        }
+    }
+
+    #[test]
+    fn drafts_validate_and_round_trip() {
+        let tree = starter_tree();
+        let mut conn = tree.connections().next().unwrap().clone();
+
+        draft(ConnectionKind::Ssh).apply_to(&mut conn).unwrap();
+        assert_eq!(conn.name, "core1");
+        assert_eq!(conn.endpoint.label(), "10.0.0.1:22");
+        assert_eq!(conn.overrides.username, None, "blank username inherits");
+        let back = ConnectionDraftDto::from(&conn);
+        assert_eq!(back.tab_color.as_deref(), Some("#d64545"));
+
+        let mut bad = draft(ConnectionKind::Ssh);
+        bad.host = " ".into();
+        assert!(bad.apply_to(&mut conn).is_err());
+        let mut bad = draft(ConnectionKind::Telnet);
+        bad.port = 0;
+        assert!(bad.apply_to(&mut conn).is_err());
+        assert!(
+            draft(ConnectionKind::Serial).apply_to(&mut conn).is_err(),
+            "serial needs settings"
+        );
+    }
+
+    #[test]
+    fn next_order_appends() {
+        assert_eq!(next_order([].into_iter()), 0.0);
+        assert_eq!(next_order([0.0, 3.0, 1.5].into_iter()), 4.0);
     }
 }

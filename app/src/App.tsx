@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import type { DockviewApi } from "dockview";
 import { Download, Laptop, ListTree, Monitor, Moon, Sun } from "lucide-react";
 import { getBackend, type Backend } from "./api";
 import { useTheme, type ThemePref } from "./theme";
 import { useUpdater } from "./updater";
-import type { ConnectionKind, ConnectionNode, Device, LayoutId, SyncState, TreeNode } from "./types";
-import { ConnectionTree, relativeTime } from "./components/ConnectionTree";
+import type { ConnectionDraft, ConnectionKind, ConnectionNode, Device, LayoutId, SyncState, TreeNode } from "./types";
+import { ConnectionEditor, blankDraft } from "./components/ConnectionEditor";
+import { ConnectionTree, relativeTime, type TreeActions } from "./components/ConnectionTree";
 import { DevicesPage, versionMismatch } from "./components/DevicesPage";
 import { LayoutPicker, layoutShortcut } from "./components/LayoutPicker";
+import { SidebarResizer, useSidebarWidth } from "./components/SidebarResizer";
 import { Workspace, applyLayout, openConnection } from "./components/Workspace";
 
 type View = "connections" | "devices";
@@ -33,6 +35,19 @@ export function parseQuickConnect(input: string): ConnectionNode | null {
   return { type: "connection", id: `quick-${s}`, name: m[3], kind, endpoint: `${m[3]}:${port}` };
 }
 
+/** "/DC1 Fort Worth/Spine" for a folder id; "/" for the top level. */
+function folderPath(nodes: TreeNode[], id: string | null, prefix = ""): string {
+  if (!id) return "/";
+  for (const n of nodes) {
+    if (n.type !== "folder") continue;
+    const here = `${prefix}/${n.name}`;
+    if (n.id === id) return here;
+    const below = folderPath(n.children, id, here);
+    if (below !== "/") return below;
+  }
+  return "/";
+}
+
 const themeCycle: Record<ThemePref, ThemePref> = { system: "light", light: "dark", dark: "system" };
 
 export default function App() {
@@ -48,6 +63,21 @@ export default function App() {
   const [quick, setQuick] = useState("");
   const [quickError, setQuickError] = useState(false);
   const dock = useRef<DockviewApi | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useSidebarWidth();
+  const [editing, setEditing] = useState<ConnectionDraft | null>(null);
+
+  const treeActions = useMemo<TreeActions | null>(
+    () =>
+      backend && {
+        newConnection: (folderId) => setEditing(blankDraft(folderId)),
+        editConnection: (id) => void backend.getConnection(id).then(setEditing),
+        createFolder: (parentId, name) => backend.createFolder(parentId, name),
+        rename: (id, name) => backend.renameNode(id, name),
+        remove: (id) => backend.deleteNode(id),
+        duplicate: (id) => backend.duplicateConnection(id),
+      },
+    [backend],
+  );
 
   const refresh = useCallback(async (b: Backend) => {
     const [t, d, s] = await Promise.all([b.getTree(), b.getDevices(), b.getSyncState()]);
@@ -105,7 +135,7 @@ export default function App() {
   const ThemeIcon = pref === "system" ? Monitor : pref === "light" ? Sun : Moon;
 
   return (
-    <div className="app">
+    <div className="app" style={{ "--sidebar-w": `${sidebarWidth}px` } as CSSProperties}>
       <nav className="rail" aria-label="Views">
         <button
           className={view === "connections" ? "is-active" : ""}
@@ -144,9 +174,10 @@ export default function App() {
           </span>
           Linecard
         </div>
-        {backend && (
+        {backend && treeActions && (
           <ConnectionTree
             tree={tree}
+            actions={treeActions}
             onOpen={open}
             onAck={(id) => backend.ackChange(id)}
             onAckAll={() => backend.ackAll()}
@@ -154,7 +185,17 @@ export default function App() {
             onMove={(id, parent, index) => backend.moveNode(id, parent, index)}
           />
         )}
+        <SidebarResizer width={sidebarWidth} onChange={setSidebarWidth} />
       </aside>
+
+      {editing && backend && (
+        <ConnectionEditor
+          initial={editing}
+          location={folderPath(tree, editing.folderId)}
+          onSave={async (d) => void (await backend.saveConnection(d))}
+          onClose={() => setEditing(null)}
+        />
+      )}
 
       <main className="main">
         <header className="toolbar">

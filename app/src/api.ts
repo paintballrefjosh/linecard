@@ -1,4 +1,4 @@
-import type { ConnectionNode, Device, SessionEvent, SyncState, TreeNode } from "./types";
+import type { ConnectionDraft, ConnectionNode, Device, SessionEvent, SyncState, TreeNode } from "./types";
 import { mockBackend } from "./mock";
 
 export interface SessionHandle {
@@ -18,6 +18,16 @@ export interface Backend {
   /** Revert one remote op; becomes a new op that syncs everywhere. */
   revert(opId: string): Promise<void>;
   moveNode(id: string, parentId: string | null, index: number): Promise<void>;
+  /** Returns the new folder's id. */
+  createFolder(parentId: string | null, name: string): Promise<string>;
+  getConnection(id: string): Promise<ConnectionDraft>;
+  /** Create (`draft.id` null) or update. Returns the connection's id. */
+  saveConnection(draft: ConnectionDraft): Promise<string>;
+  renameNode(id: string, name: string): Promise<void>;
+  /** Deletes a connection, or a folder and everything in it. */
+  deleteNode(id: string): Promise<void>;
+  /** Returns the copy's id. */
+  duplicateConnection(id: string): Promise<string>;
   /** Open a session. Saved connections are looked up by id; quick-connect
    *  entries (not in the tree) are opened from `kind` + `endpoint`. */
   openSession(
@@ -45,6 +55,12 @@ async function tauriBackend(): Promise<Backend> {
     ackAll: () => invoke("ack_all"),
     revert: (opId) => invoke("revert_op", { opId }),
     moveNode: (id, parentId, index) => invoke("move_node", { id, parentId, index }),
+    createFolder: (parentId, name) => invoke<string>("create_folder", { parentId, name }),
+    getConnection: (id) => invoke<ConnectionDraft>("get_connection", { id }),
+    saveConnection: (draft) => invoke<string>("save_connection", { draft }),
+    renameNode: (id, name) => invoke("rename_node", { id, name }),
+    deleteNode: (id) => invoke("delete_node", { id }),
+    duplicateConnection: (id) => invoke<string>("duplicate_connection", { id }),
     async openSession(conn, size, onEvent) {
       const channel = new Channel<SessionEvent>();
       channel.onmessage = onEvent;

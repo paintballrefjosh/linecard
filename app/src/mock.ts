@@ -2,7 +2,15 @@
 // It demonstrates every highlight state and simulates a remote change.
 
 import type { Backend, SessionHandle } from "./api";
-import type { ConnectionNode, Device, FolderNode, PendingChange, TreeNode } from "./types";
+import type {
+  ConnectionDraft,
+  ConnectionNode,
+  Device,
+  FolderNode,
+  PendingChange,
+  SerialSettings,
+  TreeNode,
+} from "./types";
 
 const min = 60_000;
 const now = () => Date.now();
@@ -64,11 +72,11 @@ function seed(): TreeNode[] {
       ]),
     ]),
     folder("lab", "Lab", [
-      conn("lab-jump", "jump-win", "rdp", "lab-jump.corp:3389"),
+      conn("lab-jump", "jump-win", "rdp", "lab-jump.corp:3389", { tabColor: "#3fa35b" }),
       conn("lab-kvm", "kvm-switch", "vnc", "10.20.0.50:5900", {
         change: change("moved", "Laptop-Win11", 26, [{ field: "folder", before: "/DC1 Fort Worth", after: "/Lab" }]),
       }),
-      conn("lab-r1", "r1", "telnet", "10.20.0.11:23"),
+      conn("lab-r1", "r1", "telnet", "10.20.0.11:23", { tabColor: "#3fa35b" }),
     ]),
     conn("home-pi", "home-pi", "ssh", "192.168.1.20:22"),
   ];
@@ -166,6 +174,26 @@ export function mockBackend(): Backend {
     if (hit) delete hit.node.change;
   };
 
+  // Fields the tree nodes don't carry, as the Rust side stores them.
+  const extra = new Map<string, { username: string | null; notes: string; serial: SerialSettings | null }>();
+  const newId = () => `m-${Math.random().toString(36).slice(2, 9)}`;
+  const childrenOf = (parentId: string | null): TreeNode[] => {
+    const hit = parentId ? find(tree, parentId) : null;
+    return hit?.node.type === "folder" ? hit.node.children : tree;
+  };
+  const parentOf = (id: string): string | null => {
+    let parent: string | null = null;
+    walk(tree, (n) => {
+      if (n.type === "folder" && n.children.some((c) => c.id === id)) {
+        parent = n.id;
+        return true;
+      }
+    });
+    return parent;
+  };
+  const endpointOf = (d: ConnectionDraft) =>
+    d.kind === "serial" && d.serial ? `${d.serial.port} ${d.serial.baud}` : `${d.host.trim()}:${d.port}`;
+
   return {
     appVersion: async () => "0.1.0-dev",
     getTree: async () => structuredClone(tree),
@@ -211,6 +239,77 @@ export function mockBackend(): Backend {
       const list = target?.node.type === "folder" ? target.node.children : tree;
       list.splice(index, 0, hit.node);
       emit();
+    },
+    async createFolder(parentId, name) {
+      const id = newId();
+      childrenOf(parentId).push({ type: "folder", id, name: name.trim(), children: [] });
+      emit();
+      return id;
+    },
+    async getConnection(id) {
+      const hit = find(tree, id);
+      if (hit?.node.type !== "connection") throw new Error("connection not found");
+      const n = hit.node;
+      const x = extra.get(id);
+      const [host, port] = n.kind === "serial" ? ["", 0] : [n.endpoint.replace(/:\d+$/, ""), Number(n.endpoint.split(":").pop())];
+      const [com, baud] = n.endpoint.split(" ");
+      return {
+        id,
+        folderId: parentOf(id),
+        name: n.name,
+        kind: n.kind,
+        host,
+        port,
+        serial:
+          x?.serial ??
+          (n.kind === "serial"
+            ? { port: com, baud: Number(baud) || 9600, dataBits: 8, parity: "none", stopBits: 1, flow: "none" }
+            : null),
+        username: x?.username ?? null,
+        tabColor: n.tabColor ?? null,
+        notes: x?.notes ?? "",
+      };
+    },
+    async saveConnection(d) {
+      if (!d.name.trim()) throw new Error("Name is required");
+      if (d.kind !== "serial" && !d.host.trim()) throw new Error("Host is required");
+      const fields = {
+        name: d.name.trim(),
+        kind: d.kind,
+        endpoint: endpointOf(d),
+        tabColor: d.tabColor?.trim() || undefined,
+      };
+      let id = d.id;
+      const hit = id ? find(tree, id) : null;
+      if (hit?.node.type === "connection") Object.assign(hit.node, fields);
+      else {
+        id = newId();
+        childrenOf(d.folderId).push({ type: "connection", id, ...fields });
+      }
+      extra.set(id!, { username: d.username?.trim() || null, notes: d.notes, serial: d.serial });
+      emit();
+      return id!;
+    },
+    async renameNode(id, name) {
+      const hit = find(tree, id);
+      if (hit && name.trim()) hit.node.name = name.trim();
+      emit();
+    },
+    async deleteNode(id) {
+      const hit = find(tree, id);
+      if (hit) hit.siblings.splice(hit.siblings.indexOf(hit.node), 1);
+      emit();
+    },
+    async duplicateConnection(id) {
+      const hit = find(tree, id);
+      if (hit?.node.type !== "connection") throw new Error("connection not found");
+      const copy = { ...structuredClone(hit.node), id: newId(), name: `${hit.node.name} (copy)` };
+      delete copy.change;
+      hit.siblings.splice(hit.siblings.indexOf(hit.node) + 1, 0, copy);
+      const x = extra.get(id);
+      if (x) extra.set(copy.id, structuredClone(x));
+      emit();
+      return copy.id;
     },
     async openSession(node, _size, onEvent): Promise<SessionHandle> {
       const send = (s: string) => onEvent({ event: "data", data: Array.from(new TextEncoder().encode(s)) });

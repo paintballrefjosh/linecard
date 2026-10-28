@@ -138,22 +138,14 @@ impl TelnetCodec {
                 }
             }
             DO => reply.extend([IAC, WONT, opt]),
-            DONT => {
-                if self.local.remove(&opt) {
-                    reply.extend([IAC, WONT, opt]);
-                }
-            }
+            DONT if self.local.remove(&opt) => reply.extend([IAC, WONT, opt]),
             WILL if REMOTE_OK.contains(&opt) => {
                 if self.remote.insert(opt) {
                     reply.extend([IAC, DO, opt]);
                 }
             }
             WILL => reply.extend([IAC, DONT, opt]),
-            WONT => {
-                if self.remote.remove(&opt) {
-                    reply.extend([IAC, DONT, opt]);
-                }
-            }
+            WONT if self.remote.remove(&opt) => reply.extend([IAC, DONT, opt]),
             _ => {}
         }
     }
@@ -353,9 +345,8 @@ mod tests {
         let mut session = connect_test(port, tx);
         let mut screen = Vec::new();
         while !screen.ends_with(b"login: ") {
-            match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
-                SessionEvent::Data(d) => screen.extend(d),
-                _ => {}
+            if let SessionEvent::Data(d) = rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+                screen.extend(d);
             }
         }
         session.write(b"admin\r").unwrap();

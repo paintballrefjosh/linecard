@@ -58,9 +58,9 @@ inheritable! {
     credential_id: ObjectId,
     /// Connection id of a jump host (SSH ProxyJump).
     jump_host: ObjectId,
-    /// Tab colour, e.g. "#d64545" for production.
+    /// Tab color, e.g. "#d64545" for production.
     tab_color: String,
-    /// Terminal profile id (font, colours, scrollback).
+    /// Terminal profile id (font, colors, scrollback).
     terminal_profile: ObjectId,
     /// Keyword-highlight rule set id.
     highlight_rules: ObjectId,

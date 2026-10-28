@@ -5,7 +5,12 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
-  server: { port: 1420, strictPort: true },
+  server: {
+    port: 1420,
+    strictPort: true,
+    // Network drives (SMB shares) don't deliver file-change events; set LINECARD_POLL=1 there.
+    watch: process.env.LINECARD_POLL ? { usePolling: true, interval: 300 } : undefined,
+  },
   envPrefix: ["VITE_", "TAURI_ENV_"],
   build: {
     target: "es2022",

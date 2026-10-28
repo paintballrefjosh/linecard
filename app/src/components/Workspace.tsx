@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type CSSProperties } from "react";
 import {
   DockviewReact,
   type DockviewApi,
@@ -16,32 +16,60 @@ import { GraphicalPlaceholder, TerminalView, type SessionStatus } from "./Termin
 
 interface PanelParams {
   conn: ConnectionNode;
+  /** Sessions to the same connection: 1 for the first, 2 for "spine01 (2)"… */
+  instance: number;
 }
 
 interface Shared {
   theme: Theme;
   status: Record<string, SessionStatus>;
   setStatus(panelId: string, s: SessionStatus): void;
+  /** Panels that received output while hidden behind another tab. */
+  activity: Record<string, boolean>;
+  setActivity(panelId: string, on: boolean): void;
 }
 
-const SharedCtx = createContext<Shared>({ theme: "dark", status: {}, setStatus: () => {} });
+const SharedCtx = createContext<Shared>({
+  theme: "dark",
+  status: {},
+  setStatus: () => {},
+  activity: {},
+  setActivity: () => {},
+});
 
 function SessionPanel({ api, params }: IDockviewPanelProps<PanelParams>) {
-  const { theme, setStatus } = useContext(SharedCtx);
+  const { theme, setStatus, setActivity } = useContext(SharedCtx);
   const { conn } = params;
+  useEffect(() => {
+    const sub = api.onDidVisibilityChange((e) => e.isVisible && setActivity(api.id, false));
+    return () => sub.dispose();
+  }, [api, setActivity]);
   if (conn.kind === "rdp" || conn.kind === "vnc") return <GraphicalPlaceholder conn={conn} />;
-  return <TerminalView conn={conn} theme={theme} onStatus={(s) => setStatus(api.id, s)} />;
+  return (
+    <TerminalView
+      conn={conn}
+      theme={theme}
+      onStatus={(s) => setStatus(api.id, s)}
+      onOutput={() => !api.isVisible && setActivity(api.id, true)}
+    />
+  );
 }
 
 function SessionTab({ api, params }: IDockviewPanelHeaderProps<PanelParams>) {
-  const { status } = useContext(SharedCtx);
+  const { status, activity } = useContext(SharedCtx);
   const conn = params.conn;
   const s = status[api.id] ?? "connecting";
+  const active = activity[api.id];
   return (
-    <div className="session-tab" style={conn.tabColor ? { boxShadow: `inset 0 -2px 0 ${conn.tabColor}` } : undefined}>
-      <span className={`led led-${s}`} title={s} />
+    <div
+      className={`session-tab ${active ? "has-activity" : ""}`}
+      style={conn.tabColor ? ({ "--tab-color": conn.tabColor } as CSSProperties) : undefined}
+      title={`${api.title} · ${conn.endpoint}${active ? " · new output" : ""}`}
+    >
+      <span className={`led led-${s}`} aria-label={s} />
       <KindIcon kind={conn.kind} size={14} />
       <span className="session-tab-title">{api.title}</span>
+      {active && <span className="activity-dot" aria-label="New output" />}
       <button
         className="tab-close"
         aria-label={`Close ${api.title}`}
@@ -66,14 +94,28 @@ function Watermark(_: IWatermarkPanelProps) {
 
 let counter = 0;
 
-/** Open a connection as a tab in the active pane. */
+/** Saved connections group by id; quick-connect sessions by host:port. */
+const sessionKey = (conn: ConnectionNode) => (conn.id.startsWith("quick-") ? `${conn.kind}:${conn.endpoint}` : conn.id);
+
+/** Open a connection as a tab in the active pane. A second session to the
+ *  same connection is titled "name (2)"; numbers stay put while a tab is open
+ *  and the lowest free one is reused, so the first session is plain "name". */
 export function openConnection(api: DockviewApi, conn: ConnectionNode) {
+  const key = sessionKey(conn);
+  const taken = new Set(
+    api.panels
+      .map((p) => p.params as PanelParams | undefined)
+      .filter((p) => p && sessionKey(p.conn) === key)
+      .map((p) => p!.instance),
+  );
+  let instance = 1;
+  while (taken.has(instance)) instance++;
   api.addPanel<PanelParams>({
     id: `${conn.id}#${++counter}`,
     component: "session",
     tabComponent: "session",
-    title: conn.name,
-    params: { conn },
+    title: instance === 1 ? conn.name : `${conn.name} (${instance})`,
+    params: { conn, instance },
     position: api.activeGroup ? { referenceGroup: api.activeGroup } : undefined,
   });
 }
@@ -129,8 +171,14 @@ export function Workspace({ theme, onReady }: { theme: Theme; onReady(api: Dockv
     (id: string, s: SessionStatus) => setStatusMap((m) => (m[id] === s ? m : { ...m, [id]: s })),
     [],
   );
+  const [activity, setActivityMap] = useState<Record<string, boolean>>({});
+  // Output arrives in bursts; only re-render when the flag actually flips.
+  const setActivity = useCallback(
+    (id: string, on: boolean) => setActivityMap((m) => (!!m[id] === on ? m : { ...m, [id]: on })),
+    [],
+  );
   return (
-    <SharedCtx.Provider value={{ theme, status, setStatus }}>
+    <SharedCtx.Provider value={{ theme, status, setStatus, activity, setActivity }}>
       <DockviewReact
         className={`workspace ${theme === "dark" ? "dockview-theme-dark" : "dockview-theme-light"}`}
         components={{ session: SessionPanel }}

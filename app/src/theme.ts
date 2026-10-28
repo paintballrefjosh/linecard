@@ -46,7 +46,7 @@ export function useTheme() {
   return { pref, setPref, theme };
 }
 
-/** xterm.js colour schemes matched to the app theme. */
+/** xterm.js color schemes matched to the app theme. */
 export const terminalThemes = {
   dark: {
     background: "#161b22",

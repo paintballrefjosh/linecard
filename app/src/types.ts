@@ -47,6 +47,33 @@ export interface ConnectionNode {
 
 export type TreeNode = FolderNode | ConnectionNode;
 
+export type Parity = "none" | "odd" | "even" | "mark" | "space";
+export type FlowControl = "none" | "software" | "hardware";
+
+export interface SerialSettings {
+  port: string;
+  baud: number;
+  dataBits: number;
+  parity: Parity;
+  stopBits: number;
+  flow: FlowControl;
+}
+
+/** The connection editor's form. `id: null` creates a new connection.
+ *  Empty `username` / `tabColor` mean "inherit from the folder". */
+export interface ConnectionDraft {
+  id: string | null;
+  folderId: string | null;
+  name: string;
+  kind: ConnectionKind;
+  host: string;
+  port: number;
+  serial: SerialSettings | null;
+  username: string | null;
+  tabColor: string | null;
+  notes: string;
+}
+
 export interface Device {
   id: string;
   name: string;

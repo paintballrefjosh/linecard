@@ -1,6 +1,6 @@
 /* Linecard — native-feeling desktop chrome.
    One accent (patch-cord blue); connection types and change states carry
-   the rest of the colour. */
+   the rest of the color. */
 
 :root {
   --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
@@ -36,6 +36,10 @@
   --chg-deleted-bg: #fbe5e3;
 
   --shadow-pop: 0 8px 24px rgb(20 30 45 / 0.16), 0 1px 3px rgb(20 30 45 / 0.12);
+  --scroll-thumb: #b9c2cd;
+  --scroll-thumb-hover: #9aa5b3;
+
+  color-scheme: light;
 }
 
 :root[data-theme="dark"] {
@@ -65,10 +69,20 @@
   --chg-deleted-bg: #3b1c1c;
 
   --shadow-pop: 0 10px 30px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
+  --scroll-thumb: #333d4a;
+  --scroll-thumb-hover: #46525f;
+
+  /* Native scrollbars, form controls and dialogs follow the app theme. */
+  color-scheme: dark;
 }
 
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+*:hover {
+  scrollbar-color: var(--scroll-thumb-hover) transparent;
 }
 
 html,
@@ -112,7 +126,9 @@ input {
 
 .app {
   display: grid;
-  grid-template-columns: 48px minmax(220px, 300px) 1fr;
+  grid-template-columns: 48px var(--sidebar-w, 260px) minmax(0, 1fr);
+  /* An implicit `auto` row never shrinks below the tree's measured pixel height. */
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
 }
 
@@ -169,11 +185,44 @@ input {
 }
 
 .sidebar {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
   background: var(--bg-side);
   border-right: 1px solid var(--line);
+}
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  width: 7px;
+  z-index: 5;
+  cursor: col-resize;
+  touch-action: none;
+}
+.sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 3px;
+  transition: background 120ms;
+}
+.sidebar-resizer:hover::after,
+.sidebar-resizer:focus-visible::after,
+.is-resizing .sidebar-resizer::after {
+  background: var(--accent);
+}
+.sidebar-resizer:focus-visible {
+  outline: none;
+}
+body.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+/* Keep terminals and webviews from swallowing pointer events mid-drag. */
+body.is-resizing .main {
+  pointer-events: none;
 }
 
 .brand {
@@ -447,6 +496,11 @@ input {
   min-height: 0;
   padding-bottom: 6px;
 }
+/* Arborist sizes rows to max-content (inline style), which scrolls the tree
+   sideways; truncate names and endpoints with an ellipsis instead. */
+.tree-box [role="treeitem"] {
+  min-width: 0 !important;
+}
 
 .tree-row {
   display: flex;
@@ -478,6 +532,11 @@ input {
 .tree-name {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* The tab color tints the name (and, via KindIcon, the icon) so prod vs lab
+   reads before connecting. Change highlights below still win for the name. */
+.has-tab-color .tree-name {
+  color: var(--tab-color);
 }
 .tree-endpoint {
   margin-left: auto;
@@ -709,6 +768,257 @@ input {
   filter: brightness(1.08);
 }
 
+/* ---- tree editing ------------------------------------------------------- */
+
+.tree-rename {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 5px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-s);
+  background: var(--bg-main);
+  outline: none;
+}
+.tree-error {
+  margin: 0 10px 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-s);
+  background: var(--chg-deleted-bg);
+  color: var(--chg-deleted);
+  font-size: 12px;
+}
+
+/* ---- context menu --------------------------------------------------------- */
+
+.context-menu {
+  position: fixed;
+  z-index: 100;
+  min-width: 210px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--bg-main);
+  box-shadow: var(--shadow-pop);
+}
+.context-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  text-align: left;
+}
+.context-menu button:hover,
+.context-menu button:focus-visible {
+  background: var(--bg-select);
+  outline: none;
+}
+.context-menu button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.context-menu button.is-danger {
+  color: var(--chg-deleted);
+}
+.menu-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  color: var(--text-quiet);
+}
+.is-danger .menu-icon {
+  color: inherit;
+}
+.menu-label {
+  flex: 1;
+}
+.context-menu kbd {
+  font: 11px var(--font-ui);
+  color: var(--text-quiet);
+}
+.menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
+}
+
+/* ---- dialogs -------------------------------------------------------------- */
+
+.modal {
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-main);
+  color: var(--text);
+  box-shadow: var(--shadow-pop);
+}
+.modal::backdrop {
+  background: rgb(8 12 18 / 0.45);
+}
+.modal-confirm {
+  width: min(380px, calc(100vw - 32px));
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 12px 4px 16px;
+}
+.modal-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.modal-body {
+  padding: 8px 16px 4px;
+}
+.modal-body p {
+  margin: 4px 0 8px;
+}
+.modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px 14px;
+}
+.modal-foot-note {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--text-quiet);
+}
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-quiet);
+}
+.icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.btn {
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--bg-side);
+}
+.btn:hover {
+  background: var(--bg-hover);
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.btn.btn-primary,
+.btn.btn-primary:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.btn-danger {
+  background: var(--chg-deleted);
+  border-color: var(--chg-deleted);
+  color: #fff;
+  font-weight: 600;
+}
+:root[data-theme="dark"] .btn-danger {
+  color: #1a0d0d;
+}
+.btn-danger:hover {
+  background: var(--chg-deleted);
+  filter: brightness(1.08);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 12px;
+}
+.form-grid > label,
+.form-label {
+  color: var(--text-quiet);
+}
+.form-grid input,
+.form-grid select,
+.form-grid textarea {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--bg-side);
+}
+.form-grid textarea {
+  height: auto;
+  padding: 6px 8px;
+  resize: vertical;
+  font: inherit;
+  color: inherit;
+}
+.form-grid > label[for="ce-notes"] {
+  align-self: start;
+  padding-top: 6px;
+}
+.form-grid input:focus,
+.form-grid select:focus,
+.form-grid textarea:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+select {
+  font: inherit;
+  color: inherit;
+}
+.form-row {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.form-row > * {
+  flex: 1;
+}
+.form-row > .port-input {
+  flex: 0 0 84px;
+}
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+}
+.swatch[aria-checked="true"] {
+  box-shadow:
+    0 0 0 2px var(--bg-main),
+    0 0 0 4px var(--accent);
+}
+.swatch-none {
+  background: linear-gradient(135deg, transparent 45%, var(--chg-deleted) 45% 55%, transparent 55%) var(--bg-side);
+}
+.form-error {
+  color: var(--chg-deleted);
+  font-size: 12px;
+}
+
 /* ---- workspace / tabs --------------------------------------------------- */
 
 .workspace.dockview-theme-dark,
@@ -738,6 +1048,22 @@ input {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Tab color tints the title (the icon picks it up via KindIcon), matching the tree. */
+.session-tab .session-tab-title {
+  color: var(--tab-color, inherit);
+}
+/* New output in a tab you're not looking at. */
+.session-tab.has-activity .session-tab-title {
+  font-weight: 600;
+  color: var(--tab-color, var(--text));
+}
+.activity-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 .tab-close {
   display: grid;
@@ -780,14 +1106,19 @@ input {
   }
 }
 
-.terminal-host {
-  position: absolute;
-  inset: 0;
+/* The padding lives on the outer pane: FitAddon measures the host's computed
+   size, which would include padding under border-box and overflow the panel. */
+.terminal-pane {
+  height: 100%;
+  overflow: hidden;
   padding: 6px 0 0 8px;
   background: var(--bg-main);
 }
-:root[data-theme="dark"] .terminal-host {
+:root[data-theme="dark"] .terminal-pane {
   background: #161b22;
+}
+.terminal-host {
+  height: 100%;
 }
 .terminal-host .xterm {
   height: 100%;

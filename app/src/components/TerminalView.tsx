@@ -14,15 +14,19 @@ interface Props {
   conn: ConnectionNode;
   theme: Theme;
   onStatus(status: SessionStatus): void;
+  /** Called whenever the remote side sends output. */
+  onOutput?(): void;
 }
 
 const FONT = '"Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, "DejaVu Sans Mono", monospace';
 
-export function TerminalView({ conn, theme, onStatus }: Props) {
+export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const term = useRef<Terminal | null>(null);
   const statusRef = useRef(onStatus);
   statusRef.current = onStatus;
+  const outputRef = useRef(onOutput);
+  outputRef.current = onOutput;
 
   useEffect(() => {
     if (!host.current) return;
@@ -52,7 +56,10 @@ export function TerminalView({ conn, theme, onStatus }: Props) {
     getBackend()
       .then((b) =>
         b.openSession(conn, { cols: t.cols, rows: t.rows }, (e) => {
-          if (e.event === "data") t.write(new Uint8Array(e.data));
+          if (e.event === "data") {
+            t.write(new Uint8Array(e.data));
+            outputRef.current?.();
+          }
           else if (e.event === "connected") statusRef.current("connected");
           else if (e.event === "title") document.title = `${e.title} · Linecard`;
           else if (e.event === "disconnected") {
@@ -72,17 +79,23 @@ export function TerminalView({ conn, theme, onStatus }: Props) {
 
     const input = t.onData((d) => session?.write(d));
     const resize = t.onResize(({ cols, rows }) => session?.resize(cols, rows));
+    // Refit once per frame, never synchronously inside the observer callback.
+    let frame = 0;
     const ro = new ResizeObserver(() => {
-      try {
-        fit.fit();
-      } catch {
-        /* element hidden (inactive tab) */
-      }
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        try {
+          fit.fit();
+        } catch {
+          /* element hidden (inactive tab) */
+        }
+      });
     });
     ro.observe(host.current);
 
     return () => {
       disposed = true;
+      cancelAnimationFrame(frame);
       ro.disconnect();
       input.dispose();
       resize.dispose();
@@ -96,7 +109,11 @@ export function TerminalView({ conn, theme, onStatus }: Props) {
     if (term.current) term.current.options.theme = terminalThemes[theme];
   }, [theme]);
 
-  return <div className="terminal-host" ref={host} />;
+  return (
+    <div className="terminal-pane">
+      <div className="terminal-host" ref={host} />
+    </div>
+  );
 }
 
 /** Placeholder for graphical sessions until the RDP/VNC drivers land (Phase 3). */

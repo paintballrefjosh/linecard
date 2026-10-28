@@ -17,16 +17,16 @@ export function useUpdater(): UpdateInfo | null {
 
   useEffect(() => {
     if (!isTauri) return;
-    let cancelled = false;
+    let canceled = false;
 
     const run = async () => {
       try {
         const { check } = await import("@tauri-apps/plugin-updater");
         const { relaunch } = await import("@tauri-apps/plugin-process");
         const update = await check();
-        if (!update || cancelled) return;
+        if (!update || canceled) return;
         await update.download();
-        if (cancelled) return;
+        if (canceled) return;
         setInfo({
           version: update.version,
           notes: update.body ?? "",
@@ -43,7 +43,7 @@ export function useUpdater(): UpdateInfo | null {
     run();
     const timer = window.setInterval(run, SIX_HOURS);
     return () => {
-      cancelled = true;
+      canceled = true;
       window.clearInterval(timer);
     };
   }, []);

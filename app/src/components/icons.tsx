@@ -22,10 +22,11 @@ export const kindLabel: Record<ConnectionKind, string> = {
   vnc: "VNC",
 };
 
-/** Connection-type icon in its accent colour. SSH and Telnet share the
+/** Connection-type icon in its accent color. SSH and Telnet share the
  *  terminal glyph; a lock / open-lock badge tells them apart. */
 export function KindIcon({ kind, size = 16 }: { kind: ConnectionKind; size?: number }) {
-  const style = { color: `var(--kind-${kind})` };
+  // A connection's tab color (set on its tree row) wins over the protocol color.
+  const style = { color: `var(--tab-color, var(--kind-${kind}))` };
   const glyph = (() => {
     switch (kind) {
       case "ssh":
@@ -62,7 +63,7 @@ export const changeLabel: Record<ChangeKind, string> = {
   reverted: "Reverted",
 };
 
-/** Small glyph so changes read without relying on colour alone. */
+/** Small glyph so changes read without relying on color alone. */
 export function ChangeGlyph({ kind, size = 12 }: { kind: ChangeKind; size?: number }) {
   const props = { size, strokeWidth: 2.5 };
   switch (kind) {

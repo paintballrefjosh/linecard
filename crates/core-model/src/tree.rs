@@ -15,7 +15,7 @@ pub struct Folder {
     pub parent: Option<ObjectId>,
     /// Fractional sort key so a move between two siblings touches one object.
     pub order: f64,
-    /// Lucide icon colour / accent chosen by the user.
+    /// Lucide icon color / accent chosen by the user.
     pub color: Option<String>,
     /// Defaults inherited by everything below this folder.
     pub defaults: Settings,

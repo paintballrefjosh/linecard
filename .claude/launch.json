@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ui",
+      "runtimeExecutable": "C:\\Program Files\\nodejs\\npm.cmd",
+      "runtimeArgs": ["--prefix", "app", "run", "dev"],
+      "env": { "LINECARD_POLL": "1" },
+      "port": 1420
+    }
+  ]
+}
