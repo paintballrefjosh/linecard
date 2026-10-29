@@ -10,6 +10,10 @@
 **SSH port forwarding**
 - Per connection: local (-L), remote (-R) and dynamic SOCKS 4/5 (-D) forwards, started when the session logs in. The terminal shows each tunnel and whether it is working; a port that is already taken fails on its own without stopping the others.
 
+**Links and command line**
+- `linecard spine01`, `linecard "DC1/Spine/spine01"`, `linecard ssh admin@host -p 2222`, `linecard telnet cs1 2005`, `linecard serial COM3 9600`: opens a tab in the running window, or starts Linecard.
+- Settings → Links and command line: open ssh:// and telnet:// links in Linecard (Windows, per user). A handler that was there before is put back when you turn it off.
+
 **Folders**
 - Folder settings (right-click a folder): username, SSH jump host, keyword highlighting, session logging and tab color for everything inside.
 

@@ -152,6 +152,7 @@ export function mockBackend(): Backend {
     "abandon ability able about above absent absorb abstract absurd abuse access accident account accuse achieve acid acoustic acquire across act action actor actress actual";
   let syncPhraseWords = mockPhrase;
   const syncListeners = new Set<() => void>();
+  let linkHandler = false;
 
   const devices: Device[] = [
     {
@@ -270,6 +271,12 @@ export function mockBackend(): Backend {
     async syncDisable() {
       syncConfig = null;
       syncListeners.forEach((l) => l());
+    },
+    takeLaunch: async () => null,
+    onLaunch: () => () => {},
+    linkHandlerStatus: async () => linkHandler,
+    async setLinkHandler(on) {
+      linkHandler = on;
     },
     onSyncChanged(cb) {
       syncListeners.add(cb);

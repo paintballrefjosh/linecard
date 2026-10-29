@@ -5,7 +5,16 @@ import { getBackend, type Backend } from "./api";
 import { useTheme, type ThemePref } from "./theme";
 import { useUpdater } from "./updater";
 import { PrefsContext, defaultPrefs, withDefaults, type Preferences } from "./prefs";
-import type { ConnectionDraft, ConnectionKind, ConnectionNode, Device, LayoutId, SyncState, TreeNode } from "./types";
+import type {
+  ConnectionDraft,
+  ConnectionKind,
+  ConnectionNode,
+  Device,
+  Launch,
+  LayoutId,
+  SyncState,
+  TreeNode,
+} from "./types";
 import { ConnectionEditor, blankDraft } from "./components/ConnectionEditor";
 import { FolderSettingsDialog } from "./components/FolderSettings";
 import { highlightStore } from "./highlight";
@@ -169,6 +178,41 @@ export default function App() {
     if (dock.current) openConnection(dock.current, conn);
   };
 
+  /** A launch that arrived before the workspace was ready. */
+  const pendingLaunch = useRef<Launch | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const launch = useRef<(l: Launch) => void>(() => {});
+  launch.current = (l: Launch) => {
+    if (!dock.current || !backend) {
+      pendingLaunch.current = l;
+      return;
+    }
+    if (l.kind === "error") {
+      setNotice(l.message);
+      return;
+    }
+    if (l.kind === "quick") {
+      const conn = parseQuickConnect(l.text);
+      if (conn) open(conn);
+      else setNotice(`Couldn't read "${l.text}" as a connection`);
+      return;
+    }
+    void backend.getTree().then((t) => {
+      const conn = findConnection(t, l.id);
+      if (conn) open(conn);
+    });
+  };
+  useEffect(() => {
+    if (!backend) return;
+    void backend.takeLaunch().then((l) => l && launch.current(l));
+    return backend.onLaunch((l) => launch.current(l));
+  }, [backend]);
+  useEffect(() => {
+    if (!notice) return;
+    const t = window.setTimeout(() => setNotice(null), 8000);
+    return () => window.clearTimeout(t);
+  }, [notice]);
+
   const submitQuick = (e: FormEvent) => {
     e.preventDefault();
     const conn = parseQuickConnect(quick);
@@ -291,6 +335,9 @@ export default function App() {
                 theme={theme}
                 onReady={(api) => {
                   dock.current = api;
+                  const waiting = pendingLaunch.current;
+                  pendingLaunch.current = null;
+                  if (waiting) window.setTimeout(() => launch.current(waiting), 0);
                 }}
               />
             </div>
@@ -305,6 +352,7 @@ export default function App() {
                 Devices on different versions
               </button>
             )}
+            {notice && <span className="status-notice">{notice}</span>}
             <span className="status-spacer" />
             {update && (
               <button className="status-link accent" onClick={() => update.installAndRestart()} title={update.notes}>

@@ -85,6 +85,8 @@ export function SettingsPage({ theme, onTheme }: Props) {
 
       <KeywordHighlighting />
 
+      <LinksAndCommandLine />
+
       <SessionLogging />
 
       <SavedPasswords />
@@ -509,6 +511,51 @@ function KeywordHighlighting() {
           onClose={() => setConfirmDelete(false)}
         />
       )}
+    </Section>
+  );
+}
+
+/** ssh:// and telnet:// links, and opening sessions from a command line. */
+function LinksAndCommandLine() {
+  const [links, setLinks] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void getBackend().then((b) => b.linkHandlerStatus().then(setLinks));
+  }, []);
+  const toggle = (on: boolean) =>
+    void getBackend()
+      .then((b) => b.setLinkHandler(on))
+      .then(() => {
+        setLinks(on);
+        setError(null);
+      })
+      .catch((e) => setError(String(e)));
+  return (
+    <Section title="Links and command line">
+      {links !== null && (
+        <Row
+          label="Open ssh:// and telnet:// links in Linecard"
+          hint="Links in a browser, wiki or monitoring tool open a tab here. Applies to your Windows account."
+          htmlFor="set-links"
+        >
+          <Toggle id="set-links" checked={links} onChange={toggle} />
+        </Row>
+      )}
+      {error && <p className="form-error settings-note">{error}</p>}
+      <div className="settings-row settings-row-wide">
+        <div className="settings-text">
+          <span>From a command line or shortcut</span>
+          <p>Opens a tab in the running window (or starts Linecard):</p>
+          <pre className="cli-examples">
+            {`linecard spine01                    a saved connection, by name
+linecard "DC1 Fort Worth/Spine/spine01"   …or by its folder path
+linecard ssh admin@10.0.0.1 -p 2222
+linecard telnet cs1 2005
+linecard serial COM3 9600
+linecard ssh://admin@10.0.0.1`}
+          </pre>
+        </div>
+      </div>
     </Section>
   );
 }

@@ -2,6 +2,7 @@ import type {
   ConnectionDraft,
   ConnectionNode,
   FolderSettings,
+  Launch,
   Device,
   ImportPreview,
   ImportSource,
@@ -48,6 +49,13 @@ export interface Backend {
   syncPhrase(): Promise<string | null>;
   syncNow(): Promise<void>;
   syncDisable(): Promise<void>;
+  /** What the command line asked to open at startup (asked once). */
+  takeLaunch(): Promise<Launch | null>;
+  /** Launches (command line, links) after startup. */
+  onLaunch(cb: (l: Launch) => void): () => void;
+  /** Whether ssh:// and telnet:// links open here; null where unsupported. */
+  linkHandlerStatus(): Promise<boolean | null>;
+  setLinkHandler(on: boolean): Promise<void>;
   /** Fires when the sync status changes. */
   onSyncChanged(cb: () => void): () => void;
   ackChange(objectId: string): Promise<void>;
@@ -129,6 +137,13 @@ async function tauriBackend(): Promise<Backend> {
     syncPhrase: () => invoke<string | null>("sync_phrase"),
     syncNow: () => invoke("sync_now"),
     syncDisable: () => invoke("sync_disable"),
+    takeLaunch: () => invoke<Launch | null>("take_launch"),
+    onLaunch(cb) {
+      const unlisten = listen<Launch>("launch", (e) => cb(e.payload));
+      return () => void unlisten.then((u) => u());
+    },
+    linkHandlerStatus: () => invoke<boolean | null>("link_handler_status"),
+    setLinkHandler: (on) => invoke("set_link_handler", { on }),
     onSyncChanged(cb) {
       const unlisten = listen("sync-changed", () => cb());
       return () => void unlisten.then((u) => u());

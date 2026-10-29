@@ -1896,3 +1896,17 @@ kbd {
 .forward-list li.has-error span {
   color: var(--chg-edited);
 }
+
+.status-notice {
+  color: var(--chg-edited);
+}
+.cli-examples {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--bg-main);
+  font: 12px var(--font-mono);
+  line-height: 1.6;
+}

@@ -27,7 +27,8 @@ You don't need Rust, Node.js or anything else in the next section to use Linecar
 | Import from SecureCRT, PuTTY, SuperPuTTY, mRemoteNG and OpenSSH config | Done |
 | Local storage as an op log, with per-change revert | Done |
 | End-to-end encrypted sync through a shared folder or a self-hosted relay; 24-word pairing phrase; Devices page | Done |
-| Port forwarding, ssh:// and telnet:// links, command-line launcher | Next |
+| SSH port forwarding (local, remote, SOCKS); ssh:// and telnet:// links; command-line launcher | Done |
+| Keyword-highlight profiles per folder/connection, SecureCRT keyword-list import | Done |
 | RDP and VNC | Later — see [docs/roadmap.md](docs/roadmap.md) |
 
 ## Building from source

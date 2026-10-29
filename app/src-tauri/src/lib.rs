@@ -7,6 +7,7 @@
 mod dto;
 mod highlight;
 mod import;
+mod launch;
 mod library;
 mod logging;
 mod sync;
@@ -814,7 +815,18 @@ fn session_close(state: State<AppState>, session_id: String) -> CmdResult<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    // One window: a second launch (command line or link) opens its tab there.
+    // A separate profile (LINECARD_DATA_DIR) runs as its own instance.
+    if std::env::var_os("LINECARD_DATA_DIR").is_none() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            launch::second_instance(app, argv)
+        }));
+    }
+    builder
+        .manage(launch::Pending(std::sync::Mutex::new(
+            std::env::args().skip(1).collect(),
+        )))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -871,6 +883,9 @@ pub fn run() {
             get_sync_state,
             get_folder_settings,
             save_folder_settings,
+            launch::take_launch,
+            launch::link_handler_status,
+            launch::set_link_handler,
             highlight::get_highlight,
             highlight::effective_highlight,
             highlight::save_highlight_profile,
