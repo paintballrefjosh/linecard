@@ -39,6 +39,8 @@ Remote ops whose writes change a visible value become pending changes: `added`, 
 - **Shared folder**: `<folder>/linecard-<group id>/ops/<device>/<seq:012>.json` and `devices/<device>.json`. Files are written to a temp name and renamed, each device only writes its own directory, and readers keep a per-device cursor and stop at the first missing or partial file (cloud-sync clients deliver files out of order).
 - **Relay** (`relay/`): `POST/GET /v1/groups/{group}/ops` (paged by sequence number), `PUT /v1/groups/{group}/devices/{device}`, `GET /v1/groups/{group}/devices`, bearer token. The relay keeps blobs in SQLite in arrival order, up to a per-group limit.
 
+- **GitHub** (`crates/sync/src/github.rs`): the shared-folder layout in a repository. Pushes are commits through the contents API; pulls list the tree once and fetch only new blobs. Polled every 30 s.
+
 Clients push their unsent ops, pull everything after their cursor, and repeat every 5 s (relay) or 10 s (folder), or immediately after a local edit.
 
 ## Versioning

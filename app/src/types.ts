@@ -95,7 +95,7 @@ export interface Device {
   isThisDevice: boolean;
 }
 
-export type SyncTransport = "folder" | "relay";
+export type SyncTransport = "folder" | "relay" | "github";
 
 export interface SyncConfig {
   transport: SyncTransport;

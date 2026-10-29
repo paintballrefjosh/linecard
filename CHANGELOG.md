@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Sync through a GitHub repository: pick GitHub in Settings → Sync, enter owner/name and a fine-grained token for that repository (Contents: read and write; kept in the keychain). Same layout as a shared folder, one commit per batch, checked every 30 seconds; the repository only holds ciphertext.
 - Relay sync is near-instant: computers wait on the relay, which answers as soon as a change arrives (about a quarter second end to end), instead of checking every 5 seconds.
 - Private relays: with LINECARD_RELAY_OPEN=false only accounts can start sync groups. The operator creates them with `linecard-relay account add`, which prints an access key to enter in Settings → Sync. Admin commands also list and remove groups and accounts (see docs/relay.md).
 - Settings → Links and command line: "Add linecard to PATH" (Windows: your user PATH; Linux: ~/.local/bin; macOS shows the one-line command, which needs admin rights).

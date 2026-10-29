@@ -14,6 +14,7 @@ use std::time::Duration;
 use linecard_core_sync::{Hlc, Op};
 use linecard_sync::crypto::{open, seal};
 use linecard_sync::folder::{FolderCursor, FolderTransport};
+use linecard_sync::github::GitHubTransport;
 use linecard_sync::relay::RelayTransport;
 use linecard_sync::{Batch, DeviceInfo, DeviceKey, GroupKey, Notice, Received, Sealed, SyncError};
 use linecard_vault::{Secret, Vault};
@@ -38,7 +39,7 @@ const BATCH_OPS: usize = 400;
 pub struct SyncConfig {
     /// "folder" or "relay"
     pub transport: String,
-    /// Folder path or relay URL.
+    /// Folder path, relay URL, or GitHub "owner/repo".
     pub location: String,
 }
 
@@ -46,18 +47,25 @@ impl SyncConfig {
     fn label(&self) -> String {
         match self.transport.as_str() {
             "folder" => "shared folder".into(),
+            "github" => "GitHub".into(),
             _ => "relay".into(),
         }
     }
 
     fn interval(&self) -> Duration {
-        Duration::from_secs(if self.transport == "relay" { 5 } else { 10 })
+        Duration::from_secs(match self.transport.as_str() {
+            "relay" => 5,
+            // GitHub's API allows 5000 requests an hour.
+            "github" => 30,
+            _ => 10,
+        })
     }
 }
 
 enum Transport {
     Folder(Arc<FolderTransport>),
     Relay(RelayTransport),
+    GitHub(GitHubTransport),
 }
 
 fn blocking_err(e: tauri::Error) -> SyncError {
@@ -76,6 +84,13 @@ impl Transport {
                 RelayTransport::new(&cfg.location, &group.group_id(), &group.relay_token(), device)?
                     .with_account(account),
             )),
+            "github" => Ok(Transport::GitHub(GitHubTransport::new(
+                linecard_sync::github::API,
+                &cfg.location,
+                account.as_deref().unwrap_or(""),
+                &group.group_id(),
+                device,
+            )?)),
             other => Err(SyncError::Storage(format!("unknown sync transport {other}"))),
         }
     }
@@ -84,7 +99,7 @@ impl Transport {
     /// (or after ~25 s); a folder is checked again after `interval`.
     async fn idle(&self, app: &AppHandle, interval: Duration) {
         match self {
-            Transport::Folder(_) => tokio::time::sleep(interval).await,
+            Transport::Folder(_) | Transport::GitHub(_) => tokio::time::sleep(interval).await,
             Transport::Relay(r) => {
                 let cursor = app
                     .state::<AppState>()
@@ -111,6 +126,7 @@ impl Transport {
                     .map_err(blocking_err)?
             }
             Transport::Relay(r) => r.pull(i64::MAX - 1).await.map(|_| ()),
+            Transport::GitHub(g) => g.check().await,
         }
     }
 
@@ -123,6 +139,7 @@ impl Transport {
                     .map_err(blocking_err)?
             }
             Transport::Relay(r) => r.push(&sealed).await,
+            Transport::GitHub(g) => g.push(&sealed).await,
         }
     }
 
@@ -143,6 +160,11 @@ impl Transport {
                 let (got, next) = r.pull(c).await?;
                 Ok((got, next.to_string()))
             }
+            Transport::GitHub(g) => {
+                let c: FolderCursor = cursor.and_then(|c| serde_json::from_str(&c).ok()).unwrap_or_default();
+                let (got, next) = g.pull(&c).await?;
+                Ok((got, serde_json::to_string(&next).unwrap_or_default()))
+            }
         }
     }
 
@@ -155,6 +177,7 @@ impl Transport {
                     .map_err(blocking_err)?
             }
             Transport::Relay(r) => r.put_device(&sealed).await,
+            Transport::GitHub(g) => g.put_device(&sealed).await,
         }
     }
 
@@ -167,6 +190,7 @@ impl Transport {
                     .map_err(blocking_err)?
             }
             Transport::Relay(r) => r.devices().await,
+            Transport::GitHub(g) => g.devices().await,
         }
     }
 }
@@ -214,7 +238,7 @@ fn device_secret(device: &str) -> String {
     format!("sync:{device}:device-key")
 }
 
-/// A private relay's access key.
+/// A private relay's access key, or the GitHub token.
 fn account_secret(device: &str) -> String {
     format!("sync:{device}:relay-account")
 }
@@ -311,9 +335,12 @@ impl SyncEngine {
             None => GroupKey::generate(),
         };
         let device = state.lib.lock().map_err(|e| e.to_string())?.device().to_string();
+        // Re-joining (a new phrase) keeps the saved access key or token.
         let account = account
             .map(|a| a.trim().to_string())
-            .filter(|a| !a.is_empty() && cfg.transport == "relay");
+            .filter(|a| !a.is_empty())
+            .or_else(|| relay_account(&state.vault, &device))
+            .filter(|_| cfg.transport != "folder");
         let transport = Transport::new(&cfg, &group, &device, account.clone()).map_err(|e| e.to_string())?;
         transport.check().await.map_err(|e| e.to_string())?;
         let key = Self::device_key(&state.vault, &device)?;

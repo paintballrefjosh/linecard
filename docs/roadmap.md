@@ -29,7 +29,8 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 - [x] Relay: SQLite, per-group tokens, quotas, Docker image
 - [x] Relay: instant updates (long-poll), accounts for private relays, admin CLI
 - [x] Shared-folder transport (NAS, OneDrive, Dropbox, Syncthing)
-- [ ] GitHub transport (30 s default poll), LAN peer transport
+- [x] GitHub transport (30 s poll)
+- [ ] LAN peer transport
 - [x] Device heartbeats and version-mismatch banners
 - [x] Remove a device / change the phrase (key rotation)
 - [ ] Optional encrypted secrets sync
