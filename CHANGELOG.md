@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Drag and drop works in the desktop app: move connections and folders in the tree, and drag tabs between panes. (The window was claiming drags for file drops.)
+- Dragging an item further down in the same folder no longer lands it one place too far.
+
 ## v0.2.0 — sync, port forwarding, highlight profiles
 
 **Keyword highlighting**

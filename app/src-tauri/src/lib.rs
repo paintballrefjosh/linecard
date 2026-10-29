@@ -126,6 +126,26 @@ fn move_node(
     edit(&app, &state, |tree| {
         let parent = parent_id.as_deref();
         let is_folder = tree.folder(&id).is_ok();
+        // The UI's index still counts the dragged item, so moving it down
+        // within its own folder lands one place too far without this.
+        let (old_parent, old_pos) = if is_folder {
+            let p = tree.folder(&id).map_err(err)?.parent.clone();
+            let pos = tree.child_folders(p.as_deref()).iter().position(|f| f.id == id);
+            (p, pos)
+        } else {
+            let p = tree.connection(&id).map_err(err)?.folder.clone();
+            let offset = tree.child_folders(p.as_deref()).len();
+            let pos = tree
+                .child_connections(p.as_deref())
+                .iter()
+                .position(|c| c.id == id)
+                .map(|i| i + offset);
+            (p, pos)
+        };
+        let index = match old_pos {
+            Some(old) if old_parent.as_deref() == parent && old < index => index - 1,
+            _ => index,
+        };
         if is_folder {
             tree.move_folder(&id, parent).map_err(err)?;
         } else {

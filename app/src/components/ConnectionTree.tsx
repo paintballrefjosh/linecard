@@ -403,7 +403,7 @@ export function ConnectionTree({ tree, actions, onOpen, onAck, onAckAll, onRever
               onRename={({ id, name, node }) => {
                 if (name.trim() && name.trim() !== node.data.name) report(actions.rename(id, name));
               }}
-              onMove={({ dragIds, parentId, index }) => dragIds.forEach((id) => onMove(id, parentId, index))}
+              onMove={({ dragIds, parentId, index }) => dragIds.forEach((id, i) => onMove(id, parentId, index + i))}
             >
               {Row}
             </Tree>
