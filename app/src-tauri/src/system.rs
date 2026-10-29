@@ -321,10 +321,9 @@ mod imp {
 
     pub fn set_cli_path(exe: &Path, on: bool) -> Result<(), String> {
         let l = link();
-        if std::fs::symlink_metadata(&l).is_ok() {
-            if std::fs::read_link(&l).is_ok_and(|t| t == exe) || on {
-                std::fs::remove_file(&l).map_err(|e| e.to_string())?;
-            }
+        // Replace our own link, or any old one when turning on.
+        if std::fs::symlink_metadata(&l).is_ok() && (on || std::fs::read_link(&l).is_ok_and(|t| t == exe)) {
+            std::fs::remove_file(&l).map_err(|e| e.to_string())?;
         }
         if on {
             std::fs::create_dir_all(l.parent().unwrap()).map_err(|e| e.to_string())?;
