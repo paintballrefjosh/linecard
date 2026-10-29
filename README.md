@@ -85,7 +85,7 @@ crates/
   proto            Session trait + SSH, Telnet, Serial drivers, XMODEM/YMODEM
   importers        SecureCRT, mRemoteNG, SuperPuTTY, PuTTY, ssh_config
   vault            Credentials (OS keychain, optional encrypted sync)
-relay/             Self-hosted sync relay (Docker)
+relay/             Self-hosted sync relay (Docker; see docs/relay.md)
 docs/              Roadmap, sync protocol, releasing
 ```
 

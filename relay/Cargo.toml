@@ -20,3 +20,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 rusqlite = { workspace = true }
 sha2 = "0.10"
+getrandom = "0.2"

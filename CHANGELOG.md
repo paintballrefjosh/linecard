@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Relay sync is near-instant: computers wait on the relay, which answers as soon as a change arrives (about a quarter second end to end), instead of checking every 5 seconds.
+- Private relays: with LINECARD_RELAY_OPEN=false only accounts can start sync groups. The operator creates them with `linecard-relay account add`, which prints an access key to enter in Settings → Sync. Admin commands also list and remove groups and accounts (see docs/relay.md).
 - Settings → Links and command line: "Add linecard to PATH" (Windows: your user PATH; Linux: ~/.local/bin; macOS shows the one-line command, which needs admin rights).
 - ssh:// and telnet:// links can open in Linecard on macOS and Linux too (Launch Services / xdg-mime), and the handler they replace comes back when turned off.
 - Drag and drop works in the desktop app: move connections and folders in the tree, and drag tabs between panes. (The window was claiming drags for file drops.)

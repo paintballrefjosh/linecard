@@ -506,8 +506,14 @@ fn get_sync_config(app: AppHandle) -> Option<sync::SyncConfig> {
 
 /// Create a sync group (no phrase) or join one; returns the phrase.
 #[tauri::command]
-async fn sync_setup(app: AppHandle, transport: String, location: String, phrase: Option<String>) -> CmdResult<String> {
-    sync::SyncEngine::setup(&app, sync::SyncConfig { transport, location }, phrase).await
+async fn sync_setup(
+    app: AppHandle,
+    transport: String,
+    location: String,
+    phrase: Option<String>,
+    account: Option<String>,
+) -> CmdResult<String> {
+    sync::SyncEngine::setup(&app, sync::SyncConfig { transport, location }, phrase, account).await
 }
 
 #[tauri::command]

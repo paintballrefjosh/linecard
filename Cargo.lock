@@ -3064,6 +3064,7 @@ name = "linecard-relay"
 version = "0.2.0"
 dependencies = [
  "axum",
+ "getrandom 0.2.17",
  "rusqlite",
  "serde",
  "serde_json",

@@ -44,7 +44,13 @@ export interface Backend {
   /** null when sync is off. */
   getSyncConfig(): Promise<SyncConfig | null>;
   /** Start a new sync group (phrase null) or join one. Returns the phrase. */
-  syncSetup(transport: SyncTransport, location: string, phrase: string | null): Promise<string>;
+  /** `account`: a private relay's access key. */
+  syncSetup(
+    transport: SyncTransport,
+    location: string,
+    phrase: string | null,
+    account?: string | null,
+  ): Promise<string>;
   /** The 24-word phrase, to add another computer. */
   syncPhrase(): Promise<string | null>;
   syncNow(): Promise<void>;
@@ -138,7 +144,8 @@ async function tauriBackend(): Promise<Backend> {
     getDevices: () => invoke<Device[]>("get_devices"),
     getSyncState: () => invoke<SyncState>("get_sync_state"),
     getSyncConfig: () => invoke<SyncConfig | null>("get_sync_config"),
-    syncSetup: (transport, location, phrase) => invoke<string>("sync_setup", { transport, location, phrase }),
+    syncSetup: (transport, location, phrase, account) =>
+      invoke<string>("sync_setup", { transport, location, phrase, account: account ?? null }),
     syncPhrase: () => invoke<string | null>("sync_phrase"),
     syncNow: () => invoke("sync_now"),
     syncRotate: () => invoke<string>("sync_rotate"),

@@ -13,7 +13,14 @@ pub struct RelayTransport {
     group: String,
     token: String,
     device: String,
+    /// Access key for a private relay (needed to start a group there).
+    account: Option<String>,
     http: reqwest::Client,
+}
+
+#[derive(Deserialize)]
+struct WaitReply {
+    latest: i64,
 }
 
 #[derive(Deserialize)]
@@ -57,6 +64,7 @@ async fn check(resp: reqwest::Response) -> Result<reqwest::Response, SyncError> 
     let msg = body["error"].as_str().unwrap_or("").to_string();
     Err(SyncError::Relay(match status.as_u16() {
         401 => "the relay refused this sync phrase (the group belongs to another phrase)".into(),
+        403 => "this relay is private: enter the access key its operator gave you".into(),
         507 => "the relay's storage limit for this group is reached".into(),
         _ => format!("{status} {msg}"),
     }))
@@ -74,11 +82,40 @@ impl RelayTransport {
             group: group_id.to_string(),
             token: token.to_string(),
             device: device.to_string(),
+            account: None,
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(20))
                 .build()
                 .map_err(http_err)?,
         })
+    }
+
+    /// Access key for a private relay.
+    pub fn with_account(mut self, key: Option<String>) -> Self {
+        self.account = key.filter(|k| !k.trim().is_empty()).map(|k| k.trim().to_string());
+        self
+    }
+
+    fn writing(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.account {
+            Some(k) => req.header("x-linecard-account", k),
+            None => req,
+        }
+    }
+
+    /// Wait (up to ~25 s) until the group has something after `cursor`;
+    /// returns the newest sequence number.
+    pub async fn wait(&self, cursor: i64) -> Result<i64, SyncError> {
+        let resp = self
+            .http
+            .get(self.url(&format!("ops/wait?after={cursor}&wait=25")))
+            .bearer_auth(&self.token)
+            .timeout(Duration::from_secs(40))
+            .send()
+            .await
+            .map_err(http_err)?;
+        let reply: WaitReply = check(resp).await?.json().await.map_err(http_err)?;
+        Ok(reply.latest)
     }
 
     fn url(&self, rest: &str) -> String {
@@ -88,8 +125,7 @@ impl RelayTransport {
     pub async fn push(&self, sealed: &Sealed) -> Result<(), SyncError> {
         let blob = serde_json::to_string(sealed).map_err(|e| SyncError::Storage(e.to_string()))?;
         let resp = self
-            .http
-            .post(self.url("ops"))
+            .writing(self.http.post(self.url("ops")))
             .bearer_auth(&self.token)
             .json(&serde_json::json!({ "device": self.device, "blob": blob }))
             .send()
@@ -132,8 +168,7 @@ impl RelayTransport {
     pub async fn put_device(&self, sealed: &Sealed) -> Result<(), SyncError> {
         let blob = serde_json::to_string(sealed).map_err(|e| SyncError::Storage(e.to_string()))?;
         let resp = self
-            .http
-            .put(self.url(&format!("devices/{}", self.device)))
+            .writing(self.http.put(self.url(&format!("devices/{}", self.device))))
             .bearer_auth(&self.token)
             .json(&serde_json::json!({ "blob": blob }))
             .send()

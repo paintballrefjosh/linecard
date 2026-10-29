@@ -65,20 +65,40 @@ fn blocking_err(e: tauri::Error) -> SyncError {
 }
 
 impl Transport {
-    fn new(cfg: &SyncConfig, group: &GroupKey, device: &str) -> Result<Self, SyncError> {
+    fn new(cfg: &SyncConfig, group: &GroupKey, device: &str, account: Option<String>) -> Result<Self, SyncError> {
         match cfg.transport.as_str() {
             "folder" => Ok(Transport::Folder(Arc::new(FolderTransport::new(
                 PathBuf::from(cfg.location.trim()),
                 &group.group_id(),
                 device,
             )))),
-            "relay" => Ok(Transport::Relay(RelayTransport::new(
-                &cfg.location,
-                &group.group_id(),
-                &group.relay_token(),
-                device,
-            )?)),
+            "relay" => Ok(Transport::Relay(
+                RelayTransport::new(&cfg.location, &group.group_id(), &group.relay_token(), device)?
+                    .with_account(account),
+            )),
             other => Err(SyncError::Storage(format!("unknown sync transport {other}"))),
+        }
+    }
+
+    /// Between rounds: the relay answers as soon as something new arrives
+    /// (or after ~25 s); a folder is checked again after `interval`.
+    async fn idle(&self, app: &AppHandle, interval: Duration) {
+        match self {
+            Transport::Folder(_) => tokio::time::sleep(interval).await,
+            Transport::Relay(r) => {
+                let cursor = app
+                    .state::<AppState>()
+                    .lib
+                    .lock()
+                    .ok()
+                    .and_then(|l| l.sync_cursor("sync").ok().flatten())
+                    .and_then(|c| c.parse().ok())
+                    .unwrap_or(0);
+                if r.wait(cursor).await.is_err() {
+                    // Offline or an old relay without waiting: don't spin.
+                    tokio::time::sleep(interval).await;
+                }
+            }
         }
     }
 
@@ -194,8 +214,29 @@ fn device_secret(device: &str) -> String {
     format!("sync:{device}:device-key")
 }
 
+/// A private relay's access key.
+fn account_secret(device: &str) -> String {
+    format!("sync:{device}:relay-account")
+}
+
+fn relay_account(vault: &Vault, device: &str) -> Option<String> {
+    vault.get(&account_secret(device)).map(|s| s.expose().to_string())
+}
+
 fn this_device(app: &AppHandle) -> Option<String> {
     Some(app.state::<AppState>().lib.lock().ok()?.device().to_string())
+}
+
+/// This device's heartbeat.
+fn device_info(app: &AppHandle, device: &str) -> DeviceInfo {
+    DeviceInfo {
+        id: device.to_string(),
+        name: computer_name(),
+        os: std::env::consts::OS.into(),
+        app_version: app.package_info().version.to_string(),
+        protocol_version: linecard_core_sync::SYNC_PROTOCOL_VERSION,
+        sent_at: now_ms(),
+    }
 }
 
 fn computer_name() -> String {
@@ -257,7 +298,12 @@ impl SyncEngine {
 
     /// Set up (or change) sync and start it. `phrase: None` creates a new
     /// group. Returns the phrase to show.
-    pub async fn setup(app: &AppHandle, cfg: SyncConfig, phrase: Option<String>) -> Result<String, String> {
+    pub async fn setup(
+        app: &AppHandle,
+        cfg: SyncConfig,
+        phrase: Option<String>,
+        account: Option<String>,
+    ) -> Result<String, String> {
         let state = app.state::<AppState>();
         let joining = phrase.is_some();
         let group = match &phrase {
@@ -265,9 +311,27 @@ impl SyncEngine {
             None => GroupKey::generate(),
         };
         let device = state.lib.lock().map_err(|e| e.to_string())?.device().to_string();
-        let transport = Transport::new(&cfg, &group, &device).map_err(|e| e.to_string())?;
+        let account = account
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty() && cfg.transport == "relay");
+        let transport = Transport::new(&cfg, &group, &device, account.clone()).map_err(|e| e.to_string())?;
         transport.check().await.map_err(|e| e.to_string())?;
-        Self::device_key(&state.vault, &device)?;
+        let key = Self::device_key(&state.vault, &device)?;
+        // A new group is claimed now (with its first heartbeat), so a private
+        // relay's missing or wrong access key shows up here, not later.
+        if !joining {
+            transport
+                .put_device(seal(&group, &key, &device, &device_info(app, &device)))
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        match &account {
+            Some(a) => state
+                .vault
+                .save_hidden(&account_secret(&device), Secret::new(a.clone())),
+            None => state.vault.forget_hidden(&account_secret(&device)),
+        }
+        .map_err(|e| e.to_string())?;
         state
             .vault
             .save_hidden(&group_secret(&device), Secret::new(hex(&group.to_bytes())))
@@ -291,7 +355,7 @@ impl SyncEngine {
     pub fn disable(app: &AppHandle) -> Result<(), String> {
         let state = app.state::<AppState>();
         state.sync.generation.fetch_add(1, Ordering::SeqCst);
-        state.sync.poke();
+        state.sync.wake.notify_waiters();
         let device = {
             let lib = state.lib.lock().map_err(|e| e.to_string())?;
             lib.set_local_setting(CONFIG_KEY, "")?;
@@ -302,6 +366,7 @@ impl SyncEngine {
             .vault
             .forget_hidden(&group_secret(&device))
             .map_err(|e| e.to_string())?;
+        let _ = state.vault.forget_hidden(&account_secret(&device));
         if let Ok(mut p) = state.sync.peers.lock() {
             p.clear();
         }
@@ -324,7 +389,8 @@ impl SyncEngine {
             closed_by: computer_name(),
             at: now_ms(),
         };
-        Transport::new(&cfg, &old, &device)
+        let account = relay_account(&state.vault, &device);
+        Transport::new(&cfg, &old, &device, account.clone())
             .map_err(|e| e.to_string())?
             .push(seal(&old, &key, &device, &notice))
             .await
@@ -332,9 +398,9 @@ impl SyncEngine {
 
         // Stop the old loop before switching keys.
         state.sync.generation.fetch_add(1, Ordering::SeqCst);
-        state.sync.poke();
+        state.sync.wake.notify_waiters();
         let group = GroupKey::generate();
-        let transport = Transport::new(&cfg, &group, &device).map_err(|e| e.to_string())?;
+        let transport = Transport::new(&cfg, &group, &device, account).map_err(|e| e.to_string())?;
         transport.check().await.map_err(|e| e.to_string())?;
         let (all, last_own) = {
             let lib = state.lib.lock().map_err(|e| e.to_string())?;
@@ -386,6 +452,7 @@ impl SyncEngine {
             return;
         };
         let generation = state.sync.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        state.sync.wake.notify_waiters();
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
             let state = app.state::<AppState>();
@@ -393,7 +460,7 @@ impl SyncEngine {
                 Ok(k) => k,
                 Err(e) => return state.sync.set_status(&app, SyncStateDto::Error { message: e }),
             };
-            let transport = match Transport::new(&cfg, &group, &device) {
+            let transport = match Transport::new(&cfg, &group, &device, relay_account(&state.vault, &device)) {
                 Ok(t) => t,
                 Err(e) => {
                     return state
@@ -432,7 +499,7 @@ impl SyncEngine {
                 };
                 state.sync.set_status(&app, status);
                 tokio::select! {
-                    _ = tokio::time::sleep(cfg.interval()) => {}
+                    _ = transport.idle(&app, cfg.interval()) => {}
                     _ = state.sync.wake.notified() => {}
                 }
             }
@@ -573,15 +640,9 @@ async fn round(
     // computer that just joined shows up on the Devices page right away
     // (the status update that follows refreshes it).
     if now_ms().saturating_sub(*last_heartbeat) >= HEARTBEAT_EVERY {
-        let info = DeviceInfo {
-            id: device.to_string(),
-            name: computer_name(),
-            os: std::env::consts::OS.into(),
-            app_version: app.package_info().version.to_string(),
-            protocol_version: linecard_core_sync::SYNC_PROTOCOL_VERSION,
-            sent_at: now_ms(),
-        };
-        transport.put_device(seal(group, key, device, &info)).await?;
+        transport
+            .put_device(seal(group, key, device, &device_info(app, device)))
+            .await?;
         *last_heartbeat = now_ms();
     }
     let peers: Vec<(DeviceInfo, String)> = transport

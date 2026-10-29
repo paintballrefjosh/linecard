@@ -2,13 +2,21 @@
 
 use std::sync::Arc;
 
-use linecard_relay::{router, Relay};
+use linecard_relay::{router, Limits, Relay};
 use linecard_sync::crypto::{open, seal};
 use linecard_sync::relay::RelayTransport;
 use linecard_sync::{DeviceKey, GroupKey};
 
 async fn start_relay() -> String {
-    let relay = Arc::new(Relay::in_memory(10_000).unwrap());
+    start_relay_with(Limits {
+        max_ops: 10_000,
+        open: true,
+    })
+    .await
+}
+
+async fn start_relay_with(limits: Limits) -> String {
+    let relay = Arc::new(Relay::in_memory(limits).unwrap());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router(relay)).await.unwrap() });
@@ -66,4 +74,56 @@ async fn unreachable_relay_and_bad_urls() {
     let dead = client("http://127.0.0.1:9", &group, "d");
     let err = dead.pull(0).await.unwrap_err().to_string();
     assert!(err.contains("can't reach"), "{err}");
+}
+
+#[tokio::test]
+async fn wait_returns_as_soon_as_something_arrives() {
+    let base = start_relay().await;
+    let group = GroupKey::generate();
+    let k = DeviceKey::generate();
+    let a = client(&base, &group, "laptop");
+    a.push(&seal(&group, &k, "laptop", &1)).await.unwrap();
+    let b = client(&base, &group, "desktop");
+    let started = std::time::Instant::now();
+    let pusher = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        a.push(&seal(&group, &k, "laptop", &2)).await.unwrap();
+    });
+    assert_eq!(b.wait(1).await.unwrap(), 2);
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    pusher.await.unwrap();
+}
+
+#[tokio::test]
+async fn private_relays_take_an_access_key() {
+    let relay = Arc::new(
+        Relay::in_memory(Limits {
+            max_ops: 100,
+            open: false,
+        })
+        .unwrap(),
+    );
+    let key = relay.add_account("alice", None).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router(relay)).await.unwrap() });
+
+    let group = GroupKey::generate();
+    let k = DeviceKey::generate();
+    let err = client(&base, &group, "laptop")
+        .push(&seal(&group, &k, "laptop", &1))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("access key"), "{err}");
+    client(&base, &group, "laptop")
+        .with_account(Some(key))
+        .push(&seal(&group, &k, "laptop", &1))
+        .await
+        .unwrap();
+    // Joining needs only the phrase.
+    client(&base, &group, "desktop")
+        .push(&seal(&group, &k, "desktop", &2))
+        .await
+        .unwrap();
 }

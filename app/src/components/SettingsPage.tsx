@@ -103,6 +103,8 @@ function SyncSettings() {
   const [transport, setTransport] = useState<SyncTransport>("folder");
   const [location, setLocation] = useState("");
   const [phraseInput, setPhraseInput] = useState("");
+  /** A private relay's access key. */
+  const [account, setAccount] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Shown after starting a group, or on request. */
@@ -131,7 +133,7 @@ function SyncSettings() {
     setError(null);
     try {
       const b = await getBackend();
-      const p = await b.syncSetup(transport, location.trim(), mode === "join" ? phraseInput : null);
+      const p = await b.syncSetup(transport, location.trim(), mode === "join" ? phraseInput : null, account);
       if (mode === "new") setPhrase(p);
       setPhraseInput("");
       load();
@@ -319,6 +321,23 @@ function SyncSettings() {
           </div>
         </div>
       </div>
+      {transport === "relay" && mode === "new" && (
+        <div className="settings-row settings-row-wide">
+          <div className="settings-text">
+            <label htmlFor="set-sync-account">Access key (private relays only)</label>
+            <p>Leave empty for an open relay. A private relay's operator gives you a key starting with lcr_.</p>
+            <input
+              id="set-sync-account"
+              className="settings-input"
+              value={account}
+              placeholder="lcr_…"
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(e) => setAccount(e.target.value)}
+            />
+          </div>
+        </div>
+      )}
       {mode === "join" && (
         <div className="settings-row settings-row-wide">
           <div className="settings-text">
