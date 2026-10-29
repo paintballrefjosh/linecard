@@ -14,6 +14,9 @@
 - `linecard spine01`, `linecard "DC1/Spine/spine01"`, `linecard ssh admin@host -p 2222`, `linecard telnet cs1 2005`, `linecard serial COM3 9600`: opens a tab in the running window, or starts Linecard.
 - Settings → Links and command line: open ssh:// and telnet:// links in Linecard (Windows, per user). A handler that was there before is put back when you turn it off.
 
+**Updates**
+- macOS builds now include the update package, so Macs get "Restart to install" like Windows and Linux (from the release after this one).
+
 **Folders**
 - Folder settings (right-click a folder): username, SSH jump host, keyword highlighting, session logging and tab color for everything inside.
 
