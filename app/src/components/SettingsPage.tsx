@@ -621,10 +621,22 @@ function KeywordHighlighting() {
 /** ssh:// and telnet:// links, and opening sessions from a command line. */
 function LinksAndCommandLine() {
   const [links, setLinks] = useState<boolean | null>(null);
+  const [path, setPath] = useState<{ on: boolean | null; manual: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    void getBackend().then((b) => b.linkHandlerStatus().then(setLinks));
+    void getBackend().then((b) => {
+      void b.linkHandlerStatus().then(setLinks);
+      void b.cliPathStatus().then(setPath);
+    });
   }, []);
+  const togglePath = (on: boolean) =>
+    void getBackend()
+      .then((b) => b.setCliPath(on).then(() => b.cliPathStatus()))
+      .then((p) => {
+        setPath(p);
+        setError(null);
+      })
+      .catch((e) => setError(String(e)));
   const toggle = (on: boolean) =>
     void getBackend()
       .then((b) => b.setLinkHandler(on))
@@ -638,11 +650,26 @@ function LinksAndCommandLine() {
       {links !== null && (
         <Row
           label="Open ssh:// and telnet:// links in Linecard"
-          hint="Links in a browser, wiki or monitoring tool open a tab here. Applies to your Windows account."
+          hint="Links in a browser, wiki or monitoring tool open a tab here. Applies to your account on this computer."
           htmlFor="set-links"
         >
           <Toggle id="set-links" checked={links} onChange={toggle} />
         </Row>
+      )}
+      {path?.on !== null && path !== null && (
+        <Row
+          label="Add linecard to PATH"
+          hint="So the commands below work in any terminal (new terminals pick it up). Applies to your account on this computer."
+          htmlFor="set-path"
+        >
+          <Toggle id="set-path" checked={!!path.on} onChange={togglePath} />
+        </Row>
+      )}
+      {path?.manual && (
+        <p className="settings-note">
+          {path.on === null ? "To use linecard from a terminal, run: " : ""}
+          <code>{path.manual}</code>
+        </p>
       )}
       {error && <p className="form-error settings-note">{error}</p>}
       <div className="settings-row settings-row-wide">

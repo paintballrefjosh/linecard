@@ -11,6 +11,7 @@ mod launch;
 mod library;
 mod logging;
 mod sync;
+mod system;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -912,6 +913,8 @@ pub fn run() {
             launch::take_launch,
             launch::link_handler_status,
             launch::set_link_handler,
+            launch::cli_path_status,
+            launch::set_cli_path,
             highlight::get_highlight,
             highlight::effective_highlight,
             highlight::save_highlight_profile,
@@ -935,8 +938,14 @@ pub fn run() {
             list_serial_ports,
             session_close,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Linecard");
+        .build(tauri::generate_context!())
+        .expect("error while starting Linecard")
+        .run(|_app, _event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = _event {
+                launch::opened_urls(_app, urls.into_iter().map(|u| u.to_string()).collect());
+            }
+        });
 }
 
 #[cfg(test)]

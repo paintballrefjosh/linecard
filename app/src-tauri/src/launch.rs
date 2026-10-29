@@ -179,114 +179,36 @@ pub fn second_instance(app: &AppHandle, argv: Vec<String>) {
     }
 }
 
-// ---- link registration (Windows: per-user registry) ----------------------------
+// ---- OS integration (see system.rs) ----------------------------------------------
 
-const SCHEMES: [&str; 2] = ["ssh", "telnet"];
-
-/// Whether ssh:// and telnet:// links open in Linecard. `None` where the
-/// app can't register them (macOS and Linux for now).
+/// Whether ssh:// and telnet:// links open in Linecard; `None` where the
+/// app can't change that.
 #[tauri::command]
 pub fn link_handler_status() -> Option<bool> {
-    #[cfg(windows)]
-    {
-        let exe = std::env::current_exe().ok()?;
-        Some(SCHEMES.iter().all(|s| windows::points_to(s, &exe)))
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = SCHEMES;
-        None
-    }
+    crate::system::links_on()
 }
 
 #[tauri::command]
 pub fn set_link_handler(on: bool) -> CmdResult<()> {
-    #[cfg(windows)]
-    {
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        for s in SCHEMES {
-            if on {
-                windows::register(s, &exe).map_err(|e| format!("couldn't register {s}:// links: {e}"))?;
-            } else {
-                windows::unregister(s, &exe).map_err(|e| format!("couldn't remove the {s}:// link handler: {e}"))?;
-            }
-        }
-        Ok(())
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = on;
-        Err("Linecard can't register links on this system yet".into())
-    }
+    crate::system::set_links(on)
 }
 
-#[cfg(windows)]
-mod windows {
-    //! Per-user URL handlers under HKCU\Software\Classes. A handler that was
-    //! there before is kept under HKCU\Software\Linecard and put back when
-    //! links are turned off.
+#[tauri::command]
+pub fn cli_path_status() -> crate::system::CliPathDto {
+    crate::system::cli_path()
+}
 
-    use std::io;
-    use std::path::Path;
+#[tauri::command]
+pub fn set_cli_path(on: bool) -> CmdResult<()> {
+    crate::system::set_cli_path(on)
+}
 
-    use winreg::enums::{HKEY_CURRENT_USER, KEY_ALL_ACCESS};
-    use winreg::RegKey;
-
-    fn command(exe: &Path) -> String {
-        format!("\"{}\" \"%1\"", exe.display())
-    }
-
-    fn hkcu() -> RegKey {
-        RegKey::predef(HKEY_CURRENT_USER)
-    }
-
-    fn classes() -> io::Result<RegKey> {
-        hkcu().open_subkey_with_flags("Software\\Classes", KEY_ALL_ACCESS)
-    }
-
-    fn current(scheme: &str) -> Option<String> {
-        classes()
-            .and_then(|c| c.open_subkey(format!("{scheme}\\shell\\open\\command")))
-            .and_then(|k| k.get_value::<String, _>(""))
-            .ok()
-    }
-
-    const BACKUP: &str = "Software\\Linecard\\PreviousLinkHandlers";
-
-    pub fn points_to(scheme: &str, exe: &Path) -> bool {
-        current(scheme).is_some_and(|v| v.eq_ignore_ascii_case(&command(exe)))
-    }
-
-    fn write_handler(scheme: &str, cmd: &str, icon: Option<String>) -> io::Result<()> {
-        let (key, _) = classes()?.create_subkey(scheme)?;
-        key.set_value("", &format!("URL:{} link", scheme.to_uppercase()))?;
-        key.set_value("URL Protocol", &"")?;
-        if let Some(icon) = icon {
-            key.create_subkey("DefaultIcon")?.0.set_value("", &icon)?;
-        }
-        key.create_subkey("shell\\open\\command")?.0.set_value("", &cmd)
-    }
-
-    pub fn register(scheme: &str, exe: &Path) -> io::Result<()> {
-        if let Some(previous) = current(scheme).filter(|_| !points_to(scheme, exe)) {
-            hkcu().create_subkey(BACKUP)?.0.set_value(scheme, &previous)?;
-        }
-        write_handler(scheme, &command(exe), Some(format!("\"{}\",0", exe.display())))
-    }
-
-    /// Only touches the handler if it's ours; puts back the one it replaced.
-    pub fn unregister(scheme: &str, exe: &Path) -> io::Result<()> {
-        if !points_to(scheme, exe) {
-            return Ok(());
-        }
-        classes()?.delete_subkey_all(scheme)?;
-        let backup = hkcu().open_subkey_with_flags(BACKUP, KEY_ALL_ACCESS);
-        if let Some(previous) = backup.as_ref().ok().and_then(|b| b.get_value::<String, _>(scheme).ok()) {
-            write_handler(scheme, &previous, None)?;
-            let _ = backup?.delete_value(scheme);
-        }
-        Ok(())
-    }
+/// Links handed over by macOS (it doesn't pass them as arguments).
+#[cfg(target_os = "macos")]
+pub fn opened_urls(app: &AppHandle, urls: Vec<String>) {
+    let mut argv = vec![String::new()];
+    argv.extend(urls);
+    second_instance(app, argv);
 }
 
 #[cfg(test)]

@@ -2993,6 +2993,7 @@ name = "linecard"
 version = "0.2.0"
 dependencies = [
  "chrono",
+ "core-foundation 0.10.1",
  "linecard-core-model",
  "linecard-core-store",
  "linecard-core-sync",
@@ -3011,6 +3012,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "uuid",
+ "windows-sys 0.59.0",
  "winreg 0.55.0",
 ]
 

@@ -58,6 +58,9 @@ export interface Backend {
   /** Whether ssh:// and telnet:// links open here; null where unsupported. */
   linkHandlerStatus(): Promise<boolean | null>;
   setLinkHandler(on: boolean): Promise<void>;
+  /** Whether `linecard` is on PATH (on: null = can't change it here). */
+  cliPathStatus(): Promise<{ on: boolean | null; manual: string | null }>;
+  setCliPath(on: boolean): Promise<void>;
   /** Fires when the sync status changes. */
   onSyncChanged(cb: () => void): () => void;
   ackChange(objectId: string): Promise<void>;
@@ -147,6 +150,8 @@ async function tauriBackend(): Promise<Backend> {
     },
     linkHandlerStatus: () => invoke<boolean | null>("link_handler_status"),
     setLinkHandler: (on) => invoke("set_link_handler", { on }),
+    cliPathStatus: () => invoke("cli_path_status"),
+    setCliPath: (on) => invoke("set_cli_path", { on }),
     onSyncChanged(cb) {
       const unlisten = listen("sync-changed", () => cb());
       return () => void unlisten.then((u) => u());

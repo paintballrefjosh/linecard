@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Lets Settings → Links make Linecard the handler for these links. -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>Linecard links</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>ssh</string>
+        <string>telnet</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>

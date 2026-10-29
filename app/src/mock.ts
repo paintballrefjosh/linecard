@@ -153,6 +153,7 @@ export function mockBackend(): Backend {
   let syncPhraseWords = mockPhrase;
   const syncListeners = new Set<() => void>();
   let linkHandler = false;
+  let cliPath = false;
 
   const devices: Device[] = [
     {
@@ -282,6 +283,10 @@ export function mockBackend(): Backend {
     linkHandlerStatus: async () => linkHandler,
     async setLinkHandler(on) {
       linkHandler = on;
+    },
+    cliPathStatus: async () => ({ on: cliPath, manual: null }),
+    async setCliPath(on) {
+      cliPath = on;
     },
     onSyncChanged(cb) {
       syncListeners.add(cb);
