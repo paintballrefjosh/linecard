@@ -40,7 +40,8 @@ async fn serve(mut s: TcpStream) -> std::io::Result<()> {
     s.read_u8().await?; // ClientInit
     s.write_u16(W).await?;
     s.write_u16(H).await?;
-    s.write_all(&[32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0]).await?;
+    s.write_all(&[32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0])
+        .await?;
     let name = b"Linecard VNC test";
     s.write_u32(name.len() as u32).await?;
     s.write_all(name).await?;

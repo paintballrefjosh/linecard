@@ -3,6 +3,7 @@
 ## Unreleased
 
 **Graphical sessions**
+- RDP: connections of type RDP open in a tab (IronRDP, on every platform). Network Level Authentication (CredSSP/NTLM) with the user name inherited like SSH and "Save password"; the server certificate is checked like an SSH host key before any password is sent; the remote desktop follows the tab's size when the server supports it.
 - VNC: connections of type VNC open in a tab showing the remote screen, scaled to fit, with mouse, wheel and keyboard (Ctrl+Shift+V types the clipboard). VNC password authentication with "Save password"; ZRLE, CopyRect and Raw encodings; servers that change size.
 
 - Sync saved passwords (opt-in, Settings → Saved passwords): encrypted with a vault passphrase that is separate from the sync phrase (Argon2id, then XChaCha20-Poly1305 per password). Each computer asks for the passphrase once; saving, changing or removing a password on one computer does the same on the others.

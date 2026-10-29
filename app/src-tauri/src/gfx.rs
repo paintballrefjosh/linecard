@@ -95,8 +95,11 @@ pub async fn open_gfx_session(
             Box::new(linecard_proto::vnc::VncSession::connect(&target, credentials, sink).map_err(err)?)
         }
         ConnectionKind::Rdp => {
-            let _ = (width, height);
-            return Err("RDP isn't ready yet".into());
+            let opts = linecard_proto::rdp::RdpOptions {
+                credentials,
+                known_certs: state.data_dir.join("known_rdp_certs"),
+            };
+            Box::new(linecard_proto::rdp::RdpSession::connect(&target, width, height, opts, sink).map_err(err)?)
         }
         other => return Err(format!("{other:?} isn't a graphical connection")),
     };

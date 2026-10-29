@@ -98,6 +98,26 @@ export function RemoteView({ conn, onStatus }: Props) {
     };
   }, [conn, attempt]);
 
+  // RDP can follow the tab's size (the server decides; VNC ignores it).
+  useEffect(() => {
+    const el = box.current;
+    if (!el || conn.kind !== "rdp") return;
+    let timer = 0;
+    const ro = new ResizeObserver(() => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const w = Math.round(el.clientWidth);
+        const h = Math.round(el.clientHeight);
+        if (w > 200 && h > 200 && (w !== size.current.w || h !== size.current.h)) session.current?.resize(w, h);
+      }, 400);
+    });
+    ro.observe(el);
+    return () => {
+      window.clearTimeout(timer);
+      ro.disconnect();
+    };
+  }, [conn.kind]);
+
   /** Canvas coordinates for a pointer event, in remote pixels. */
   const at = (e: { clientX: number; clientY: number }) => {
     const c = canvas.current;
