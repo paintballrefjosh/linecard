@@ -8,6 +8,11 @@ license.workspace = true
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Synced vault: passphrase -> key, then XChaCha20-Poly1305 per password.
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+base64 = "0.22"
+getrandom = "0.2"
 
 # OS keychain: Windows Credential Manager / macOS Keychain / kernel keyutils.
 [target.'cfg(windows)'.dependencies]
@@ -17,7 +22,3 @@ keyring = { version = "3", features = ["apple-native"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", features = ["linux-native"] }
 
-# Synced vault (Phase 2):
-# chacha20poly1305 = "0.10"   # XChaCha20-Poly1305 for the synced vault blob
-# argon2 = "0.5"              # vault passphrase -> key
-# zeroize = "1"

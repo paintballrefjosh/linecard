@@ -13,7 +13,7 @@ import {
 } from "../highlight";
 import type { ThemePref } from "../theme";
 import { usePrefs } from "../prefs";
-import type { LoggingSettings, SavedPassword, SyncConfig, SyncState, SyncTransport } from "../types";
+import type { LoggingSettings, PasswordSync, SavedPassword, SyncConfig, SyncState, SyncTransport } from "../types";
 import { ConfirmDialog, Modal } from "./Dialog";
 import { relativeTime } from "./ConnectionTree";
 
@@ -882,6 +882,7 @@ function SavedPasswords() {
 
   return (
     <Section title="Saved passwords">
+      <PasswordSyncRow onChange={load} />
       {items === null ? null : items.length === 0 ? (
         <p className="settings-note settings-empty">
           None yet. Tick <b>Save password</b> when logging in to keep one in Windows Credential Manager.
@@ -902,6 +903,129 @@ function SavedPasswords() {
         ))
       )}
     </Section>
+  );
+}
+
+/** Opt-in: saved passwords travel to your other computers, encrypted with
+ *  a vault passphrase that's separate from the sync phrase. */
+function PasswordSyncRow({ onChange }: { onChange(): void }) {
+  const [s, setS] = useState<PasswordSync | null>(null);
+  const [asking, setAsking] = useState(false);
+  const load = () => void getBackend().then((b) => b.getPasswordSync().then(setS));
+  useEffect(load, []);
+  if (!s) return null;
+  return (
+    <>
+      <div className="settings-row">
+        <div className="settings-text">
+          <span>Sync saved passwords</span>
+          <p>
+            {!s.available
+              ? "Turn on sync first (above). Until then, passwords stay on this computer."
+              : s.enabled
+                ? `On: ${s.count} ${s.count === 1 ? "password travels" : "passwords travel"} to your other computers, encrypted with your vault passphrase.`
+                : s.exists
+                  ? "Another computer syncs its passwords. Enter the vault passphrase you set there to get them here too."
+                  : "Off: passwords stay in this computer's keychain. Turn on to encrypt them with a vault passphrase and sync them."}
+          </p>
+        </div>
+        <div className="settings-control">
+          {s.enabled ? (
+            <button
+              className="btn"
+              onClick={() =>
+                void getBackend()
+                  .then((b) => b.disablePasswordSync())
+                  .then(load)
+              }
+            >
+              Stop on this computer
+            </button>
+          ) : (
+            <button className="btn" disabled={!s.available} onClick={() => setAsking(true)}>
+              {s.exists ? "Enter passphrase…" : "Turn on…"}
+            </button>
+          )}
+        </div>
+      </div>
+      {asking && (
+        <VaultPassphraseDialog
+          creating={!s.exists}
+          onDone={() => {
+            setAsking(false);
+            load();
+            onChange();
+          }}
+          onClose={() => setAsking(false)}
+        />
+      )}
+    </>
+  );
+}
+
+function VaultPassphraseDialog({ creating, onDone, onClose }: { creating: boolean; onDone(): void; onClose(): void }) {
+  const [pass, setPass] = useState("");
+  const [again, setAgain] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async () => {
+    if (creating && pass !== again) return setError("The two passphrases don't match.");
+    setBusy(true);
+    setError(null);
+    try {
+      await (await getBackend()).enablePasswordSync(pass);
+      onDone();
+    } catch (e) {
+      setError(String(e));
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      title={creating ? "Choose a vault passphrase" : "Enter the vault passphrase"}
+      onSubmit={() => void submit()}
+      onClose={onClose}
+      actions={
+        <>
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-primary" disabled={busy || !pass}>
+            {busy ? "Checking…" : creating ? "Turn on" : "Unlock"}
+          </button>
+        </>
+      }
+    >
+      <p>
+        {creating
+          ? "Your saved passwords are encrypted with this before they leave this computer. Each of your other computers asks for it once. It's separate from the 24-word sync phrase, so someone with only the sync phrase can't read your passwords. If you forget it, passwords stay on each computer but stop syncing."
+          : "The passphrase you chose when you turned on password sync on your other computer."}
+      </p>
+      <div className="form-grid">
+        <label htmlFor="vp-pass">Passphrase</label>
+        <input
+          id="vp-pass"
+          type="password"
+          value={pass}
+          autoComplete="new-password"
+          onChange={(e) => setPass(e.target.value)}
+          data-autofocus
+        />
+        {creating && (
+          <>
+            <label htmlFor="vp-again">Again</label>
+            <input
+              id="vp-again"
+              type="password"
+              value={again}
+              autoComplete="new-password"
+              onChange={(e) => setAgain(e.target.value)}
+            />
+          </>
+        )}
+      </div>
+      {error && <p className="form-error">{error}</p>}
+    </Modal>
   );
 }
 

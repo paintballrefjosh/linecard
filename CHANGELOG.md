@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Sync saved passwords (opt-in, Settings → Saved passwords): encrypted with a vault passphrase that is separate from the sync phrase (Argon2id, then XChaCha20-Poly1305 per password). Each computer asks for the passphrase once; saving, changing or removing a password on one computer does the same on the others.
 - Sync on the local network with no server: pick "This network" in Settings → Sync. Computers find each other by multicast and sync directly; each keeps and passes on what it has, so changes reach a computer that was off when they were made.
 - Sync through a GitHub repository: pick GitHub in Settings → Sync, enter owner/name and a fine-grained token for that repository (Contents: read and write; kept in the keychain). Same layout as a shared folder, one commit per batch, checked every 30 seconds; the repository only holds ciphertext.
 - Relay sync is near-instant: computers wait on the relay, which answers as soon as a change arrives (about a quarter second end to end), instead of checking every 5 seconds.

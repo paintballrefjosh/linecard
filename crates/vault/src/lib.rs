@@ -13,6 +13,8 @@
 //!
 //! A credential can be pinned *local only* even when sync is on.
 
+pub mod synced;
+
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;

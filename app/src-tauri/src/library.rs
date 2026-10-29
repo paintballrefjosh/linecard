@@ -14,7 +14,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use linecard_core_model::{Connection, ConnectionKind, Endpoint, Folder, HighlightProfile, Settings, Tree};
+use linecard_core_model::{
+    Connection, ConnectionKind, Endpoint, Folder, HighlightProfile, Settings, SyncedSecret, Tree, VaultMeta,
+};
 use linecard_core_store::Store;
 use linecard_core_sync::{ChangeTracker, Hlc, ObjectState, Op, Replica, Value};
 
@@ -30,6 +32,10 @@ const KIND_FOLDER: &str = "folder";
 const KIND_CONNECTION: &str = "connection";
 const KIND_SETTINGS: &str = "settings";
 const KIND_HIGHLIGHT: &str = "highlight_profile";
+const KIND_VAULT: &str = "vault";
+const KIND_SECRET: &str = "secret";
+/// Object id of the synced vault's salt and check value.
+const VAULT_ID: &str = "vault";
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -340,6 +346,19 @@ fn snapshot(t: &Tree) -> BTreeMap<String, (&'static str, Fields)> {
     for h in t.highlight_profiles.values() {
         out.insert(h.id.clone(), (KIND_HIGHLIGHT, highlight_fields(h)));
     }
+    if let Some(v) = &t.vault {
+        let mut m = Fields::new();
+        m.insert("salt".into(), Value::Str(v.salt.clone()));
+        m.insert("check".into(), Value::Str(v.check.clone()));
+        out.insert(VAULT_ID.to_string(), (KIND_VAULT, m));
+    }
+    for s in t.secrets.values() {
+        let mut m = Fields::new();
+        m.insert("key".into(), Value::Str(s.key.clone()));
+        m.insert("label".into(), Value::Str(s.label.clone()));
+        m.insert("blob".into(), Value::Str(s.blob.clone()));
+        out.insert(s.id.clone(), (KIND_SECRET, m));
+    }
     out
 }
 
@@ -387,6 +406,30 @@ pub fn project(replica: &Replica) -> Tree {
         .map(|(_, o)| get_settings(o, "defaults"))
         .unwrap_or_default();
     let mut tree = Tree::new(global);
+    tree.vault = live
+        .iter()
+        .find(|(id, o)| id.as_str() == VAULT_ID && o.kind == KIND_VAULT)
+        .and_then(|(_, o)| {
+            Some(VaultMeta {
+                salt: get_str(o, "salt")?,
+                check: get_str(o, "check")?,
+            })
+        });
+    tree.secrets = live
+        .iter()
+        .filter(|(_, o)| o.kind == KIND_SECRET)
+        .filter_map(|(id, o)| {
+            Some((
+                id.to_string(),
+                SyncedSecret {
+                    id: id.to_string(),
+                    key: get_str(o, "key")?,
+                    label: get_str(o, "label").unwrap_or_default(),
+                    blob: get_str(o, "blob")?,
+                },
+            ))
+        })
+        .collect();
     tree.highlight_profiles = live
         .iter()
         .filter(|(_, o)| o.kind == KIND_HIGHLIGHT)

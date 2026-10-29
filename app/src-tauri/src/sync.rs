@@ -692,6 +692,8 @@ async fn round(
     };
     if fresh > 0 {
         let _ = app.emit("tree-changed", ());
+        // Passwords saved or removed on another computer.
+        let _ = crate::secrets::reconcile(app);
     }
     if closed.is_some() {
         return Ok(closed);

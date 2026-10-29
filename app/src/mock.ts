@@ -153,6 +153,7 @@ export function mockBackend(): Backend {
   let syncPhraseWords = mockPhrase;
   const syncListeners = new Set<() => void>();
   let linkHandler = false;
+  let passwordSync = false;
   let cliPath = false;
 
   const devices: Device[] = [
@@ -277,6 +278,14 @@ export function mockBackend(): Backend {
     async syncDisable() {
       syncConfig = null;
       syncListeners.forEach((l) => l());
+    },
+    getPasswordSync: async () => ({ available: !!syncConfig, enabled: passwordSync, exists: true, count: 2 }),
+    async enablePasswordSync(p) {
+      if (p.length < 8) throw "use at least 8 characters";
+      passwordSync = true;
+    },
+    async disablePasswordSync() {
+      passwordSync = false;
     },
     takeLaunch: async () => null,
     onLaunch: () => () => {},

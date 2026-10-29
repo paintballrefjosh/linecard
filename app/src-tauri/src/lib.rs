@@ -10,6 +10,7 @@ mod import;
 mod launch;
 mod library;
 mod logging;
+mod secrets;
 mod sync;
 mod system;
 
@@ -469,8 +470,10 @@ fn list_saved_passwords(state: State<AppState>) -> Vec<SavedCredential> {
 }
 
 #[tauri::command]
-fn forget_saved_password(state: State<AppState>, key: String) -> CmdResult<()> {
-    state.vault.forget(&key).map_err(err)
+fn forget_saved_password(app: AppHandle, state: State<AppState>, key: String) -> CmdResult<()> {
+    state.vault.forget(&key).map_err(err)?;
+    secrets::after_local_forget(&app, &key);
+    Ok(())
 }
 
 // ---- devices & sync ----------------------------------------------------------
@@ -576,7 +579,9 @@ fn default_log_dir(app: &AppHandle) -> std::path::PathBuf {
 }
 
 /// Saved passwords for the SSH driver, kept in the OS keychain.
-struct VaultCredentials(Arc<Vault>);
+/// Saved passwords for SSH logins; with password sync on, a new one also
+/// goes to the synced vault.
+struct VaultCredentials(Arc<Vault>, AppHandle);
 
 impl std::fmt::Debug for VaultCredentials {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -590,7 +595,9 @@ impl linecard_proto::Credentials for VaultCredentials {
     }
     fn save_password(&self, key: &str, label: &str, password: &str) {
         // A failed save only means the user is asked again next time.
-        let _ = self.0.save(key, label, Secret::new(password));
+        if self.0.save(key, label, Secret::new(password)).is_ok() {
+            secrets::after_local_save(&self.1, key, label, password);
+        }
     }
 }
 
@@ -606,7 +613,7 @@ fn ssh_options(app: &AppHandle, vault: Arc<Vault>) -> SshOptions {
         .app_data_dir()
         .unwrap_or_else(|_| std::env::temp_dir().join("linecard"));
     SshOptions {
-        credentials: Some(Arc::new(VaultCredentials(vault))),
+        credentials: Some(Arc::new(VaultCredentials(vault, app.clone()))),
         known_hosts: data.join("known_hosts"),
         extra_known_hosts: dot_ssh.iter().map(|d| d.join("known_hosts")).collect(),
         identity_files: dot_ssh
@@ -919,6 +926,9 @@ pub fn run() {
             get_sync_state,
             get_folder_settings,
             save_folder_settings,
+            secrets::get_password_sync,
+            secrets::enable_password_sync,
+            secrets::disable_password_sync,
             launch::take_launch,
             launch::link_handler_status,
             launch::set_link_handler,

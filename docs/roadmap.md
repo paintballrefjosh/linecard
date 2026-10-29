@@ -33,7 +33,7 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 - [x] LAN peer transport (multicast discovery, store and forward)
 - [x] Device heartbeats and version-mismatch banners
 - [x] Remove a device / change the phrase (key rotation)
-- [ ] Optional encrypted secrets sync
+- [x] Optional encrypted password sync (vault passphrase)
 - [x] Port forwarding (local, remote, SOCKS), ssh:// and telnet:// links (Windows), command-line launcher
 
 ## Phase 3 — Graphical (v0.7–0.8)

@@ -148,6 +148,17 @@ export type SessionEvent =
   | TransferEvent
   | { event: "disconnected"; reason: string | null };
 
+export interface PasswordSync {
+  /** Sync is set up (password sync needs it). */
+  available: boolean;
+  /** On for this computer. */
+  enabled: boolean;
+  /** A vault passphrase has been set (here or on another computer). */
+  exists: boolean;
+  /** Passwords in the synced vault. */
+  count: number;
+}
+
 /** Something to open from the command line or a link. */
 export type Launch =
   { kind: "saved"; id: string } | { kind: "quick"; text: string } | { kind: "error"; message: string };

@@ -3,6 +3,7 @@ import type {
   ConnectionNode,
   FolderSettings,
   Launch,
+  PasswordSync,
   Device,
   ImportPreview,
   ImportSource,
@@ -91,6 +92,10 @@ export interface Backend {
   setPreferences(p: Preferences): Promise<void>;
   listSavedPasswords(): Promise<SavedPassword[]>;
   forgetSavedPassword(key: string): Promise<void>;
+  getPasswordSync(): Promise<PasswordSync>;
+  /** Set (first computer) or enter (the others) the vault passphrase. */
+  enablePasswordSync(passphrase: string): Promise<void>;
+  disablePasswordSync(): Promise<void>;
   importSources(): Promise<ImportSource[]>;
   importPreview(source: ImportSourceId, path: string | null): Promise<ImportPreview>;
   /** Returns the id of the new "Imported from …" folder. */
@@ -178,6 +183,9 @@ async function tauriBackend(): Promise<Backend> {
     setPreferences: (preferences) => invoke("set_preferences", { preferences }),
     listSavedPasswords: () => invoke<SavedPassword[]>("list_saved_passwords"),
     forgetSavedPassword: (key) => invoke("forget_saved_password", { key }),
+    getPasswordSync: () => invoke<PasswordSync>("get_password_sync"),
+    enablePasswordSync: (passphrase) => invoke("enable_password_sync", { passphrase }),
+    disablePasswordSync: () => invoke("disable_password_sync"),
     importSources: () => invoke<ImportSource[]>("import_sources"),
     importPreview: (source, path) => invoke<ImportPreview>("import_preview", { source, path }),
     importApply: (source, path) => invoke<string>("import_apply", { source, path }),

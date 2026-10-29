@@ -71,6 +71,10 @@ pub struct Tree {
     pub global: Settings,
     /// Keyword-highlight profiles by id.
     pub highlight_profiles: BTreeMap<ObjectId, crate::HighlightProfile>,
+    /// Synced vault (opt-in): its salt and check value, if set up.
+    pub vault: Option<crate::VaultMeta>,
+    /// Saved passwords that sync, encrypted, by object id.
+    pub secrets: BTreeMap<ObjectId, crate::SyncedSecret>,
     folders: BTreeMap<ObjectId, Folder>,
     connections: BTreeMap<ObjectId, Connection>,
 }
