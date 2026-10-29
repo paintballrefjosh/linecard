@@ -294,7 +294,10 @@ impl SyncEngine {
             lib.set_local_setting(CONFIG_KEY, "")?;
             lib.device().to_string()
         };
-        state.vault.forget_hidden(&group_secret(&device)).map_err(|e| e.to_string())?;
+        state
+            .vault
+            .forget_hidden(&group_secret(&device))
+            .map_err(|e| e.to_string())?;
         if let Ok(mut p) = state.sync.peers.lock() {
             p.clear();
         }
@@ -327,10 +330,16 @@ impl SyncEngine {
             };
             let transport = match Transport::new(&cfg, &group, &device) {
                 Ok(t) => t,
-                Err(e) => return state.sync.set_status(&app, SyncStateDto::Error { message: e.to_string() }),
+                Err(e) => {
+                    return state
+                        .sync
+                        .set_status(&app, SyncStateDto::Error { message: e.to_string() })
+                }
             };
             let mut last_heartbeat = 0;
-            state.sync.set_status(&app, SyncStateDto::Syncing { transport: cfg.label() });
+            state
+                .sync
+                .set_status(&app, SyncStateDto::Syncing { transport: cfg.label() });
             while state.sync.generation.load(Ordering::SeqCst) == generation {
                 let result = round(&app, &transport, &group, &key, &device, &mut last_heartbeat).await;
                 if state.sync.generation.load(Ordering::SeqCst) != generation {
