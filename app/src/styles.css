@@ -1910,3 +1910,9 @@ kbd {
   font: 12px var(--font-mono);
   line-height: 1.6;
 }
+
+.sync-notice {
+  max-width: none;
+  margin: 0;
+  border-radius: 0;
+}

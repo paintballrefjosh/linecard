@@ -1,4 +1,7 @@
+import { useState } from "react";
 import { AlertTriangle, Laptop } from "lucide-react";
+import { Modal } from "./Dialog";
+import { PhraseWords, RotateDialog } from "./SettingsPage";
 import type { Device } from "../types";
 import { relativeTime } from "./ConnectionTree";
 
@@ -23,6 +26,8 @@ export function versionMismatch(devices: Device[]): boolean {
 const transportLabel: Record<string, string> = { folder: "Shared folder", relay: "Relay" };
 
 export function DevicesPage({ devices, syncOn }: { devices: Device[]; syncOn: boolean }) {
+  const [removing, setRemoving] = useState<Device | null>(null);
+  const [newPhrase, setNewPhrase] = useState<string | null>(null);
   const newest = devices.reduce((v, d) => (compareVersions(d.appVersion, v) > 0 ? d.appVersion : v), "0");
   const me = devices.find((d) => d.isThisDevice);
   const behind = me && compareVersions(me.appVersion, newest) < 0;
@@ -56,6 +61,7 @@ export function DevicesPage({ devices, syncOn }: { devices: Device[]; syncOn: bo
             <th>Transport</th>
             <th>Last seen</th>
             <th>Pending</th>
+            <th aria-label="Actions" />
           </tr>
         </thead>
         <tbody>
@@ -77,11 +83,43 @@ export function DevicesPage({ devices, syncOn }: { devices: Device[]; syncOn: bo
                 <td>{transportLabel[d.transport] ?? "—"}</td>
                 <td>{stale ? `${relativeTime(d.lastSeen)} — consider removing` : relativeTime(d.lastSeen)}</td>
                 <td>{d.pendingOps || "—"}</td>
+                <td>
+                  {!d.isThisDevice && (
+                    <button className="btn btn-small" onClick={() => setRemoving(d)}>
+                      Remove…
+                    </button>
+                  )}
+                </td>
               </tr>
             );
           })}
         </tbody>
       </table>
+      {removing && (
+        <RotateDialog
+          removing={removing.name}
+          onDone={(p) => {
+            setRemoving(null);
+            setNewPhrase(p);
+          }}
+          onClose={() => setRemoving(null)}
+        />
+      )}
+      {newPhrase && (
+        <Modal
+          title="New sync phrase"
+          onSubmit={() => setNewPhrase(null)}
+          onClose={() => setNewPhrase(null)}
+          actions={
+            <button type="submit" className="btn btn-primary" data-autofocus>
+              Done
+            </button>
+          }
+        >
+          <p>Enter this on each of your other computers under Settings → Sync → Use a new phrase.</p>
+          <PhraseWords phrase={newPhrase} onHide={() => setNewPhrase(null)} />
+        </Modal>
+      )}
     </div>
   );
 }

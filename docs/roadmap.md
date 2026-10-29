@@ -31,6 +31,7 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 - [x] Shared-folder transport (NAS, OneDrive, Dropbox, Syncthing)
 - [ ] GitHub transport (30 s default poll), LAN peer transport
 - [x] Device heartbeats and version-mismatch banners
+- [x] Remove a device / change the phrase (key rotation)
 - [ ] Optional encrypted secrets sync
 - [ ] Port forwarding, URL handlers, CLI
 

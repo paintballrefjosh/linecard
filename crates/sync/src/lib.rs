@@ -51,6 +51,17 @@ pub struct Batch {
     pub ops: Vec<Op>,
 }
 
+/// Posted in a group when someone replaces its phrase (to remove a
+/// computer, or because the phrase leaked): the group is closed and the
+/// others need the new phrase.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Notice {
+    /// Name of the computer that closed the group.
+    pub closed_by: String,
+    pub at: u64,
+}
+
 /// A device's heartbeat, shown on the Devices page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

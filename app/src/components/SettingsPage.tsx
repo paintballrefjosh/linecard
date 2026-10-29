@@ -13,7 +13,7 @@ import {
 } from "../highlight";
 import type { ThemePref } from "../theme";
 import { usePrefs } from "../prefs";
-import type { LoggingSettings, SavedPassword, SyncConfig, SyncTransport } from "../types";
+import type { LoggingSettings, SavedPassword, SyncConfig, SyncState, SyncTransport } from "../types";
 import { ConfirmDialog, Modal } from "./Dialog";
 import { relativeTime } from "./ConnectionTree";
 
@@ -108,6 +108,19 @@ function SyncSettings() {
   /** Shown after starting a group, or on request. */
   const [phrase, setPhrase] = useState<string | null>(null);
   const [confirmOff, setConfirmOff] = useState(false);
+  const [confirmRotate, setConfirmRotate] = useState(false);
+  /** Joining the group again with a phrase another computer replaced. */
+  const [rejoin, setRejoin] = useState(false);
+  const [sync, setSync] = useState<SyncState | null>(null);
+  useEffect(() => {
+    let off = () => {};
+    void getBackend().then((b) => {
+      const load = () => void b.getSyncState().then(setSync);
+      load();
+      off = b.onSyncChanged(load);
+    });
+    return () => off();
+  }, []);
 
   const load = () => void getBackend().then((b) => b.getSyncConfig().then(setConfig));
   useEffect(load, []);
@@ -130,8 +143,27 @@ function SyncSettings() {
   };
 
   if (config) {
+    const rejoinNow = async () => {
+      setBusy(true);
+      setError(null);
+      try {
+        await (await getBackend()).syncSetup(config.transport, config.location, phraseInput);
+        setPhraseInput("");
+        setRejoin(false);
+        setPhrase(null);
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setBusy(false);
+      }
+    };
     return (
       <Section title="Sync">
+        {sync?.state === "error" && (
+          <div className="notice notice-warn sync-notice" role="status">
+            {sync.message}
+          </div>
+        )}
         <div className="settings-row">
           <div className="settings-text">
             <span>Syncing through {config.transport === "folder" ? "a shared folder" : "a relay"}</span>
@@ -158,15 +190,55 @@ function SyncSettings() {
             {phrase ? (
               <PhraseWords phrase={phrase} onHide={() => setPhrase(null)} />
             ) : (
-              <button
-                className="btn sync-show"
-                onClick={() => void getBackend().then((b) => b.syncPhrase().then(setPhrase))}
-              >
-                Show phrase
-              </button>
+              <div className="hl-actions">
+                <button className="btn" onClick={() => void getBackend().then((b) => b.syncPhrase().then(setPhrase))}>
+                  Show phrase
+                </button>
+                <button className="btn" onClick={() => setConfirmRotate(true)}>
+                  Change phrase…
+                </button>
+                <button className="btn" onClick={() => setRejoin((v) => !v)}>
+                  Use a new phrase…
+                </button>
+              </div>
             )}
           </div>
         </div>
+        {rejoin && (
+          <div className="settings-row settings-row-wide">
+            <div className="settings-text">
+              <label htmlFor="set-sync-rejoin">New phrase</label>
+              <p>When another computer changed the phrase, enter the new 24 words here to keep syncing with it.</p>
+              <textarea
+                id="set-sync-rejoin"
+                className="settings-input sync-phrase-input"
+                value={phraseInput}
+                spellCheck={false}
+                autoComplete="off"
+                onChange={(e) => setPhraseInput(e.target.value)}
+              />
+              <div className="hl-actions">
+                <button
+                  className="btn btn-primary"
+                  disabled={busy || !phraseInput.trim()}
+                  onClick={() => void rejoinNow()}
+                >
+                  {busy ? "Connecting…" : "Join"}
+                </button>
+              </div>
+              {error && <p className="form-error">{error}</p>}
+            </div>
+          </div>
+        )}
+        {confirmRotate && (
+          <RotateDialog
+            onDone={(p) => {
+              setPhrase(p);
+              setConfirmRotate(false);
+            }}
+            onClose={() => setConfirmRotate(false)}
+          />
+        )}
         {confirmOff && (
           <ConfirmDialog
             title="Turn off sync?"
@@ -279,7 +351,38 @@ function SyncSettings() {
   );
 }
 
-function PhraseWords({ phrase, onHide }: { phrase: string; onHide(): void }) {
+/** Confirm, then replace the sync phrase. Used to remove a computer too. */
+export function RotateDialog({
+  removing,
+  onDone,
+  onClose,
+}: {
+  /** The computer being removed, if that's why. */
+  removing?: string;
+  onDone(phrase: string): void;
+  onClose(): void;
+}) {
+  return (
+    <ConfirmDialog
+      title={removing ? `Remove ${removing}?` : "Change the sync phrase?"}
+      message={
+        <>
+          {removing
+            ? `Linecard makes a new sync phrase that ${removing} won't have. It keeps the connections it already has but gets no new changes. `
+            : "Linecard makes a new sync phrase, for example if the old one got out. "}
+          Your other computers stop syncing until you enter the new phrase on each one (Settings → Sync → Use a new
+          phrase).
+        </>
+      }
+      confirmLabel={removing ? "Remove and change phrase" : "Change phrase"}
+      danger
+      onConfirm={async () => onDone(await (await getBackend()).syncRotate())}
+      onClose={onClose}
+    />
+  );
+}
+
+export function PhraseWords({ phrase, onHide }: { phrase: string; onHide(): void }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="sync-phrase">

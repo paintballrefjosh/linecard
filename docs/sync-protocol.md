@@ -31,7 +31,8 @@ Remote ops whose writes change a visible value become pending changes: `added`, 
 - Device key: Ed25519, generated per device. The group key and device key live in the OS keychain.
 - Everything a transport stores is a sealed item: `{v, device, key, nonce, data, sig}`. `data` is the JSON payload encrypted with XChaCha20-Poly1305 (AAD `group_id\0device`); `sig` is the device key's signature over `group_id\0device\0nonce||data`. A receiver pins each device's public key the first time it sees it and rejects items signed by another key.
 - Payloads: a `Batch { ops }` of up to 400 of the sender's own ops, or a `DeviceInfo` heartbeat (`id, name, os, appVersion, protocolVersion, sentAt`), published every minute.
-- Planned: removing a device rotates the group key; optional secrets sync with a separate vault key from a vault passphrase (Argon2id).
+- Removing a device (or changing the phrase) rotates the group key: the device that does it posts a signed `Notice { closedBy, at }` in the old group, makes a new group key, and pushes the whole op log there. Other devices stop on the notice until given the new phrase.
+- Planned: optional secrets sync with a separate vault key from a vault passphrase (Argon2id).
 
 ## Transports
 

@@ -48,6 +48,8 @@ export interface Backend {
   /** The 24-word phrase, to add another computer. */
   syncPhrase(): Promise<string | null>;
   syncNow(): Promise<void>;
+  /** Replace the group's phrase (to remove a computer). Returns the new one. */
+  syncRotate(): Promise<string>;
   syncDisable(): Promise<void>;
   /** What the command line asked to open at startup (asked once). */
   takeLaunch(): Promise<Launch | null>;
@@ -136,6 +138,7 @@ async function tauriBackend(): Promise<Backend> {
     syncSetup: (transport, location, phrase) => invoke<string>("sync_setup", { transport, location, phrase }),
     syncPhrase: () => invoke<string | null>("sync_phrase"),
     syncNow: () => invoke("sync_now"),
+    syncRotate: () => invoke<string>("sync_rotate"),
     syncDisable: () => invoke("sync_disable"),
     takeLaunch: () => invoke<Launch | null>("take_launch"),
     onLaunch(cb) {

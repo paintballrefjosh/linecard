@@ -137,6 +137,13 @@ impl Library {
         Ok(self.last_own_op())
     }
 
+    /// Every op from every device, oldest first (to seed a new sync group).
+    pub fn all_ops(&self) -> Vec<Op> {
+        let mut ops = self.replica.log().to_vec();
+        ops.sort_by(|a, b| a.id.cmp(&b.id));
+        ops
+    }
+
     /// Ops made on this device after `after` (all of them for `None`),
     /// oldest first: what still needs pushing.
     pub fn own_ops_after(&self, after: Option<&Hlc>) -> Vec<Op> {

@@ -494,6 +494,12 @@ fn sync_phrase(app: AppHandle) -> Option<String> {
     sync::SyncEngine::phrase(&app)
 }
 
+/// New phrase for the group (removing a computer, or a leaked phrase).
+#[tauri::command]
+async fn sync_rotate(app: AppHandle) -> CmdResult<String> {
+    sync::SyncEngine::rotate(&app).await
+}
+
 #[tauri::command]
 fn sync_now(state: State<AppState>) {
     state.sync.poke();
@@ -897,6 +903,7 @@ pub fn run() {
             sync_setup,
             sync_phrase,
             sync_now,
+            sync_rotate,
             sync_disable,
             open_session,
             session_write,

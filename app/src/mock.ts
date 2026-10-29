@@ -268,6 +268,11 @@ export function mockBackend(): Backend {
     },
     syncPhrase: async () => (syncConfig ? syncPhraseWords : null),
     syncNow: async () => {},
+    async syncRotate() {
+      syncPhraseWords = mockPhrase.split(" ").reverse().join(" ");
+      syncListeners.forEach((l) => l());
+      return syncPhraseWords;
+    },
     async syncDisable() {
       syncConfig = null;
       syncListeners.forEach((l) => l());

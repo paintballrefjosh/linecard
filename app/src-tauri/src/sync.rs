@@ -15,7 +15,7 @@ use linecard_core_sync::{Hlc, Op};
 use linecard_sync::crypto::{open, seal};
 use linecard_sync::folder::{FolderCursor, FolderTransport};
 use linecard_sync::relay::RelayTransport;
-use linecard_sync::{Batch, DeviceInfo, DeviceKey, GroupKey, Received, Sealed, SyncError};
+use linecard_sync::{Batch, DeviceInfo, DeviceKey, GroupKey, Notice, Received, Sealed, SyncError};
 use linecard_vault::{Secret, Vault};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
@@ -27,6 +27,8 @@ use crate::AppState;
 const CONFIG_KEY: &str = "sync_config";
 const PUSHED_KEY: &str = "sync_pushed";
 const PEER_PREFIX: &str = "sync_peer:";
+/// Set when another computer closed the group (why sync stopped).
+const CLOSED_KEY: &str = "sync_closed";
 const HEARTBEAT_EVERY: u64 = 60_000;
 /// Ops per sealed batch (keeps blobs well under the relay's limit).
 const BATCH_OPS: usize = 400;
@@ -274,6 +276,7 @@ impl SyncEngine {
             let mut lib = state.lib.lock().map_err(|e| e.to_string())?;
             lib.set_local_setting(CONFIG_KEY, &serde_json::to_string(&cfg).map_err(|e| e.to_string())?)?;
             lib.set_sync_cursor("sync", "")?;
+            lib.set_local_setting(CLOSED_KEY, "")?;
             // An untouched install joining a group swaps its starter folder
             // for the group's instead of adding another copy everywhere.
             let pushed = if joining { lib.drop_untouched_seed()? } else { None };
@@ -292,6 +295,7 @@ impl SyncEngine {
         let device = {
             let lib = state.lib.lock().map_err(|e| e.to_string())?;
             lib.set_local_setting(CONFIG_KEY, "")?;
+            lib.set_local_setting(CLOSED_KEY, "")?;
             lib.device().to_string()
         };
         state
@@ -305,11 +309,72 @@ impl SyncEngine {
         Ok(())
     }
 
+    /// Replace the group with a new one (new phrase): to remove a computer,
+    /// or because the phrase got out. The old group gets a notice so the
+    /// other computers stop and ask for the new phrase; this computer seeds
+    /// the new group with the whole history. Returns the new phrase.
+    pub async fn rotate(app: &AppHandle) -> Result<String, String> {
+        let state = app.state::<AppState>();
+        let cfg = Self::config(app).ok_or("Sync is off")?;
+        let device = this_device(app).ok_or("the library is unavailable")?;
+        let old = Self::group_key(&state.vault, &device).ok_or("the sync phrase is missing from the keychain")?;
+        let key = Self::device_key(&state.vault, &device)?;
+
+        let notice = Notice {
+            closed_by: computer_name(),
+            at: now_ms(),
+        };
+        Transport::new(&cfg, &old, &device)
+            .map_err(|e| e.to_string())?
+            .push(seal(&old, &key, &device, &notice))
+            .await
+            .map_err(|e| format!("couldn't close the old sync group: {e}"))?;
+
+        // Stop the old loop before switching keys.
+        state.sync.generation.fetch_add(1, Ordering::SeqCst);
+        state.sync.poke();
+        let group = GroupKey::generate();
+        let transport = Transport::new(&cfg, &group, &device).map_err(|e| e.to_string())?;
+        transport.check().await.map_err(|e| e.to_string())?;
+        let (all, last_own) = {
+            let lib = state.lib.lock().map_err(|e| e.to_string())?;
+            (lib.all_ops(), lib.last_own_op())
+        };
+        for chunk in all.chunks(BATCH_OPS) {
+            transport
+                .push(seal(&group, &key, &device, &Batch { ops: chunk.to_vec() }))
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        state
+            .vault
+            .save_hidden(&group_secret(&device), Secret::new(hex(&group.to_bytes())))
+            .map_err(|e| e.to_string())?;
+        {
+            let lib = state.lib.lock().map_err(|e| e.to_string())?;
+            lib.set_sync_cursor("sync", "")?;
+            lib.set_local_setting(CLOSED_KEY, "")?;
+            let pushed = last_own
+                .and_then(|h| serde_json::to_string(&h).ok())
+                .unwrap_or_default();
+            lib.set_local_setting(PUSHED_KEY, &pushed)?;
+        }
+        if let Ok(mut p) = state.sync.peers.lock() {
+            p.clear();
+        }
+        Self::start(app);
+        Ok(group.phrase())
+    }
+
     /// Start the background loop if sync is set up (called at launch and
     /// after setup).
     pub fn start(app: &AppHandle) {
         let state = app.state::<AppState>();
         let Some(cfg) = Self::config(app) else { return };
+        if let Some(message) = closed_message(app) {
+            state.sync.set_status(app, SyncStateDto::Error { message });
+            return;
+        }
         let Some(device) = this_device(app) else { return };
         let Some(group) = Self::group_key(&state.vault, &device) else {
             state.sync.set_status(
@@ -346,7 +411,15 @@ impl SyncEngine {
                     break;
                 }
                 let status = match result {
-                    Ok(()) => SyncStateDto::Synced {
+                    Ok(Some(notice)) => {
+                        let message = closed_text(&notice);
+                        if let Ok(lib) = state.lib.lock() {
+                            let _ = lib.set_local_setting(CLOSED_KEY, &message);
+                        }
+                        state.sync.set_status(&app, SyncStateDto::Error { message });
+                        break;
+                    }
+                    Ok(None) => SyncStateDto::Synced {
                         transport: cfg.label(),
                         at: now_ms(),
                     },
@@ -388,6 +461,19 @@ impl SyncEngine {
     }
 }
 
+fn closed_text(n: &Notice) -> String {
+    format!(
+        "{} replaced the sync phrase, so this computer stopped syncing. Enter the new phrase from {} under Settings → Sync → Use a new phrase.",
+        n.closed_by, n.closed_by
+    )
+}
+
+fn closed_message(app: &AppHandle) -> Option<String> {
+    let state = app.state::<AppState>();
+    let lib = state.lib.lock().ok()?;
+    lib.local_setting(CLOSED_KEY).ok().flatten().filter(|m| !m.is_empty())
+}
+
 /// Ops waiting to be pushed (for "offline, N changes waiting").
 pub fn unpushed(app: &AppHandle) -> Option<usize> {
     let state = app.state::<AppState>();
@@ -419,7 +505,7 @@ async fn round(
     key: &DeviceKey,
     device: &str,
     last_heartbeat: &mut u64,
-) -> Result<(), SyncError> {
+) -> Result<Option<Notice>, SyncError> {
     let state = app.state::<AppState>();
     let lib_err = |e: String| SyncError::Storage(e);
 
@@ -453,6 +539,7 @@ async fn round(
     let (received, next) = transport.pull(cursor).await?;
     let mut incoming = Vec::new();
     let mut problem = None;
+    let mut closed = None;
     for r in received {
         if r.sealed.device == device {
             continue; // the relay returns our own pushes too
@@ -463,7 +550,10 @@ async fn round(
         }
         match open::<Batch>(group, &r.sealed) {
             Ok(b) => incoming.extend(b.ops),
-            Err(e) => problem = Some(e),
+            Err(e) => match open::<Notice>(group, &r.sealed) {
+                Ok(n) => closed = Some(n),
+                Err(_) => problem = Some(e),
+            },
         }
     }
     let fresh = {
@@ -474,6 +564,9 @@ async fn round(
     };
     if fresh > 0 {
         let _ = app.emit("tree-changed", ());
+    }
+    if closed.is_some() {
+        return Ok(closed);
     }
 
     // Our heartbeat once a minute; everyone else's every round, so a
@@ -504,6 +597,6 @@ async fn round(
 
     match problem {
         Some(e) => Err(e),
-        None => Ok(()),
+        None => Ok(None),
     }
 }
