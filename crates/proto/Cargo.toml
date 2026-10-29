@@ -13,6 +13,9 @@ tokio = { workspace = true }
 russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2"] }
 # No default features: skips libudev on Linux (port names still list).
 serialport = { version = "4", default-features = false }
+# VNC: password auth (DES) and ZRLE (zlib).
+des = "0.8"
+flate2 = "1"
 
 # Added as each driver lands (see docs/roadmap.md):
 # ironrdp = "..."         # RDP on macOS/Linux

@@ -39,7 +39,7 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 ## Phase 3 — Graphical (v0.7–0.8)
 
 - [ ] RDP: native Windows control on Windows, IronRDP elsewhere
-- [ ] VNC
+- [x] VNC (RFB 3.3–3.8: None and VNC password; ZRLE, CopyRect, Raw, DesktopSize)
 
 ## Phase 4 — Power tools (v0.9–1.0)
 

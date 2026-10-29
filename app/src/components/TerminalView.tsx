@@ -28,7 +28,6 @@ import {
 import { attachHighlighter, highlightStore } from "../highlight";
 import { pasteLineCount, usePrefs } from "../prefs";
 import { ContextMenu } from "./ContextMenu";
-import { KindIcon, kindLabel } from "./icons";
 import { PasteConfirm, SessionPrompt } from "./SessionPrompt";
 
 export type SessionStatus = "connecting" | "connected" | "disconnected";
@@ -425,17 +424,6 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
 }
 
 /** Placeholder for graphical sessions until the RDP/VNC drivers land (Phase 3). */
-export function GraphicalPlaceholder({ conn }: { conn: ConnectionNode }) {
-  return (
-    <div className="graphical-placeholder">
-      <KindIcon kind={conn.kind} size={40} />
-      <p>
-        {kindLabel[conn.kind]} sessions arrive in Phase 3. This tab will show {conn.endpoint} here.
-      </p>
-    </div>
-  );
-}
-
 /** "1.2 MB" */
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;

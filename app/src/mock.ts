@@ -287,6 +287,22 @@ export function mockBackend(): Backend {
     async disablePasswordSync() {
       passwordSync = false;
     },
+    async openGfxSession(conn, _size, onEvent) {
+      // A test pattern stands in for the remote screen.
+      const [w, h] = [800, 500];
+      setTimeout(() => {
+        onEvent({ event: "connected", width: w, height: h, name: conn.name });
+        const rgba = new Uint8ClampedArray(w * h * 4);
+        for (let y = 0; y < h; y++)
+          for (let x = 0; x < w; x++) {
+            const o = (y * w + x) * 4;
+            rgba.set([(x * 255) / w, (y * 255) / h, 160, 255], o);
+          }
+        onEvent({ event: "frame", x: 0, y: 0, width: w, height: h, rgba });
+      }, 300);
+      const noop = () => {};
+      return { pointer: noop, wheel: noop, key: noop, text: noop, reply: noop, resize: noop, close: noop };
+    },
     takeLaunch: async () => null,
     onLaunch: () => () => {},
     linkHandlerStatus: async () => linkHandler,

@@ -15,9 +15,11 @@ pub use forward::ForwardState;
 pub use linecard_core_model::{ConnectionKind, ForwardKind, PortForward, SerialSettings};
 
 pub mod forward;
+pub mod gfx;
 pub mod serial;
 pub mod ssh;
 pub mod telnet;
+pub mod vnc;
 pub mod xmodem;
 
 /// Something the session reports back to the UI.

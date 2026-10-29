@@ -13,7 +13,8 @@ import { X } from "lucide-react";
 import type { ConnectionNode, LayoutId } from "../types";
 import type { Theme } from "../theme";
 import { KindIcon } from "./icons";
-import { GraphicalPlaceholder, TerminalView, type SessionStatus } from "./TerminalView";
+import { TerminalView, type SessionStatus } from "./TerminalView";
+import { RemoteView } from "./RemoteView";
 
 interface PanelParams {
   conn: ConnectionNode;
@@ -45,7 +46,8 @@ function SessionPanel({ api, params }: IDockviewPanelProps<PanelParams>) {
     const sub = api.onDidVisibilityChange((e) => e.isVisible && setActivity(api.id, false));
     return () => sub.dispose();
   }, [api, setActivity]);
-  if (conn.kind === "rdp" || conn.kind === "vnc") return <GraphicalPlaceholder conn={conn} />;
+  if (conn.kind === "rdp" || conn.kind === "vnc")
+    return <RemoteView conn={conn} onStatus={(s) => setStatus(api.id, s)} />;
   return (
     <TerminalView
       conn={conn}

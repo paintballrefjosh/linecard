@@ -29,7 +29,8 @@ You don't need Rust, Node.js or anything else in the next section to use Linecar
 | End-to-end encrypted sync through a shared folder or a self-hosted relay; 24-word pairing phrase; Devices page | Done |
 | SSH port forwarding (local, remote, SOCKS); ssh:// and telnet:// links; command-line launcher | Done |
 | Keyword-highlight profiles per folder/connection, SecureCRT keyword-list import | Done |
-| RDP and VNC | Later — see [docs/roadmap.md](docs/roadmap.md) |
+| VNC | Done |
+| RDP | Next — see [docs/roadmap.md](docs/roadmap.md) |
 
 ## Building from source
 

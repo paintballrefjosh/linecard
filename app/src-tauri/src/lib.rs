@@ -5,6 +5,7 @@
 //! docs/roadmap.md).
 
 mod dto;
+mod gfx;
 mod highlight;
 mod import;
 mod launch;
@@ -32,6 +33,8 @@ struct AppState {
     /// Connections and folders, persisted as an op log (see library.rs).
     lib: Mutex<Library>,
     sessions: Mutex<HashMap<String, Box<dyn Session>>>,
+    /// VNC and RDP sessions.
+    gfx: Mutex<HashMap<String, Box<dyn linecard_proto::gfx::GfxSession>>>,
     ssh: SshOptions,
     vault: Arc<Vault>,
     /// Where session logs go unless a folder is configured.
@@ -888,6 +891,7 @@ pub fn run() {
             app.manage(AppState {
                 lib: Mutex::new(lib),
                 sessions: Mutex::new(HashMap::new()),
+                gfx: Mutex::new(HashMap::new()),
                 ssh: ssh_options(app.handle(), vault.clone()),
                 vault,
                 log_dir: default_log_dir(app.handle()),
@@ -929,6 +933,14 @@ pub fn run() {
             secrets::get_password_sync,
             secrets::enable_password_sync,
             secrets::disable_password_sync,
+            gfx::open_gfx_session,
+            gfx::gfx_pointer,
+            gfx::gfx_wheel,
+            gfx::gfx_key,
+            gfx::gfx_text,
+            gfx::gfx_reply,
+            gfx::gfx_resize,
+            gfx::gfx_close,
             launch::take_launch,
             launch::link_handler_status,
             launch::set_link_handler,

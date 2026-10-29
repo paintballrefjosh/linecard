@@ -13,6 +13,7 @@ import type {
   PromptReply,
   SavedPassword,
   SessionEvent,
+  GfxEvent,
   SyncConfig,
   SyncState,
   SyncTransport,
@@ -34,6 +35,32 @@ export interface SessionHandle {
   startTransfer(send: boolean, protocol: TransferProtocol, path: string): Promise<void>;
   cancelTransfer(): void;
   close(): void;
+}
+
+/** A VNC or RDP session. Buttons: left 1, middle 2, right 4. */
+export interface GfxHandle {
+  pointer(x: number, y: number, buttons: number): void;
+  wheel(x: number, y: number, dx: number, dy: number): void;
+  /** `code` and `key` as in KeyboardEvent. */
+  key(code: string, key: string, down: boolean): void;
+  /** Type text (paste). */
+  text(text: string): void;
+  reply(r: PromptReply): void;
+  resize(width: number, height: number): void;
+  close(): void;
+}
+
+/** Binary frame: x, y, width, height (u16 little endian), then RGBA. */
+function decodeFrame(buf: ArrayBuffer): GfxEvent {
+  const v = new DataView(buf);
+  return {
+    event: "frame",
+    x: v.getUint16(0, true),
+    y: v.getUint16(2, true),
+    width: v.getUint16(4, true),
+    height: v.getUint16(6, true),
+    rgba: new Uint8ClampedArray(buf, 8),
+  };
 }
 
 /** Everything the UI needs from the Rust core. */
@@ -131,6 +158,12 @@ export interface Backend {
     size: { cols: number; rows: number },
     onEvent: (e: SessionEvent) => void,
   ): Promise<SessionHandle>;
+  /** Open a VNC or RDP session sized for the tab. */
+  openGfxSession(
+    conn: ConnectionNode,
+    size: { width: number; height: number },
+    onEvent: (e: GfxEvent) => void,
+  ): Promise<GfxHandle>;
   /** Fires when the tree changes (local edit or remote sync). */
   onTreeChanged(cb: () => void): () => void;
 }
@@ -236,6 +269,32 @@ async function tauriBackend(): Promise<Backend> {
         startTransfer: (send, protocol, path) => invoke("session_transfer", { sessionId, send, protocol, path }),
         cancelTransfer: () => void invoke("session_cancel_transfer", { sessionId }),
         close: () => void invoke("session_close", { sessionId }),
+      };
+    },
+    async openGfxSession(conn, size, onEvent) {
+      const channel = new Channel<unknown>();
+      channel.onmessage = (m) => {
+        if (m instanceof ArrayBuffer) onEvent(decodeFrame(m));
+        else if (ArrayBuffer.isView(m))
+          onEvent(decodeFrame(m.buffer.slice(m.byteOffset, m.byteOffset + m.byteLength) as ArrayBuffer));
+        else onEvent(m as GfxEvent);
+      };
+      const sessionId = await invoke<string>("open_gfx_session", {
+        connectionId: conn.id,
+        kind: conn.kind,
+        endpoint: conn.endpoint,
+        width: size.width,
+        height: size.height,
+        onEvent: channel,
+      });
+      return {
+        pointer: (x, y, buttons) => void invoke("gfx_pointer", { sessionId, x, y, buttons }),
+        wheel: (x, y, dx, dy) => void invoke("gfx_wheel", { sessionId, x, y, dx, dy }),
+        key: (code, key, down) => void invoke("gfx_key", { sessionId, code, key, down }),
+        text: (text) => void invoke("gfx_text", { sessionId, text }),
+        reply: (reply) => void invoke("gfx_reply", { sessionId, reply }),
+        resize: (width, height) => void invoke("gfx_resize", { sessionId, width, height }),
+        close: () => void invoke("gfx_close", { sessionId }),
       };
     },
     onTreeChanged(cb) {

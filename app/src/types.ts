@@ -183,6 +183,17 @@ export interface ForwardState {
   error: string | null;
 }
 
+/** Events from a VNC or RDP session. Frames carry RGBA pixels. */
+export type GfxEvent =
+  | { event: "frame"; x: number; y: number; width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> }
+  | { event: "connected"; width: number; height: number; name: string }
+  | { event: "resized"; width: number; height: number }
+  | { event: "bell" }
+  | { event: "clipboard"; text: string }
+  | { event: "disconnected"; reason: string | null }
+  | HostKeyEvent
+  | AuthEvent;
+
 export type TransferProtocol = "xmodem" | "xmodem1k" | "ymodem";
 
 /** XMODEM/YMODEM progress on a serial line. */
