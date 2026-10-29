@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.2.0 — sync, port forwarding, highlight profiles
 
 **Keyword highlighting**
 - Highlight profiles (e.g. Cisco, Linux, General): pick one per folder or connection, inherited like the tab color, with an app-wide default. Profiles sync between computers.
