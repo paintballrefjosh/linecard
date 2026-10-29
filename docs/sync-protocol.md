@@ -41,6 +41,8 @@ Remote ops whose writes change a visible value become pending changes: `added`, 
 
 - **GitHub** (`crates/sync/src/github.rs`): the shared-folder layout in a repository. Pushes are commits through the contents API; pulls list the tree once and fetch only new blobs. Polled every 30 s.
 
+- **This network** (`crates/sync/src/lan.rs`): each computer keeps every sealed item it has in a local relay store and serves it with the relay protocol on a random TCP port, behind the group token. A multicast beacon (239.255.42.99:47123, every 3 s) carries a hash of the group id, the device id and the port. Each computer pulls from every peer it hears (cursor per peer) and keeps what it learns, so items are forwarded.
+
 Clients push their unsent ops, pull everything after their cursor, and repeat every 5 s (relay) or 10 s (folder), or immediately after a local edit.
 
 ## Versioning

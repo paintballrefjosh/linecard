@@ -15,6 +15,7 @@ use linecard_core_sync::{Hlc, Op};
 use linecard_sync::crypto::{open, seal};
 use linecard_sync::folder::{FolderCursor, FolderTransport};
 use linecard_sync::github::GitHubTransport;
+use linecard_sync::lan::{LanCursor, LanTransport};
 use linecard_sync::relay::RelayTransport;
 use linecard_sync::{Batch, DeviceInfo, DeviceKey, GroupKey, Notice, Received, Sealed, SyncError};
 use linecard_vault::{Secret, Vault};
@@ -48,6 +49,7 @@ impl SyncConfig {
         match self.transport.as_str() {
             "folder" => "shared folder".into(),
             "github" => "GitHub".into(),
+            "lan" => "this network".into(),
             _ => "relay".into(),
         }
     }
@@ -57,6 +59,7 @@ impl SyncConfig {
             "relay" => 5,
             // GitHub's API allows 5000 requests an hour.
             "github" => 30,
+            "lan" => 3,
             _ => 10,
         })
     }
@@ -66,6 +69,7 @@ enum Transport {
     Folder(Arc<FolderTransport>),
     Relay(RelayTransport),
     GitHub(GitHubTransport),
+    Lan(Arc<LanTransport>),
 }
 
 fn blocking_err(e: tauri::Error) -> SyncError {
@@ -73,7 +77,13 @@ fn blocking_err(e: tauri::Error) -> SyncError {
 }
 
 impl Transport {
-    fn new(cfg: &SyncConfig, group: &GroupKey, device: &str, account: Option<String>) -> Result<Self, SyncError> {
+    async fn new(
+        app: &AppHandle,
+        cfg: &SyncConfig,
+        group: &GroupKey,
+        device: &str,
+        account: Option<String>,
+    ) -> Result<Self, SyncError> {
         match cfg.transport.as_str() {
             "folder" => Ok(Transport::Folder(Arc::new(FolderTransport::new(
                 PathBuf::from(cfg.location.trim()),
@@ -91,6 +101,15 @@ impl Transport {
                 &group.group_id(),
                 device,
             )?)),
+            "lan" => {
+                let store = app
+                    .state::<AppState>()
+                    .data_dir
+                    .join(format!("lan-{}.db", group.group_id()));
+                Ok(Transport::Lan(Arc::new(
+                    LanTransport::start(Some(&store), &group.group_id(), &group.relay_token(), device, true).await?,
+                )))
+            }
             other => Err(SyncError::Storage(format!("unknown sync transport {other}"))),
         }
     }
@@ -99,7 +118,7 @@ impl Transport {
     /// (or after ~25 s); a folder is checked again after `interval`.
     async fn idle(&self, app: &AppHandle, interval: Duration) {
         match self {
-            Transport::Folder(_) | Transport::GitHub(_) => tokio::time::sleep(interval).await,
+            Transport::Folder(_) | Transport::GitHub(_) | Transport::Lan(_) => tokio::time::sleep(interval).await,
             Transport::Relay(r) => {
                 let cursor = app
                     .state::<AppState>()
@@ -127,6 +146,7 @@ impl Transport {
             }
             Transport::Relay(r) => r.pull(i64::MAX - 1).await.map(|_| ()),
             Transport::GitHub(g) => g.check().await,
+            Transport::Lan(_) => Ok(()),
         }
     }
 
@@ -140,6 +160,7 @@ impl Transport {
             }
             Transport::Relay(r) => r.push(&sealed).await,
             Transport::GitHub(g) => g.push(&sealed).await,
+            Transport::Lan(l) => l.push(&sealed),
         }
     }
 
@@ -165,6 +186,11 @@ impl Transport {
                 let (got, next) = g.pull(&c).await?;
                 Ok((got, serde_json::to_string(&next).unwrap_or_default()))
             }
+            Transport::Lan(l) => {
+                let c: LanCursor = cursor.and_then(|c| serde_json::from_str(&c).ok()).unwrap_or_default();
+                let (got, next) = l.pull(&c).await?;
+                Ok((got, serde_json::to_string(&next).unwrap_or_default()))
+            }
         }
     }
 
@@ -178,6 +204,7 @@ impl Transport {
             }
             Transport::Relay(r) => r.put_device(&sealed).await,
             Transport::GitHub(g) => g.put_device(&sealed).await,
+            Transport::Lan(l) => l.put_device(&sealed),
         }
     }
 
@@ -191,6 +218,7 @@ impl Transport {
             }
             Transport::Relay(r) => r.devices().await,
             Transport::GitHub(g) => g.devices().await,
+            Transport::Lan(l) => l.devices().await,
         }
     }
 }
@@ -341,7 +369,9 @@ impl SyncEngine {
             .filter(|a| !a.is_empty())
             .or_else(|| relay_account(&state.vault, &device))
             .filter(|_| cfg.transport != "folder");
-        let transport = Transport::new(&cfg, &group, &device, account.clone()).map_err(|e| e.to_string())?;
+        let transport = Transport::new(app, &cfg, &group, &device, account.clone())
+            .await
+            .map_err(|e| e.to_string())?;
         transport.check().await.map_err(|e| e.to_string())?;
         let key = Self::device_key(&state.vault, &device)?;
         // A new group is claimed now (with its first heartbeat), so a private
@@ -417,7 +447,8 @@ impl SyncEngine {
             at: now_ms(),
         };
         let account = relay_account(&state.vault, &device);
-        Transport::new(&cfg, &old, &device, account.clone())
+        Transport::new(app, &cfg, &old, &device, account.clone())
+            .await
             .map_err(|e| e.to_string())?
             .push(seal(&old, &key, &device, &notice))
             .await
@@ -427,7 +458,9 @@ impl SyncEngine {
         state.sync.generation.fetch_add(1, Ordering::SeqCst);
         state.sync.wake.notify_waiters();
         let group = GroupKey::generate();
-        let transport = Transport::new(&cfg, &group, &device, account).map_err(|e| e.to_string())?;
+        let transport = Transport::new(app, &cfg, &group, &device, account)
+            .await
+            .map_err(|e| e.to_string())?;
         transport.check().await.map_err(|e| e.to_string())?;
         let (all, last_own) = {
             let lib = state.lib.lock().map_err(|e| e.to_string())?;
@@ -487,14 +520,15 @@ impl SyncEngine {
                 Ok(k) => k,
                 Err(e) => return state.sync.set_status(&app, SyncStateDto::Error { message: e }),
             };
-            let transport = match Transport::new(&cfg, &group, &device, relay_account(&state.vault, &device)) {
-                Ok(t) => t,
-                Err(e) => {
-                    return state
-                        .sync
-                        .set_status(&app, SyncStateDto::Error { message: e.to_string() })
-                }
-            };
+            let transport =
+                match Transport::new(&app, &cfg, &group, &device, relay_account(&state.vault, &device)).await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        return state
+                            .sync
+                            .set_status(&app, SyncStateDto::Error { message: e.to_string() })
+                    }
+                };
             let mut last_heartbeat = 0;
             state
                 .sync

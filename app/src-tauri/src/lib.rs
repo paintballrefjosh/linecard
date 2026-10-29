@@ -35,6 +35,8 @@ struct AppState {
     vault: Arc<Vault>,
     /// Where session logs go unless a folder is configured.
     log_dir: std::path::PathBuf,
+    /// The profile's data folder (library, LAN sync store).
+    data_dir: std::path::PathBuf,
     sync: sync::SyncEngine,
 }
 
@@ -882,6 +884,7 @@ pub fn run() {
                 ssh: ssh_options(app.handle(), vault.clone()),
                 vault,
                 log_dir: default_log_dir(app.handle()),
+                data_dir: data.clone(),
                 sync: sync::SyncEngine::default(),
             });
             sync::SyncEngine::start(app.handle());

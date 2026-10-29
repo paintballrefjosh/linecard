@@ -23,7 +23,12 @@ export function versionMismatch(devices: Device[]): boolean {
   return new Set(live.map((d) => d.appVersion)).size > 1;
 }
 
-const transportLabel: Record<string, string> = { folder: "Shared folder", relay: "Relay", github: "GitHub" };
+const transportLabel: Record<string, string> = {
+  folder: "Shared folder",
+  relay: "Relay",
+  github: "GitHub",
+  lan: "This network",
+};
 
 export function DevicesPage({ devices, syncOn }: { devices: Device[]; syncOn: boolean }) {
   const [removing, setRemoving] = useState<Device | null>(null);

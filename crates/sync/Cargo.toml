@@ -18,8 +18,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
 thiserror = "2"
-
-[dev-dependencies]
+# LAN sync: each computer serves its store with the relay protocol.
 linecard-relay = { path = "../../relay" }
 axum = "0.8"
 tokio = { workspace = true }
+socket2 = "0.6"
+
+[dev-dependencies]

@@ -170,7 +170,13 @@ function SyncSettings() {
           <div className="settings-text">
             <span>
               Syncing through{" "}
-              {config.transport === "folder" ? "a shared folder" : config.transport === "relay" ? "a relay" : "GitHub"}
+              {config.transport === "folder"
+                ? "a shared folder"
+                : config.transport === "relay"
+                  ? "a relay"
+                  : config.transport === "github"
+                    ? "GitHub"
+                    : "this network"}
             </span>
             <p>
               <code>{config.location}</code>
@@ -286,7 +292,9 @@ function SyncSettings() {
             ? "Any folder all your computers can reach: a NAS share, OneDrive, Dropbox, Syncthing."
             : transport === "relay"
               ? "A Linecard relay server you run (see docs/relay.md). Changes arrive within a second."
-              : "A private GitHub repository, just for Linecard. Checked every 30 seconds."
+              : transport === "github"
+                ? "A private GitHub repository, just for Linecard. Checked every 30 seconds."
+                : "Directly between computers on the same network, no server. Changes made while apart sync when they meet again. Windows asks once to allow Linecard on private networks."
         }
         htmlFor="set-sync-transport"
       >
@@ -298,43 +306,46 @@ function SyncSettings() {
             { value: "folder", label: "Shared folder" },
             { value: "relay", label: "Relay" },
             { value: "github", label: "GitHub" },
+            { value: "lan", label: "This network" },
           ]}
         />
       </Row>
-      <div className="settings-row settings-row-wide">
-        <div className="settings-text">
-          <label htmlFor="set-sync-location">
-            {transport === "folder" ? "Folder" : transport === "relay" ? "Relay address" : "Repository"}
-          </label>
-          <div className="sync-location">
-            <input
-              id="set-sync-location"
-              className="settings-input"
-              value={location}
-              placeholder={
-                transport === "folder"
-                  ? "\\\\nas\\share\\Linecard"
-                  : transport === "relay"
-                    ? "https://relay.example.com"
-                    : "your-name/linecard-sync"
-              }
-              spellCheck={false}
-              onChange={(e) => setLocation(e.target.value)}
-            />
-            {transport === "folder" && (
-              <button
-                className="btn"
-                onClick={async () => {
-                  const picked = await (await getBackend()).pickFolder("Folder to sync through");
-                  if (picked) setLocation(picked);
-                }}
-              >
-                Browse…
-              </button>
-            )}
+      {transport !== "lan" && (
+        <div className="settings-row settings-row-wide">
+          <div className="settings-text">
+            <label htmlFor="set-sync-location">
+              {transport === "folder" ? "Folder" : transport === "relay" ? "Relay address" : "Repository"}
+            </label>
+            <div className="sync-location">
+              <input
+                id="set-sync-location"
+                className="settings-input"
+                value={location}
+                placeholder={
+                  transport === "folder"
+                    ? "\\\\nas\\share\\Linecard"
+                    : transport === "relay"
+                      ? "https://relay.example.com"
+                      : "your-name/linecard-sync"
+                }
+                spellCheck={false}
+                onChange={(e) => setLocation(e.target.value)}
+              />
+              {transport === "folder" && (
+                <button
+                  className="btn"
+                  onClick={async () => {
+                    const picked = await (await getBackend()).pickFolder("Folder to sync through");
+                    if (picked) setLocation(picked);
+                  }}
+                >
+                  Browse…
+                </button>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      )}
       {transport === "github" && (
         <div className="settings-row settings-row-wide">
           <div className="settings-text">
@@ -396,7 +407,7 @@ function SyncSettings() {
             className="btn btn-primary"
             disabled={
               busy ||
-              !location.trim() ||
+              (transport !== "lan" && !location.trim()) ||
               (mode === "join" && !phraseInput.trim()) ||
               (transport === "github" && !account.trim())
             }

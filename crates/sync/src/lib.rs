@@ -15,6 +15,7 @@
 pub mod crypto;
 pub mod folder;
 pub mod github;
+pub mod lan;
 pub mod relay;
 
 use linecard_core_sync::Op;
