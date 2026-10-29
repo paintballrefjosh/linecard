@@ -35,6 +35,8 @@ pub struct Connection {
     pub overrides: Settings,
     pub notes: String,
     pub tags: Vec<String>,
+    /// SSH port forwards started with the session.
+    pub forwards: Vec<crate::PortForward>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -294,6 +296,7 @@ mod tests {
             overrides,
             notes: String::new(),
             tags: vec![],
+            forwards: vec![],
         }
     }
 

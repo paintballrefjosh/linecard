@@ -91,6 +91,7 @@ fn seed_starter(tree: &mut Tree) {
         overrides: Settings::default(),
         notes: "A public telnet server, handy for checking that sessions work.".into(),
         tags: vec![],
+        forwards: vec![],
     })
     .expect("starter connection");
     highlight::seed(tree);
@@ -201,6 +202,7 @@ fn inherited_settings(state: State<AppState>, folder_id: Option<String>) -> CmdR
         overrides: Settings::default(),
         notes: String::new(),
         tags: vec![],
+        forwards: vec![],
     })
     .map_err(err)?;
     let r = tree.resolve(&probe).map_err(err)?;
@@ -289,6 +291,7 @@ fn save_connection(app: AppHandle, state: State<AppState>, draft: ConnectionDraf
                 overrides: Settings::default(),
                 notes: String::new(),
                 tags: vec![],
+                forwards: vec![],
             };
             draft.apply_to(&mut conn)?;
             let id = conn.id.clone();
@@ -696,7 +699,12 @@ async fn open_session(
                 let settings = tree.resolve(&c.id).map_err(err)?.settings;
                 let plan = match &c.endpoint {
                     Endpoint::Serial(s) => Plan::Serial(s.clone()),
-                    Endpoint::Network { .. } => Plan::Network(c.kind, network_target(tree, &c.id, 0)?),
+                    Endpoint::Network { .. } => {
+                        let mut t = network_target(tree, &c.id, 0)?;
+                        // Port forwards belong to the connection opened, not its jump hosts.
+                        t.forwards = c.forwards.clone();
+                        Plan::Network(c.kind, t)
+                    }
                 };
                 (plan, settings, c.name.clone())
             }
@@ -938,6 +946,7 @@ mod tests {
             jump_host: None,
             log: None,
             highlight: None,
+            forwards: vec![],
             notes: String::new(),
         }
     }
@@ -982,6 +991,7 @@ mod tests {
             },
             notes: String::new(),
             tags: vec![],
+            forwards: vec![],
         };
         let mut tree = Tree::default();
         tree.add_folder(Folder {

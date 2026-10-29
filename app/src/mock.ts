@@ -11,6 +11,7 @@ import type {
   PendingChange,
   SerialSettings,
   FolderSettings,
+  PortForward,
   SyncConfig,
   TreeNode,
 } from "./types";
@@ -222,6 +223,7 @@ export function mockBackend(): Backend {
       jumpHost: string | null;
       log: boolean | null;
       highlight?: string | null;
+      forwards?: PortForward[];
     }
   >();
   const newId = () => `m-${Math.random().toString(36).slice(2, 9)}`;
@@ -346,6 +348,7 @@ export function mockBackend(): Backend {
         jumpHost: x?.jumpHost ?? null,
         log: x?.log ?? null,
         highlight: x?.highlight ?? null,
+        forwards: x?.forwards ?? [],
         notes: x?.notes ?? "",
       };
     },
@@ -372,6 +375,7 @@ export function mockBackend(): Backend {
         jumpHost: d.jumpHost,
         log: d.log,
         highlight: d.highlight,
+        forwards: d.forwards,
       });
       emit();
       return id!;

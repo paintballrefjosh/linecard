@@ -10,12 +10,13 @@ use std::time::Duration;
 
 use linecard_proto::ssh::SshSession;
 use linecard_proto::{
-    Credentials, EventSink, HostKeyDecision, HostKeyStatus, PromptReply, Session, SessionEvent, SshOptions,
-    TerminalTarget,
+    Credentials, EventSink, ForwardKind, HostKeyDecision, HostKeyStatus, PortForward, PromptReply, Session,
+    SessionEvent, SshOptions, TerminalTarget,
 };
 use russh::keys::{PrivateKey, PublicKey};
 use russh::server::{self, Auth, Msg, PublicKeyOffer, Response, VerifiedPublicKey};
 use russh::{Channel, ChannelId, MethodKind, MethodSet};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
@@ -145,6 +146,36 @@ impl server::Handler for Shell {
             let _ = tokio::io::copy_bidirectional(&mut stream, &mut upstream).await;
         });
         Ok(())
+    }
+
+    /// Remote forwarding: listen, and send each connection back to the client.
+    async fn tcpip_forward(
+        &mut self,
+        address: &str,
+        port: &mut u32,
+        session: &mut server::Session,
+    ) -> Result<bool, Self::Error> {
+        let host = if address == "localhost" { "127.0.0.1" } else { address };
+        let Ok(listener) = TcpListener::bind((host, *port as u16)).await else {
+            return Ok(false);
+        };
+        *port = listener.local_addr().unwrap().port().into();
+        let (bound, handle, address) = (*port, session.handle(), address.to_string());
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let (handle, address) = (handle.clone(), address.clone());
+                tokio::spawn(async move {
+                    if let Ok(ch) = handle
+                        .channel_open_forwarded_tcpip(address, bound, "127.0.0.1", 1)
+                        .await
+                    {
+                        let mut stream = ch.into_stream();
+                        let _ = tokio::io::copy_bidirectional(&mut sock, &mut stream).await;
+                    }
+                });
+            }
+        });
+        Ok(true)
     }
 
     async fn channel_open_session(
@@ -749,4 +780,100 @@ async fn unreachable_host_reports_an_error() {
         SessionEvent::Disconnected { reason: Some(r) } => assert!(!r.is_empty()),
         other => panic!("expected a connection error, got {other:?}"),
     }
+}
+
+async fn echo_server() -> u16 {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = l.accept().await {
+            tokio::spawn(async move {
+                let (mut r, mut w) = s.split();
+                let _ = tokio::io::copy(&mut r, &mut w).await;
+            });
+        }
+    });
+    port
+}
+
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+async fn echoes(port: u16) {
+    let mut c = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    c.write_all(b"ping").await.unwrap();
+    let mut buf = [0u8; 4];
+    tokio::time::timeout(Duration::from_secs(10), c.read_exact(&mut buf))
+        .await
+        .expect("no echo through the tunnel")
+        .unwrap();
+    assert_eq!(&buf, b"ping");
+}
+
+#[tokio::test]
+async fn port_forwards_local_remote_and_socks() {
+    let server = start_server(Mode::Password).await;
+    let echo = echo_server().await;
+    let (local, remote, socks) = (free_port(), free_port(), free_port());
+    let fwd = |kind, bind_port, port| PortForward {
+        kind,
+        bind_address: String::new(),
+        bind_port,
+        host: "127.0.0.1".into(),
+        port,
+    };
+    let mut target = TerminalTarget::new("127.0.0.1", server);
+    target.username = Some("admin".into());
+    target.forwards = vec![
+        fwd(ForwardKind::Local, local, echo),
+        fwd(ForwardKind::Remote, remote, echo),
+        fwd(ForwardKind::Dynamic, socks, 0),
+        fwd(ForwardKind::Local, local, echo), // same port again: fails, others keep working
+    ];
+    let opts = options(temp_known_hosts());
+    let (tx, events) = unbounded_channel();
+    let sink: EventSink = Box::new(move |e| {
+        let _ = tx.send(e);
+    });
+    let mut c = Probe {
+        session: SshSession::connect(&target, &opts, sink).unwrap(),
+        events,
+        screen: String::new(),
+    };
+    assert!(matches!(c.event().await, SessionEvent::HostKey(_)));
+    c.reply(PromptReply::HostKey(HostKeyDecision::AcceptOnce));
+    assert!(matches!(c.event().await, SessionEvent::Auth(_)));
+    c.password("secret");
+    assert_eq!(c.event().await, SessionEvent::Connected);
+    let SessionEvent::Forwards(states) = c.event().await else {
+        panic!("expected forward states");
+    };
+    let errors: Vec<_> = states.iter().map(|s| s.error.is_some()).collect();
+    assert_eq!(errors, [false, false, false, true], "{states:?}");
+    assert!(c.screen.contains("Forwarding L 127.0.0.1:"), "{}", c.screen);
+
+    echoes(local).await; // this computer → server → echo
+    echoes(remote).await; // server's port → back to this computer → echo
+
+    let mut s = tokio::net::TcpStream::connect(("127.0.0.1", socks)).await.unwrap();
+    s.write_all(&[5, 1, 0]).await.unwrap();
+    let mut r = [0u8; 2];
+    s.read_exact(&mut r).await.unwrap();
+    let mut req = vec![5, 1, 0, 1, 127, 0, 0, 1];
+    req.extend_from_slice(&echo.to_be_bytes());
+    s.write_all(&req).await.unwrap();
+    let mut rep = [0u8; 10];
+    s.read_exact(&mut rep).await.unwrap();
+    assert_eq!(rep[1], 0, "SOCKS connect through SSH");
+    s.write_all(b"ping").await.unwrap();
+    let mut buf = [0u8; 4];
+    s.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"ping");
+
+    c.session.close().unwrap();
 }

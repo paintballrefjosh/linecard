@@ -1,6 +1,8 @@
 //! JSON shapes sent to the UI. Keep in sync with app/src/types.ts.
 
-use linecard_core_model::{Connection, ConnectionKind, Endpoint, FlowControl, Parity, SerialSettings, Settings, Tree};
+use linecard_core_model::{
+    Connection, ConnectionKind, Endpoint, FlowControl, Parity, PortForward, SerialSettings, Settings, Tree,
+};
 use linecard_core_sync::{ChangeKind, ChangeTracker, PendingChange, Value};
 use serde::{Deserialize, Serialize};
 
@@ -139,6 +141,9 @@ pub struct ConnectionDraftDto {
     /// Keyword-highlight profile id; null = inherit.
     #[serde(default)]
     pub highlight: Option<String>,
+    /// SSH port forwards.
+    #[serde(default)]
+    pub forwards: Vec<PortForward>,
     pub notes: String,
 }
 
@@ -172,6 +177,7 @@ impl From<&Connection> for ConnectionDraftDto {
             jump_host: c.overrides.jump_host.clone(),
             log: c.overrides.log_enabled,
             highlight: c.overrides.highlight_rules.clone(),
+            forwards: c.forwards.clone(),
             notes: c.notes.clone(),
         }
     }
@@ -224,6 +230,14 @@ impl ConnectionDraftDto {
         conn.overrides.tab_color = non_empty(&self.tab_color);
         conn.overrides.log_enabled = self.log;
         conn.overrides.highlight_rules = non_empty(&self.highlight);
+        conn.forwards = if self.kind == ConnectionKind::Ssh {
+            self.forwards.clone()
+        } else {
+            vec![]
+        };
+        if let Some((f, p)) = conn.forwards.iter().find_map(|f| f.problem().map(|p| (f, p))) {
+            return Err(format!("Port forward {}: {p}", f.label()));
+        }
         conn.overrides.jump_host = non_empty(&self.jump_host).filter(|j| Some(j) != self.id.as_ref());
         conn.notes = self.notes.clone();
         Ok(())
@@ -255,6 +269,12 @@ pub enum SyncStateDto {
 }
 
 #[derive(Clone, Serialize)]
+pub struct ForwardStateDto {
+    pub label: String,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KnownHostsLineDto {
     pub path: String,
@@ -276,6 +296,10 @@ pub enum SessionEventDto {
     },
     Title {
         title: String,
+    },
+    /// SSH port forwards and whether each one works.
+    Forwards {
+        forwards: Vec<ForwardStateDto>,
     },
     /// `changed` is set when a different key is on record.
     HostKey {
@@ -313,6 +337,15 @@ impl From<linecard_proto::SessionEvent> for SessionEventDto {
             E::Connected => SessionEventDto::Connected,
             E::Data(data) => SessionEventDto::Data { data },
             E::Title(title) => SessionEventDto::Title { title },
+            E::Forwards(states) => SessionEventDto::Forwards {
+                forwards: states
+                    .into_iter()
+                    .map(|s| ForwardStateDto {
+                        label: s.label,
+                        error: s.error,
+                    })
+                    .collect(),
+            },
             E::HostKey(k) => SessionEventDto::HostKey {
                 host: k.host,
                 port: k.port,

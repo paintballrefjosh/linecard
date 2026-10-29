@@ -7,6 +7,9 @@
 - Rules can be whole words or regular expressions, with theme colors or any custom color; optional match case per profile. Earlier rules win where matches overlap.
 - Import SecureCRT keyword lists (Config\Keywords\*.ini), with their colors and regular expressions.
 
+**SSH port forwarding**
+- Per connection: local (-L), remote (-R) and dynamic SOCKS 4/5 (-D) forwards, started when the session logs in. The terminal shows each tunnel and whether it is working; a port that is already taken fails on its own without stopping the others.
+
 **Folders**
 - Folder settings (right-click a folder): username, SSH jump host, keyword highlighting, session logging and tab color for everything inside.
 

@@ -77,6 +77,8 @@ export interface ConnectionDraft {
   log: boolean | null;
   /** Keyword-highlight profile id; null = from the folder or Settings. */
   highlight: string | null;
+  /** SSH port forwards, started with the session. */
+  forwards: PortForward[];
   notes: string;
 }
 
@@ -140,10 +142,31 @@ export type SessionEvent =
   | { event: "connected" }
   | { event: "data"; data: number[] }
   | { event: "title"; title: string }
+  | { event: "forwards"; forwards: ForwardState[] }
   | HostKeyEvent
   | AuthEvent
   | TransferEvent
   | { event: "disconnected"; reason: string | null };
+
+/** local = -L, remote = -R, dynamic = -D (SOCKS). */
+export type ForwardKind = "local" | "remote" | "dynamic";
+
+export interface PortForward {
+  kind: ForwardKind;
+  /** Empty = loopback only. */
+  bindAddress: string;
+  bindPort: number;
+  /** Destination (unused for dynamic). */
+  host: string;
+  port: number;
+}
+
+export interface ForwardState {
+  /** e.g. "L 127.0.0.1:8080 → 10.0.0.5:80" */
+  label: string;
+  /** null while working. */
+  error: string | null;
+}
 
 export type TransferProtocol = "xmodem" | "xmodem1k" | "ymodem";
 

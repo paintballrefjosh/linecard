@@ -22,9 +22,10 @@ use russh::keys::{self, HashAlg, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCe
 use russh::{cipher, kex, mac, ChannelMsg, Disconnect, MethodKind, MethodSet, Preferred};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
+use crate::forward::{self, ForwardState, Opener, RemoteForwards, Tunnel};
 use crate::{
-    AuthPrompt, ConnectionKind, Credentials, EventSink, HostKeyDecision, HostKeyPrompt, HostKeyStatus, PromptField,
-    PromptReply, Session, SessionEvent, SshOptions, TerminalTarget,
+    AuthPrompt, ConnectionKind, Credentials, EventSink, ForwardKind, HostKeyDecision, HostKeyPrompt, HostKeyStatus,
+    PromptField, PromptReply, Session, SessionEvent, SshOptions, TerminalTarget,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -247,10 +248,30 @@ struct Client {
     port: u16,
     ui: Ui,
     opts: Arc<SshOptions>,
+    /// Where connections to our remote forwards go (target hop only).
+    remote: RemoteForwards,
 }
 
 impl client::Handler for Client {
     type Error = russh::Error;
+
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        _connected_address: &str,
+        connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: client::ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        // Dropping `reply` rejects connections to ports we didn't ask for.
+        if let Some((host, port)) = self.remote.get(connected_port) {
+            reply.accept().await;
+            tokio::spawn(forward::deliver(Box::new(channel.into_stream()), host, port));
+        }
+        Ok(())
+    }
 
     async fn auth_banner(&mut self, banner: &str, _session: &mut client::Session) -> Result<(), Self::Error> {
         self.ui.print(banner);
@@ -352,6 +373,7 @@ async fn reach(
     target: &TerminalTarget,
     opts: &Arc<SshOptions>,
     ui: &Ui,
+    remote: &RemoteForwards,
 ) -> Result<(Handle<Client>, Vec<Handle<Client>>), Failure> {
     let mut chain = vec![target];
     while let Some(j) = &chain.last().unwrap().jump {
@@ -369,6 +391,11 @@ async fn reach(
             port: hop.port,
             ui: ui.clone(),
             opts: opts.clone(),
+            remote: if i + 1 == chain.len() {
+                remote.clone()
+            } else {
+                RemoteForwards::default()
+            },
         };
         let connecting = async {
             match jumps.last() {
@@ -402,10 +429,12 @@ async fn run(
     mut cmds: UnboundedReceiver<Cmd>,
 ) -> Result<(), Failure> {
     // `_jumps` keeps the jump-host sessions (and so the tunnel) alive.
+    let remote = RemoteForwards::default();
     let (handle, _jumps) = tokio::select! {
-        r = reach(&target, &opts, &ui) => r?,
+        r = reach(&target, &opts, &ui, &remote) => r?,
         _ = until_closed(&mut cmds) => return Err(Failure::Canceled),
     };
+    let handle = Arc::new(handle);
 
     let channel = handle.channel_open_session().await?;
     channel
@@ -421,6 +450,9 @@ async fn run(
         .await?;
     channel.request_shell(false).await?;
     ui.emit(SessionEvent::Connected);
+    // Listeners stop when this is dropped (the session ends).
+    let (_stop, stop) = tokio::sync::watch::channel(false);
+    start_forwards(&target, &handle, &remote, stop, &ui).await;
 
     let (mut reader, writer) = channel.split();
     loop {
@@ -444,6 +476,65 @@ async fn run(
     }
     let _ = handle.disconnect(Disconnect::ByApplication, "", "en").await;
     Ok(())
+}
+
+/// Start the target's port forwards and report how each one went.
+async fn start_forwards(
+    target: &TerminalTarget,
+    handle: &Arc<Handle<Client>>,
+    remote: &RemoteForwards,
+    stop: tokio::sync::watch::Receiver<bool>,
+    ui: &Ui,
+) {
+    if target.forwards.is_empty() {
+        return;
+    }
+    let opener: Opener = {
+        let handle = handle.clone();
+        Arc::new(move |host: String, port: u16, from: String, from_port: u16| {
+            let handle = handle.clone();
+            Box::pin(async move {
+                let ch = handle
+                    .channel_open_direct_tcpip(host, port.into(), from, from_port.into())
+                    .await
+                    .map_err(io::Error::other)?;
+                Ok(Box::new(ch.into_stream()) as Tunnel)
+            })
+        })
+    };
+    let mut states = Vec::new();
+    for fwd in &target.forwards {
+        let error = match fwd.problem() {
+            Some(p) => Some(p),
+            None => match fwd.kind {
+                ForwardKind::Local | ForwardKind::Dynamic => forward::listen(fwd.clone(), opener.clone(), stop.clone())
+                    .await
+                    .err()
+                    .map(|e| format!("can't listen on {}:{}: {e}", fwd.bind(), fwd.bind_port)),
+                ForwardKind::Remote => match handle.tcpip_forward(fwd.bind(), fwd.bind_port.into()).await {
+                    Ok(given) => {
+                        let port = if fwd.bind_port == 0 {
+                            given
+                        } else {
+                            fwd.bind_port.into()
+                        };
+                        remote.add(port, fwd.host.clone(), fwd.port);
+                        None
+                    }
+                    Err(e) => Some(format!("the server refused: {e}")),
+                },
+            },
+        };
+        match &error {
+            None => ui.print(&format!("\x1b[2mForwarding {}\x1b[0m\n", fwd.label())),
+            Some(e) => ui.print(&format!("\x1b[33mPort forward {} failed: {e}\x1b[0m\n", fwd.label())),
+        }
+        states.push(ForwardState {
+            label: fwd.label(),
+            error,
+        });
+    }
+    ui.emit(SessionEvent::Forwards(states));
 }
 
 // ---- authentication ------------------------------------------------------------

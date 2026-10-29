@@ -5,8 +5,26 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { getBackend, type SessionHandle } from "../api";
 import { terminalThemes, type Theme } from "../theme";
-import type { AuthEvent, ConnectionNode, HostKeyEvent, PromptReply, TransferEvent, TransferProtocol } from "../types";
-import { ClipboardPaste, Copy, Download, Eraser, RotateCw, TextSelect, Upload, Zap } from "lucide-react";
+import type {
+  AuthEvent,
+  ConnectionNode,
+  ForwardState,
+  HostKeyEvent,
+  PromptReply,
+  TransferEvent,
+  TransferProtocol,
+} from "../types";
+import {
+  ArrowLeftRight,
+  ClipboardPaste,
+  Copy,
+  Download,
+  Eraser,
+  RotateCw,
+  TextSelect,
+  Upload,
+  Zap,
+} from "lucide-react";
 import { attachHighlighter, highlightStore } from "../highlight";
 import { pasteLineCount, usePrefs } from "../prefs";
 import { ContextMenu } from "./ContextMenu";
@@ -56,6 +74,9 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
   const [pending, setPending] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [transfer, setTransfer] = useState<TransferEvent | null>(null);
+  /** This session's port forwards (SSH). */
+  const [forwards, setForwards] = useState<ForwardState[]>([]);
+  const [showForwards, setShowForwards] = useState(false);
 
   /** Pick a file and start an XMODEM/YMODEM transfer on this serial line. */
   const startTransfer = async (send: boolean, protocol: TransferProtocol) => {
@@ -168,8 +189,10 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
             } else if (e.event === "connected") {
               setPrompt(null);
               report("connected");
-            } else if (e.event === "title") document.title = `${e.title} · Linecard`;
+            } else if (e.event === "forwards") setForwards(e.forwards);
+            else if (e.event === "title") document.title = `${e.title} · Linecard`;
             else if (e.event === "disconnected") {
+              setForwards([]);
               // Free the backend's handle; this attempt is over.
               session?.close();
               session = null;
@@ -287,6 +310,28 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
     <div className="terminal-pane">
       <div className="terminal-host" ref={host} />
       {prompt && <SessionPrompt prompt={prompt} onReply={reply} />}
+      {forwards.length > 0 && (
+        <div className="forward-chip-wrap">
+          <button
+            className={`forward-chip ${forwards.some((f) => f.error) ? "has-error" : ""}`}
+            aria-expanded={showForwards}
+            onClick={() => setShowForwards((v) => !v)}
+            title="Port forwards"
+          >
+            <ArrowLeftRight size={12} /> {forwards.filter((f) => !f.error).length}/{forwards.length}
+          </button>
+          {showForwards && (
+            <ul className="forward-list" role="status">
+              {forwards.map((f, i) => (
+                <li key={i} className={f.error ? "has-error" : ""}>
+                  <code>{f.label}</code>
+                  {f.error && <span>{f.error}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {transfer && (
         <div className="transfer-bar" role="status" aria-live="polite">
           <span className="transfer-label">

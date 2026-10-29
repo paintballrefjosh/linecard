@@ -11,8 +11,10 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub use linecard_core_model::{ConnectionKind, SerialSettings};
+pub use forward::ForwardState;
+pub use linecard_core_model::{ConnectionKind, ForwardKind, PortForward, SerialSettings};
 
+pub mod forward;
 pub mod serial;
 pub mod ssh;
 pub mod telnet;
@@ -26,6 +28,8 @@ pub enum SessionEvent {
     Data(Vec<u8>),
     /// Window title set by the remote side (OSC 0/2).
     Title(String),
+    /// SSH port forwards and whether each one is working.
+    Forwards(Vec<ForwardState>),
     /// The server's host key needs the user's decision. Answer with
     /// [`PromptReply::HostKey`].
     HostKey(HostKeyPrompt),
@@ -177,6 +181,8 @@ pub struct TerminalTarget {
     pub credential_key: Option<String>,
     /// SSH jump host (ProxyJump) to tunnel through; may itself have one.
     pub jump: Option<Box<TerminalTarget>>,
+    /// SSH port forwards to start once logged in.
+    pub forwards: Vec<PortForward>,
 }
 
 impl TerminalTarget {
@@ -191,6 +197,7 @@ impl TerminalTarget {
             keepalive_secs: None,
             credential_key: None,
             jump: None,
+            forwards: Vec::new(),
         }
     }
 }

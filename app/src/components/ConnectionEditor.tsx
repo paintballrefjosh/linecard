@@ -1,6 +1,16 @@
 import { useEffect, useState } from "react";
 import { getBackend } from "../api";
-import type { ConnectionDraft, Inherited, ConnectionKind, FlowControl, Parity, SerialSettings } from "../types";
+import type {
+  ConnectionDraft,
+  ConnectionKind,
+  FlowControl,
+  ForwardKind,
+  Inherited,
+  Parity,
+  PortForward,
+  SerialSettings,
+} from "../types";
+import { ArrowRight, X } from "lucide-react";
 import { Modal } from "./Dialog";
 import { highlightStore } from "../highlight";
 import { kindLabel } from "./icons";
@@ -35,6 +45,7 @@ export function blankDraft(folderId: string | null): ConnectionDraft {
     jumpHost: null,
     log: null,
     highlight: null,
+    forwards: [],
     notes: "",
   };
 }
@@ -74,6 +85,109 @@ export function HighlightSelect({
   );
 }
 
+/** A forward as typed: "8080" or "0.0.0.0:8080", and "host:port". */
+interface ForwardRow {
+  kind: ForwardKind;
+  listen: string;
+  dest: string;
+}
+
+const toRow = (f: PortForward): ForwardRow => ({
+  kind: f.kind,
+  listen: f.bindAddress ? `${f.bindAddress}:${f.bindPort}` : String(f.bindPort || ""),
+  dest: f.kind === "dynamic" ? "" : `${f.host}:${f.port}`,
+});
+
+/** "host:port" (or "[v6]:port"); a bare port when `portOnly` allows it. */
+function splitHostPort(text: string, portOnly: boolean): { host: string; port: number } | null {
+  const t = text.trim();
+  if (portOnly && /^\d+$/.test(t)) return { host: "", port: Number(t) };
+  const m = t.match(/^\[?([^\]]*?)\]?:(\d+)$/);
+  return m ? { host: m[1], port: Number(m[2]) } : null;
+}
+
+function fromRow(r: ForwardRow, n: number): PortForward {
+  const listen = splitHostPort(r.listen, true);
+  if (!listen || listen.port > 65535 || (listen.port === 0 && r.kind !== "remote"))
+    throw new Error(`Port forward ${n}: enter a port to listen on, like 8080 or 0.0.0.0:8080`);
+  if (r.kind === "dynamic") return { kind: r.kind, bindAddress: listen.host, bindPort: listen.port, host: "", port: 0 };
+  const dest = splitHostPort(r.dest, false);
+  if (!dest || !dest.host || !dest.port || dest.port > 65535)
+    throw new Error(`Port forward ${n}: enter where it goes as host:port, like 10.0.0.5:80`);
+  return { kind: r.kind, bindAddress: listen.host, bindPort: listen.port, host: dest.host, port: dest.port };
+}
+
+const forwardKinds: { value: ForwardKind; label: string; title: string }[] = [
+  { value: "local", label: "Local", title: "A port on this computer reaches a host from the server (ssh -L)" },
+  { value: "remote", label: "Remote", title: "A port on the server reaches a host from this computer (ssh -R)" },
+  {
+    value: "dynamic",
+    label: "SOCKS",
+    title: "A SOCKS proxy on this computer that connects out from the server (ssh -D)",
+  },
+];
+
+function ForwardsEditor({ rows, onChange }: { rows: ForwardRow[]; onChange(rows: ForwardRow[]): void }) {
+  const set = (i: number, patch: Partial<ForwardRow>) =>
+    onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  return (
+    <div className="forwards">
+      {rows.map((r, i) => (
+        <div className="forward-row" key={i}>
+          <select
+            aria-label="Forward type"
+            value={r.kind}
+            title={forwardKinds.find((k) => k.value === r.kind)?.title}
+            onChange={(e) => set(i, { kind: e.target.value as ForwardKind })}
+          >
+            {forwardKinds.map((k) => (
+              <option key={k.value} value={k.value} title={k.title}>
+                {k.label}
+              </option>
+            ))}
+          </select>
+          <input
+            aria-label={r.kind === "remote" ? "Port on the server" : "Port on this computer"}
+            placeholder={r.kind === "remote" ? "Server port" : "Local port"}
+            value={r.listen}
+            spellCheck={false}
+            onChange={(e) => set(i, { listen: e.target.value })}
+          />
+          {r.kind === "dynamic" ? (
+            <span className="forward-socks">SOCKS 4/5 proxy</span>
+          ) : (
+            <>
+              <ArrowRight size={14} className="forward-arrow" aria-hidden />
+              <input
+                aria-label="Destination host:port"
+                placeholder={r.kind === "remote" ? "localhost:3000" : "10.0.0.5:80"}
+                value={r.dest}
+                spellCheck={false}
+                onChange={(e) => set(i, { dest: e.target.value })}
+              />
+            </>
+          )}
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Remove port forward"
+            onClick={() => onChange(rows.filter((_, j) => j !== i))}
+          >
+            <X size={15} />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="btn btn-small forward-add"
+        onClick={() => onChange([...rows, { kind: "local", listen: "", dest: "" }])}
+      >
+        Add port forward
+      </button>
+    </div>
+  );
+}
+
 export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts }: Props) {
   const [d, setD] = useState(initial);
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +196,7 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
   const setSerial = (patch: Partial<SerialSettings>) =>
     setD((cur) => ({ ...cur, serial: { ...(cur.serial ?? consoleDefaults()), ...patch } }));
   const [inherited, setInherited] = useState<Inherited | null>(null);
+  const [forwards, setForwards] = useState<ForwardRow[]>(() => initial.forwards.map(toRow));
   useEffect(() => {
     void getBackend().then((b) => b.inheritedSettings(initial.folderId).then(setInherited));
   }, [initial.folderId]);
@@ -105,10 +220,11 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
     setSaving(true);
     setError(null);
     try {
-      await onSave({ ...d, name });
+      const fwds = d.kind === "ssh" ? forwards.map((r, i) => fromRow(r, i + 1)) : [];
+      await onSave({ ...d, name, forwards: fwds });
       onClose();
     } catch (e) {
-      setError(String(e));
+      setError(e instanceof Error ? e.message : String(e));
       setSaving(false);
     }
   };
@@ -271,6 +387,13 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
                   </option>
                 ))}
             </select>
+          </>
+        )}
+
+        {d.kind === "ssh" && (
+          <>
+            <span className="form-label">Port forwarding</span>
+            <ForwardsEditor rows={forwards} onChange={setForwards} />
           </>
         )}
 

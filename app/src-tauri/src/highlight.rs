@@ -276,6 +276,7 @@ mod tests {
                 overrides: Settings::default(),
                 notes: String::new(),
                 tags: vec![],
+                forwards: vec![],
             })
             .map_err(err)
         })

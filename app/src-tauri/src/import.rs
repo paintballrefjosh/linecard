@@ -179,6 +179,7 @@ pub fn apply(tree: &mut Tree, import: &Import, new_id: impl Fn() -> String) -> R
             },
             notes: c.notes.clone(),
             tags: vec![],
+            forwards: vec![],
         })
         .map_err(|e| e.to_string())?;
         by_name.entry(c.name.to_lowercase()).or_insert_with(|| id.clone());

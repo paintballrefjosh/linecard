@@ -295,6 +295,7 @@ fn connection_fields(c: &Connection) -> Fields {
     m.insert("endpoint".into(), json(&c.endpoint));
     m.insert("notes".into(), Value::Str(c.notes.clone()));
     m.insert("tags".into(), json(&c.tags));
+    m.insert("forwards".into(), json(&c.forwards));
     settings_fields("overrides", &c.overrides, &mut m);
     m
 }
@@ -455,6 +456,7 @@ pub fn project(replica: &Replica) -> Tree {
             overrides: get_settings(o, "overrides"),
             notes: get_str(o, "notes").unwrap_or_default(),
             tags: get_json(o, "tags").unwrap_or_default(),
+            forwards: get_json(o, "forwards").unwrap_or_default(),
         };
         let _ = tree.add_connection(conn);
     }
@@ -517,6 +519,7 @@ mod tests {
             },
             notes: "core switch".into(),
             tags: vec!["prod".into()],
+            forwards: vec![],
         }
     }
 
