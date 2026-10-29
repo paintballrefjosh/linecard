@@ -1511,7 +1511,7 @@ kbd {
 
 .hl-rules {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
   gap: 6px 14px;
   margin: 0;
   padding: 0;
@@ -1756,4 +1756,61 @@ kbd {
 }
 .sync-phrase li::marker {
   color: var(--text-quiet);
+}
+
+.hl-profile-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.hl-profile-bar select {
+  min-width: 200px;
+}
+.hl-profile-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 6px;
+}
+.hl-profile-head .hl-name {
+  max-width: 320px;
+  margin: 0;
+  font-family: inherit;
+  font-weight: 600;
+}
+.hl-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  font-size: 12px;
+  color: var(--text-quiet);
+  white-space: nowrap;
+}
+.hl-color {
+  flex: none;
+  width: 30px;
+  height: 26px;
+  padding: 1px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--bg-main);
+}
+.settings-input.is-invalid {
+  border-color: var(--chg-deleted);
+  text-decoration: line-through;
+}
+.hl-import-list {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.hl-import-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
 }

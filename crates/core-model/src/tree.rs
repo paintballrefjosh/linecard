@@ -67,6 +67,8 @@ impl std::error::Error for TreeError {}
 #[derive(Debug, Clone, Default)]
 pub struct Tree {
     pub global: Settings,
+    /// Keyword-highlight profiles by id.
+    pub highlight_profiles: BTreeMap<ObjectId, crate::HighlightProfile>,
     folders: BTreeMap<ObjectId, Folder>,
     connections: BTreeMap<ObjectId, Connection>,
 }

@@ -8,10 +8,12 @@
 //!
 //! This crate has no required dependencies so its logic is easy to test.
 
+mod highlight;
 mod kind;
 mod settings;
 mod tree;
 
+pub use highlight::{HighlightProfile, HighlightRule};
 pub use kind::{ConnectionKind, Endpoint, FlowControl, Parity, SerialSettings};
 pub use settings::{Resolved, Settings, Source};
 pub use tree::{Connection, Folder, Tree, TreeError};

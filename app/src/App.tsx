@@ -7,6 +7,8 @@ import { useUpdater } from "./updater";
 import { PrefsContext, defaultPrefs, withDefaults, type Preferences } from "./prefs";
 import type { ConnectionDraft, ConnectionKind, ConnectionNode, Device, LayoutId, SyncState, TreeNode } from "./types";
 import { ConnectionEditor, blankDraft } from "./components/ConnectionEditor";
+import { FolderSettingsDialog } from "./components/FolderSettings";
+import { highlightStore } from "./highlight";
 import { ImportDialog } from "./components/ImportDialog";
 import { ConnectionTree, relativeTime, type TreeActions } from "./components/ConnectionTree";
 import { DevicesPage, versionMismatch } from "./components/DevicesPage";
@@ -87,6 +89,7 @@ export default function App() {
   const [editing, setEditing] = useState<ConnectionDraft | null>(null);
   const [prefs, setPrefs] = useState<Preferences>(defaultPrefs);
   const [importing, setImporting] = useState(false);
+  const [folderSettings, setFolderSettings] = useState<{ id: string; parentId: string | null } | null>(null);
 
   const prefsValue = useMemo(
     () => ({
@@ -107,6 +110,7 @@ export default function App() {
       backend && {
         newConnection: (folderId) => setEditing(blankDraft(folderId)),
         editConnection: (id) => void backend.getConnection(id).then(setEditing),
+        folderSettings: (id, parentId) => setFolderSettings({ id, parentId }),
         createFolder: (parentId, name) => backend.createFolder(parentId, name),
         rename: (id, name) => backend.renameNode(id, name),
         remove: (id) => backend.deleteNode(id),
@@ -117,7 +121,8 @@ export default function App() {
   );
 
   const refresh = useCallback(async (b: Backend) => {
-    const [t, d, s] = await Promise.all([b.getTree(), b.getDevices(), b.getSyncState()]);
+    const [t, d, s, h] = await Promise.all([b.getTree(), b.getDevices(), b.getSyncState(), b.getHighlight()]);
+    highlightStore.set(h);
     setTree(t);
     setDevices(d);
     setSync(s);
@@ -241,6 +246,16 @@ export default function App() {
         </aside>
 
         {importing && <ImportDialog onClose={() => setImporting(false)} onImported={() => setView("connections")} />}
+
+        {folderSettings && (
+          <FolderSettingsDialog
+            folderId={folderSettings.id}
+            parentId={folderSettings.parentId}
+            path={folderPath(tree, folderSettings.id)}
+            jumpHosts={sshConnections(tree)}
+            onClose={() => setFolderSettings(null)}
+          />
+        )}
 
         {editing && backend && (
           <ConnectionEditor

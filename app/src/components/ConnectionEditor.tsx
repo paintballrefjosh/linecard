@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 import { getBackend } from "../api";
 import type { ConnectionDraft, Inherited, ConnectionKind, FlowControl, Parity, SerialSettings } from "../types";
 import { Modal } from "./Dialog";
+import { highlightStore } from "../highlight";
 import { kindLabel } from "./icons";
 
 const defaultPort: Record<ConnectionKind, number> = { ssh: 22, telnet: 23, rdp: 3389, vnc: 5900, serial: 0 };
 const kinds: ConnectionKind[] = ["ssh", "telnet", "serial", "rdp", "vnc"];
 const bauds = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200];
 /** Same hues as the tab-color convention: red for production, etc. */
-const swatches = ["#d64545", "#e07b39", "#d4a72c", "#3fa35b", "#2aa3a3", "#3a7bd5", "#8a5cd6", "#c94f9b"];
+export const swatches = ["#d64545", "#e07b39", "#d4a72c", "#3fa35b", "#2aa3a3", "#3a7bd5", "#8a5cd6", "#c94f9b"];
 
 /** 9600 8N1, no flow control: the default for most network gear consoles. */
 const consoleDefaults = (port = "COM1"): SerialSettings => ({
@@ -33,6 +34,7 @@ export function blankDraft(folderId: string | null): ConnectionDraft {
     tabColor: null,
     jumpHost: null,
     log: null,
+    highlight: null,
     notes: "",
   };
 }
@@ -45,6 +47,31 @@ interface Props {
   onClose(): void;
   /** Saved SSH connections that can serve as a jump host. */
   jumpHosts: { id: string; name: string; endpoint: string }[];
+}
+
+/** Pick a keyword-highlight profile, or inherit one. */
+export function HighlightSelect({
+  id,
+  value,
+  inherited,
+  onChange,
+}: {
+  id: string;
+  value: string | null;
+  inherited: { value: string; from: string } | null;
+  onChange(v: string | null): void;
+}) {
+  const { profiles } = highlightStore.get();
+  return (
+    <select id={id} value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
+      <option value="">{inherited ? `Inherited: ${inherited.value} (from ${inherited.from})` : "Inherited"}</option>
+      {profiles.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.name}
+        </option>
+      ))}
+    </select>
+  );
 }
 
 export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts }: Props) {
@@ -275,6 +302,14 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
           <option value="on">Always log this connection</option>
           <option value="off">Never log this connection</option>
         </select>
+
+        <label htmlFor="ce-hl">Keyword highlighting</label>
+        <HighlightSelect
+          id="ce-hl"
+          value={d.highlight}
+          inherited={inherited?.highlight ?? null}
+          onChange={(highlight) => set({ highlight })}
+        />
 
         <span className="form-label">Tab color</span>
         <div className="swatches" role="radiogroup" aria-label="Tab color">

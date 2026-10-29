@@ -75,6 +75,8 @@ export interface ConnectionDraft {
   jumpHost: string | null;
   /** Session logging for this connection; null = from the folder or Settings. */
   log: boolean | null;
+  /** Keyword-highlight profile id; null = from the folder or Settings. */
+  highlight: string | null;
   notes: string;
 }
 
@@ -212,4 +214,15 @@ export interface Inherited {
   jumpHost: InheritedValue | null;
   /** "on" | "off" */
   log: InheritedValue | null;
+  /** The keyword-highlight profile's name. */
+  highlight: InheritedValue | null;
+}
+
+/** What a folder passes down to its folders and connections; null = inherit. */
+export interface FolderSettings {
+  username: string | null;
+  tabColor: string | null;
+  jumpHost: string | null;
+  log: boolean | null;
+  highlight: string | null;
 }

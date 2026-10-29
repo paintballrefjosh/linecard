@@ -10,9 +10,11 @@ import type {
   LoggingSettings,
   PendingChange,
   SerialSettings,
+  FolderSettings,
   SyncConfig,
   TreeNode,
 } from "./types";
+import { defaultRules, type HighlightProfile } from "./highlight";
 
 const min = 60_000;
 const now = () => Date.now();
@@ -124,6 +126,26 @@ export function mockBackend(): Backend {
     }
   }, 12_000);
 
+  const hl: { profiles: HighlightProfile[]; defaultId: string } = {
+    profiles: [
+      { id: "hl-general", name: "General", matchCase: false, rules: defaultRules },
+      {
+        id: "hl-cisco",
+        name: "Cisco",
+        matchCase: false,
+        rules: [
+          { text: "err-disabled", color: "red", regex: false },
+          { text: "%[A-Z0-9_]+-[0-3]-[A-Z0-9_]+", color: "red", regex: true },
+          { text: "%[A-Z0-9_]+-[4-5]-[A-Z0-9_]+", color: "amber", regex: true },
+          { text: "(?:Gi|Te|Fa|Eth)\\d+(?:/\\d+)+", color: "blue", regex: true },
+          ...defaultRules.slice(1),
+        ],
+      },
+    ],
+    defaultId: "hl-general",
+  };
+  const folderSettings = new Map<string, FolderSettings>();
+
   let syncConfig: SyncConfig | null = { transport: "relay", location: "https://relay.example.com" };
   const mockPhrase =
     "abandon ability able about above absent absorb abstract absurd abuse access accident account accuse achieve acid acoustic acquire across act action actor actress actual";
@@ -199,6 +221,7 @@ export function mockBackend(): Backend {
       serial: SerialSettings | null;
       jumpHost: string | null;
       log: boolean | null;
+      highlight?: string | null;
     }
   >();
   const newId = () => `m-${Math.random().toString(36).slice(2, 9)}`;
@@ -322,6 +345,7 @@ export function mockBackend(): Backend {
         tabColor: n.tabColor ?? null,
         jumpHost: x?.jumpHost ?? null,
         log: x?.log ?? null,
+        highlight: x?.highlight ?? null,
         notes: x?.notes ?? "",
       };
     },
@@ -347,6 +371,7 @@ export function mockBackend(): Backend {
         serial: d.serial,
         jumpHost: d.jumpHost,
         log: d.log,
+        highlight: d.highlight,
       });
       emit();
       return id!;
@@ -450,7 +475,59 @@ export function mockBackend(): Backend {
         tabColor: null,
         jumpHost: inDc1 ? { value: "home-pi", from: "/DC1 Fort Worth" } : null,
         log: { value: logging.enabled ? "on" : "off", from: "Settings" },
+        highlight: inDc1
+          ? { value: "Cisco", from: "/DC1 Fort Worth" }
+          : { value: hl.profiles.find((p) => p.id === hl.defaultId)?.name ?? "", from: "Settings" },
       };
+    },
+    async getFolderSettings(id) {
+      return folderSettings.get(id) ?? { username: null, tabColor: null, jumpHost: null, log: null, highlight: null };
+    },
+    async saveFolderSettings(id, settings) {
+      folderSettings.set(id, settings);
+      emit();
+    },
+    getHighlight: async () => ({
+      profiles: [...hl.profiles].sort((a, b) => a.name.localeCompare(b.name)),
+      defaultId: hl.defaultId,
+    }),
+    effectiveHighlight: async (connectionId) =>
+      (connectionId && extra.get(connectionId)?.highlight) ||
+      (connectionId?.startsWith("dc1") ? "hl-cisco" : hl.defaultId),
+    async saveHighlightProfile(profile) {
+      if (!profile.name.trim()) throw "Name the profile";
+      const saved = { ...profile, id: profile.id || newId(), rules: profile.rules.filter((r) => r.text.trim()) };
+      hl.profiles = [...hl.profiles.filter((p) => p.id !== saved.id), saved];
+      emit();
+      return saved.id;
+    },
+    async deleteHighlightProfile(id) {
+      if (hl.profiles.length < 2) throw "Keep at least one profile";
+      hl.profiles = hl.profiles.filter((p) => p.id !== id);
+      if (hl.defaultId === id) hl.defaultId = hl.profiles[0].id;
+      emit();
+    },
+    async setDefaultHighlight(id) {
+      hl.defaultId = id;
+      emit();
+    },
+    securecrtKeywordFiles: async () => [
+      { name: "Cisco Words", path: "C:\\Users\\you\\AppData\\Roaming\\VanDyke\\Config\\Keywords\\Cisco Words.ini" },
+    ],
+    async importHighlight() {
+      const id = newId();
+      hl.profiles.push({
+        id,
+        name: "Cisco Words",
+        matchCase: false,
+        rules: [
+          { text: "(?:yes|permit|\\[OK\\]|enabled).?", color: "#72c373", regex: true },
+          { text: ".*fail.*|invalid", color: "#ac4142", regex: true },
+          { text: "(?:[a-f0-9]{4}\\.){2}[a-f0-9]{4}", color: "#aadbaa", regex: true },
+        ],
+      });
+      emit();
+      return id;
     },
     async getLogging() {
       return { ...logging, defaultFolder: "C:\\Users\\you\\Documents\\Linecard Logs" };

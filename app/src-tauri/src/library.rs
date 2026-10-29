@@ -14,7 +14,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use linecard_core_model::{Connection, ConnectionKind, Endpoint, Folder, Settings, Tree};
+use linecard_core_model::{Connection, ConnectionKind, Endpoint, Folder, HighlightProfile, Settings, Tree};
 use linecard_core_store::Store;
 use linecard_core_sync::{ChangeTracker, Hlc, ObjectState, Op, Replica, Value};
 
@@ -29,6 +29,7 @@ const GLOBAL_ID: &str = "global";
 const KIND_FOLDER: &str = "folder";
 const KIND_CONNECTION: &str = "connection";
 const KIND_SETTINGS: &str = "settings";
+const KIND_HIGHLIGHT: &str = "highlight_profile";
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -130,6 +131,7 @@ impl Library {
             for id in loose {
                 t.remove_connection(&id).map_err(err)?;
             }
+            t.highlight_profiles.clear();
             Ok(())
         })?;
         Ok(self.last_own_op())
@@ -297,6 +299,14 @@ fn connection_fields(c: &Connection) -> Fields {
     m
 }
 
+fn highlight_fields(h: &HighlightProfile) -> Fields {
+    let mut m = Fields::new();
+    m.insert("name".into(), Value::Str(h.name.clone()));
+    m.insert("match_case".into(), Value::Bool(h.match_case));
+    m.insert("rules".into(), json(&h.rules));
+    m
+}
+
 fn kind_name(k: ConnectionKind) -> &'static str {
     match k {
         ConnectionKind::Ssh => "ssh",
@@ -318,6 +328,9 @@ fn snapshot(t: &Tree) -> BTreeMap<String, (&'static str, Fields)> {
     }
     for c in t.connections() {
         out.insert(c.id.clone(), (KIND_CONNECTION, connection_fields(c)));
+    }
+    for h in t.highlight_profiles.values() {
+        out.insert(h.id.clone(), (KIND_HIGHLIGHT, highlight_fields(h)));
     }
     out
 }
@@ -366,6 +379,19 @@ pub fn project(replica: &Replica) -> Tree {
         .map(|(_, o)| get_settings(o, "defaults"))
         .unwrap_or_default();
     let mut tree = Tree::new(global);
+    tree.highlight_profiles = live
+        .iter()
+        .filter(|(_, o)| o.kind == KIND_HIGHLIGHT)
+        .map(|(id, o)| {
+            let profile = HighlightProfile {
+                id: id.to_string(),
+                name: get_str(o, "name").unwrap_or_default(),
+                match_case: matches!(o.get("match_case"), Some(Value::Bool(true))),
+                rules: get_json(o, "rules").unwrap_or_default(),
+            };
+            (id.to_string(), profile)
+        })
+        .collect();
 
     let is_deleted_folder = |id: &str| {
         replica

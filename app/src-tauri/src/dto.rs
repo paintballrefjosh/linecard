@@ -1,6 +1,6 @@
 //! JSON shapes sent to the UI. Keep in sync with app/src/types.ts.
 
-use linecard_core_model::{Connection, ConnectionKind, Endpoint, FlowControl, Parity, SerialSettings, Tree};
+use linecard_core_model::{Connection, ConnectionKind, Endpoint, FlowControl, Parity, SerialSettings, Settings, Tree};
 use linecard_core_sync::{ChangeKind, ChangeTracker, PendingChange, Value};
 use serde::{Deserialize, Serialize};
 
@@ -136,6 +136,9 @@ pub struct ConnectionDraftDto {
     /// Session logging for this connection; null = inherit.
     #[serde(default)]
     pub log: Option<bool>,
+    /// Keyword-highlight profile id; null = inherit.
+    #[serde(default)]
+    pub highlight: Option<String>,
     pub notes: String,
 }
 
@@ -168,6 +171,7 @@ impl From<&Connection> for ConnectionDraftDto {
             tab_color: c.overrides.tab_color.clone(),
             jump_host: c.overrides.jump_host.clone(),
             log: c.overrides.log_enabled,
+            highlight: c.overrides.highlight_rules.clone(),
             notes: c.notes.clone(),
         }
     }
@@ -219,6 +223,7 @@ impl ConnectionDraftDto {
         conn.overrides.username = non_empty(&self.username);
         conn.overrides.tab_color = non_empty(&self.tab_color);
         conn.overrides.log_enabled = self.log;
+        conn.overrides.highlight_rules = non_empty(&self.highlight);
         conn.overrides.jump_host = non_empty(&self.jump_host).filter(|j| Some(j) != self.id.as_ref());
         conn.notes = self.notes.clone();
         Ok(())
@@ -421,4 +426,39 @@ pub struct InheritedDto {
     pub jump_host: Option<InheritedValue>,
     /// "on" / "off"
     pub log: Option<InheritedValue>,
+    /// The keyword-highlight profile's name.
+    pub highlight: Option<InheritedValue>,
+}
+
+/// The settings a folder passes down. Empty / null = inherit.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderSettingsDto {
+    pub username: Option<String>,
+    pub tab_color: Option<String>,
+    pub jump_host: Option<String>,
+    pub log: Option<bool>,
+    pub highlight: Option<String>,
+}
+
+impl From<&Settings> for FolderSettingsDto {
+    fn from(s: &Settings) -> Self {
+        FolderSettingsDto {
+            username: s.username.clone(),
+            tab_color: s.tab_color.clone(),
+            jump_host: s.jump_host.clone(),
+            log: s.log_enabled,
+            highlight: s.highlight_rules.clone(),
+        }
+    }
+}
+
+impl FolderSettingsDto {
+    pub fn apply_to(&self, s: &mut Settings) {
+        s.username = non_empty(&self.username);
+        s.tab_color = non_empty(&self.tab_color);
+        s.jump_host = non_empty(&self.jump_host);
+        s.log_enabled = self.log;
+        s.highlight_rules = non_empty(&self.highlight);
+    }
 }

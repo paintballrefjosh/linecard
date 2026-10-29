@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Keyword highlighting**
+- Highlight profiles (e.g. Cisco, Linux, General): pick one per folder or connection, inherited like the tab color, with an app-wide default. Profiles sync between computers.
+- Rules can be whole words or regular expressions, with theme colors or any custom color; optional match case per profile. Earlier rules win where matches overlap.
+- Import SecureCRT keyword lists (Config\Keywords\*.ini), with their colors and regular expressions.
+
+**Folders**
+- Folder settings (right-click a folder): username, SSH jump host, keyword highlighting, session logging and tab color for everything inside.
+
 **Sync**
 - Settings → Sync: start a sync group or join one with its 24-word phrase. Connections, folders and app-wide settings stay the same on every computer; changes from other computers are highlighted and can be reverted one by one.
 - Sync through any shared folder (NAS share, OneDrive, Dropbox, Syncthing) or a self-hosted relay (`relay/`, Docker image).

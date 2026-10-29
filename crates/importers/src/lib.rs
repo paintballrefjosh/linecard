@@ -7,6 +7,7 @@ use linecard_core_model::{ConnectionKind, Endpoint};
 pub mod mremoteng;
 pub mod putty;
 pub mod securecrt;
+pub mod securecrt_keywords;
 pub mod ssh_config;
 pub mod superputty;
 

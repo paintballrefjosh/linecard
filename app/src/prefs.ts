@@ -1,6 +1,5 @@
 import { createContext, useContext } from "react";
 import type { SerializedDockview } from "dockview";
-import { defaultRules, type HighlightRule } from "./highlight";
 
 /** Open tabs and pane layout saved under a name. */
 export interface SavedWorkspace {
@@ -20,7 +19,6 @@ export interface Preferences {
   confirmMultilinePaste: boolean;
   /** Color keywords (down, err-disabled, up…) in terminal output. */
   highlightKeywords: boolean;
-  highlightRules: HighlightRule[];
   workspaces: SavedWorkspace[];
 }
 
@@ -29,7 +27,6 @@ export const defaultPrefs: Preferences = {
   rightClick: "paste",
   confirmMultilinePaste: true,
   highlightKeywords: true,
-  highlightRules: defaultRules,
   workspaces: [],
 };
 

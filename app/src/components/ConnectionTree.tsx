@@ -26,6 +26,7 @@ import {
   Plus,
   Search,
   TextCursorInput,
+  Settings2,
   Trash2,
 } from "lucide-react";
 import type { ChangeKind, ConnectionNode, PendingChange, TreeNode } from "../types";
@@ -37,6 +38,7 @@ import { ChangeGlyph, KindIcon, Undo2, changeLabel } from "./icons";
 export interface TreeActions {
   newConnection(folderId: string | null): void;
   editConnection(id: string): void;
+  folderSettings(id: string, parentId: string | null): void;
   createFolder(parentId: string | null, name: string): Promise<string>;
   rename(id: string, name: string): Promise<void>;
   remove(id: string): Promise<void>;
@@ -267,7 +269,18 @@ export function ConnectionTree({ tree, actions, onOpen, onAck, onAckAll, onRever
       danger: true,
       onSelect: () => setConfirmDelete(d),
     };
-    if (d.type === "folder") return [...create(d.id), "separator", rename, del];
+    if (d.type === "folder")
+      return [
+        ...create(d.id),
+        "separator",
+        {
+          label: "Folder settings…",
+          icon: <Settings2 size={15} />,
+          onSelect: () => actions.folderSettings(d.id, parentIdOf(n)),
+        },
+        rename,
+        del,
+      ];
     return [
       { label: "Connect", icon: <Play size={15} />, shortcut: "Enter", onSelect: () => onOpen(d) },
       { label: "Edit…", icon: <Pencil size={15} />, onSelect: () => actions.editConnection(d.id) },

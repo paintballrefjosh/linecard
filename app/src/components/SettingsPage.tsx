@@ -1,11 +1,20 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Copy, X } from "lucide-react";
 import { getBackend } from "../api";
-import { colorFor, defaultRules, type HighlightColor, type HighlightRule } from "../highlight";
+import {
+  colorFor,
+  defaultRules,
+  highlightStore,
+  isPalette,
+  palette,
+  ruleRegex,
+  type HighlightProfile,
+  type HighlightRule,
+} from "../highlight";
 import type { ThemePref } from "../theme";
 import { usePrefs } from "../prefs";
 import type { LoggingSettings, SavedPassword, SyncConfig, SyncTransport } from "../types";
-import { ConfirmDialog } from "./Dialog";
+import { ConfirmDialog, Modal } from "./Dialog";
 import { relativeTime } from "./ConnectionTree";
 
 interface Props {
@@ -296,78 +305,270 @@ function PhraseWords({ phrase, onHide }: { phrase: string; onHide(): void }) {
   );
 }
 
-const highlightColors: { value: HighlightColor; label: string }[] = [
-  { value: "red", label: "Red" },
-  { value: "amber", label: "Amber" },
-  { value: "green", label: "Green" },
-  { value: "blue", label: "Blue" },
-  { value: "purple", label: "Purple" },
-];
-
-/** Keywords colored in terminal output (display only: logs and copies are untouched). */
+/** Keyword-highlight profiles (display only: logs and copies are untouched).
+ *  Profiles sync; folders and connections pick one in their settings. */
 function KeywordHighlighting() {
   const { prefs, update } = usePrefs();
-  const rules = prefs.highlightRules;
-  const setRules = (highlightRules: HighlightRule[]) => update({ highlightRules });
+  const [store, setStore] = useState(highlightStore.get());
+  useEffect(() => highlightStore.subscribe(() => setStore(highlightStore.get())), []);
+  const [selected, setSelected] = useState<string | null>(null);
+  const current = store.profiles.find((p) => p.id === selected) ?? store.profiles.find((p) => p.id === store.defaultId);
+  /** Edits in progress; saved shortly after typing stops. */
+  const [draft, setDraft] = useState<HighlightProfile | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+
+  useEffect(() => setDraft(current ? structuredClone(current) : null), [current]);
+  useEffect(() => {
+    if (!draft || !current || JSON.stringify(draft) === JSON.stringify(current)) return;
+    const t = window.setTimeout(() => {
+      void getBackend()
+        .then((b) => b.saveHighlightProfile(draft))
+        .then(() => setError(null))
+        .catch((e) => setError(String(e)));
+    }, 600);
+    return () => window.clearTimeout(t);
+  }, [draft, current]);
+
+  const run = (f: (b: Awaited<ReturnType<typeof getBackend>>) => Promise<unknown>) =>
+    void getBackend()
+      .then(f)
+      .then(() => setError(null))
+      .catch((e) => setError(String(e)));
+  const create = (p: Omit<HighlightProfile, "id">) =>
+    run((b) => b.saveHighlightProfile({ ...p, id: "" }).then(setSelected));
+  const edit = (patch: Partial<HighlightProfile>) => setDraft((d) => d && { ...d, ...patch });
+  const setRules = (rules: HighlightRule[]) => edit({ rules });
+
   return (
     <Section title="Keyword highlighting">
       <Row
         label="Color keywords in output"
-        hint="Whole words, any case. Only the display changes; copies and logs keep the original text."
+        hint="Only the display changes; copies and logs keep the original text. Applies on this computer."
         htmlFor="set-hl"
       >
         <Toggle id="set-hl" checked={prefs.highlightKeywords} onChange={(v) => update({ highlightKeywords: v })} />
       </Row>
-      {prefs.highlightKeywords && (
+      <div className="settings-row settings-row-wide">
+        <div className="settings-text">
+          <label htmlFor="set-hl-profile">Profile</label>
+          <p>
+            Profiles sync to your other computers. Pick one per folder or connection in its settings (right-click it);
+            the default applies everywhere else.
+          </p>
+          <div className="hl-profile-bar">
+            <select id="set-hl-profile" value={current?.id ?? ""} onChange={(e) => setSelected(e.target.value)}>
+              {store.profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.id === store.defaultId ? " (default)" : ""}
+                </option>
+              ))}
+            </select>
+            <button className="btn" onClick={() => create({ name: "New profile", matchCase: false, rules: [] })}>
+              New
+            </button>
+            {draft && (
+              <>
+                <button className="btn" onClick={() => create({ ...draft, name: `${draft.name} copy` })}>
+                  Duplicate
+                </button>
+                <button
+                  className="btn"
+                  disabled={draft.id === store.defaultId}
+                  onClick={() => run((b) => b.setDefaultHighlight(draft.id))}
+                >
+                  {draft.id === store.defaultId ? "Default" : "Make default"}
+                </button>
+                <button className="btn" disabled={store.profiles.length < 2} onClick={() => setConfirmDelete(true)}>
+                  Delete
+                </button>
+              </>
+            )}
+            <button className="btn" onClick={() => setImportOpen(true)}>
+              Import from SecureCRT…
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {draft && (
         <div className="settings-row settings-row-wide">
           <div className="settings-text">
+            <div className="hl-profile-head">
+              <input
+                className="settings-input hl-name"
+                aria-label="Profile name"
+                value={draft.name}
+                onChange={(e) => edit({ name: e.target.value })}
+              />
+              <label className="hl-check">
+                <input
+                  type="checkbox"
+                  checked={draft.matchCase}
+                  onChange={(e) => edit({ matchCase: e.target.checked })}
+                />
+                Match case
+              </label>
+            </div>
+            <p>
+              Words match whole. Tick <b>Regex</b> for a regular expression. When matches overlap, the rule higher in
+              the list wins.
+            </p>
             <ul className="hl-rules" aria-label="Keywords">
-              {rules.map((r, i) => (
-                <li key={i}>
-                  <input
-                    className="settings-input"
-                    value={r.text}
-                    aria-label="Keyword"
-                    spellCheck={false}
-                    style={{ color: colorFor(r.color, theme) }}
-                    onChange={(e) => setRules(rules.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))}
-                  />
-                  <select
-                    aria-label={`Color for ${r.text || "keyword"}`}
-                    value={r.color}
-                    onChange={(e) =>
-                      setRules(rules.map((x, j) => (j === i ? { ...x, color: e.target.value as HighlightColor } : x)))
-                    }
-                  >
-                    {highlightColors.map((c) => (
-                      <option key={c.value} value={c.value}>
-                        {c.label}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    className="icon-btn"
-                    aria-label={`Remove ${r.text || "keyword"}`}
-                    onClick={() => setRules(rules.filter((_, j) => j !== i))}
-                  >
-                    <X size={15} />
-                  </button>
-                </li>
-              ))}
+              {draft.rules.map((r, i) => {
+                const broken = r.text.trim() !== "" && !ruleRegex(r, draft.matchCase);
+                const change = (patch: Partial<HighlightRule>) =>
+                  setRules(draft.rules.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+                return (
+                  <li key={i}>
+                    <input
+                      className={`settings-input ${broken ? "is-invalid" : ""}`}
+                      value={r.text}
+                      aria-label={r.regex ? "Regular expression" : "Keyword"}
+                      title={broken ? "This regular expression doesn't work here, so it's skipped" : undefined}
+                      spellCheck={false}
+                      style={{ color: colorFor(r.color, theme) }}
+                      onChange={(e) => change({ text: e.target.value })}
+                    />
+                    <label className="hl-check" title="Regular expression">
+                      <input type="checkbox" checked={r.regex} onChange={(e) => change({ regex: e.target.checked })} />
+                      Regex
+                    </label>
+                    <select
+                      aria-label={`Color for ${r.text || "keyword"}`}
+                      value={isPalette(r.color) ? r.color : "custom"}
+                      onChange={(e) =>
+                        change({ color: e.target.value === "custom" ? colorFor(r.color, theme) : e.target.value })
+                      }
+                    >
+                      {palette.map((c) => (
+                        <option key={c.value} value={c.value}>
+                          {c.label}
+                        </option>
+                      ))}
+                      <option value="custom">Custom</option>
+                    </select>
+                    {!isPalette(r.color) && (
+                      <input
+                        type="color"
+                        className="hl-color"
+                        aria-label="Custom color"
+                        value={/^#[0-9a-f]{6}$/i.test(r.color) ? r.color : "#ffffff"}
+                        onChange={(e) => change({ color: e.target.value })}
+                      />
+                    )}
+                    <button
+                      className="icon-btn"
+                      aria-label={`Remove ${r.text || "keyword"}`}
+                      onClick={() => setRules(draft.rules.filter((_, j) => j !== i))}
+                    >
+                      <X size={15} />
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
             <div className="hl-actions">
-              <button className="btn" onClick={() => setRules([...rules, { text: "", color: "amber" }])}>
+              <button
+                className="btn"
+                onClick={() => setRules([...draft.rules, { text: "", color: "amber", regex: false }])}
+              >
                 Add keyword
               </button>
               <button className="btn" onClick={() => setRules(defaultRules)}>
                 Reset to defaults
               </button>
             </div>
+            {error && <p className="form-error">{error}</p>}
           </div>
         </div>
       )}
+
+      {importOpen && (
+        <ImportKeywords
+          onClose={() => setImportOpen(false)}
+          onImported={(id) => {
+            setSelected(id);
+            setImportOpen(false);
+          }}
+        />
+      )}
+      {confirmDelete && draft && (
+        <ConfirmDialog
+          title={`Delete ${draft.name}?`}
+          message="Folders and connections using it switch to the default profile, on every computer you sync with."
+          confirmLabel="Delete profile"
+          danger
+          onConfirm={async () => {
+            await (await getBackend()).deleteHighlightProfile(draft.id);
+            setSelected(null);
+          }}
+          onClose={() => setConfirmDelete(false)}
+        />
+      )}
     </Section>
+  );
+}
+
+/** Pick a SecureCRT keyword list (found in its config folder, or browsed to). */
+function ImportKeywords({ onClose, onImported }: { onClose(): void; onImported(id: string): void }) {
+  const [files, setFiles] = useState<{ name: string; path: string }[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void getBackend().then((b) => b.securecrtKeywordFiles().then(setFiles));
+  }, []);
+  const importPath = async (path: string) => {
+    try {
+      onImported(await (await getBackend()).importHighlight(path));
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+  const browse = async () => {
+    const path = await (await getBackend()).pickFile("open", "SecureCRT keyword list (.ini)");
+    if (path) await importPath(path);
+  };
+  return (
+    <Modal
+      title="Import a SecureCRT keyword list"
+      onSubmit={() => void browse()}
+      onClose={onClose}
+      actions={
+        <>
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn">
+            Browse for a file…
+          </button>
+        </>
+      }
+    >
+      <p>
+        Each list becomes a profile with its colors and regular expressions. SecureCRT keeps them in{" "}
+        <code>Config\Keywords</code> under its configuration folder.
+      </p>
+      {files === null ? null : files.length === 0 ? (
+        <p className="settings-note settings-empty">
+          No keyword lists found in SecureCRT's usual folder on this computer.
+        </p>
+      ) : (
+        <ul className="hl-import-list">
+          {files.map((f) => (
+            <li key={f.path}>
+              <span>{f.name}</span>
+              <button type="button" className="btn btn-small" onClick={() => void importPath(f.path)}>
+                Import
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {error && <p className="form-error">{error}</p>}
+    </Modal>
   );
 }
 

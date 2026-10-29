@@ -5,6 +5,7 @@
 //! docs/roadmap.md).
 
 mod dto;
+mod highlight;
 mod import;
 mod library;
 mod logging;
@@ -92,6 +93,7 @@ fn seed_starter(tree: &mut Tree) {
         tags: vec![],
     })
     .expect("starter connection");
+    highlight::seed(tree);
 }
 
 /// Run a tree edit through the library (which records it as ops) and tell
@@ -227,6 +229,43 @@ fn inherited_settings(state: State<AppState>, folder_id: Option<String>) -> CmdR
             "log_enabled",
             r.settings.log_enabled.map(|b| if b { "on" } else { "off" }.to_string()),
         ),
+        highlight: item(
+            "highlight_rules",
+            r.settings
+                .highlight_rules
+                .as_deref()
+                .and_then(|id| tree.highlight_profiles.get(id))
+                .map(|p| p.name.clone()),
+        )
+        .or_else(|| {
+            let id = highlight::default_id(&tree)?;
+            Some(dto::InheritedValue {
+                value: tree.highlight_profiles.get(&id)?.name.clone(),
+                from: "Settings".into(),
+            })
+        }),
+    })
+}
+
+/// A folder's own defaults (what its folders and connections inherit).
+#[tauri::command]
+fn get_folder_settings(state: State<AppState>, id: String) -> CmdResult<dto::FolderSettingsDto> {
+    let lib = state.lib.lock().map_err(err)?;
+    let f = lib.tree().folder(&id).map_err(err)?;
+    Ok(dto::FolderSettingsDto::from(&f.defaults))
+}
+
+#[tauri::command]
+fn save_folder_settings(
+    app: AppHandle,
+    state: State<AppState>,
+    id: String,
+    settings: dto::FolderSettingsDto,
+) -> CmdResult<()> {
+    edit(&app, &state, |tree| {
+        let f = tree.folder_mut(&id).map_err(err)?;
+        settings.apply_to(&mut f.defaults);
+        Ok(())
     })
 }
 
@@ -779,8 +818,9 @@ pub fn run() {
                 Some(dir) => std::path::PathBuf::from(dir),
                 None => app.path().app_data_dir()?,
             };
-            let lib = Library::open(&data.join("library.db"), seed_starter)
+            let mut lib = Library::open(&data.join("library.db"), seed_starter)
                 .map_err(|e| format!("could not open the connection library: {e}"))?;
+            highlight::migrate(&mut lib, PREFERENCES_KEY)?;
             // Secrets live in the OS keychain; this file only lists what's saved.
             let vault = Arc::new(Vault::keychain(data.join("credentials.json")));
             app.manage(AppState {
@@ -821,6 +861,15 @@ pub fn run() {
             forget_saved_password,
             get_devices,
             get_sync_state,
+            get_folder_settings,
+            save_folder_settings,
+            highlight::get_highlight,
+            highlight::effective_highlight,
+            highlight::save_highlight_profile,
+            highlight::delete_highlight_profile,
+            highlight::set_default_highlight,
+            highlight::securecrt_keyword_files,
+            highlight::import_highlight,
             get_sync_config,
             sync_setup,
             sync_phrase,
@@ -888,6 +937,7 @@ mod tests {
             tab_color: Some("#d64545".into()),
             jump_host: None,
             log: None,
+            highlight: None,
             notes: String::new(),
         }
     }

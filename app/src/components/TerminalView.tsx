@@ -7,7 +7,7 @@ import { getBackend, type SessionHandle } from "../api";
 import { terminalThemes, type Theme } from "../theme";
 import type { AuthEvent, ConnectionNode, HostKeyEvent, PromptReply, TransferEvent, TransferProtocol } from "../types";
 import { ClipboardPaste, Copy, Download, Eraser, RotateCw, TextSelect, Upload, Zap } from "lucide-react";
-import { attachHighlighter } from "../highlight";
+import { attachHighlighter, highlightStore } from "../highlight";
 import { pasteLineCount, usePrefs } from "../prefs";
 import { ContextMenu } from "./ContextMenu";
 import { KindIcon, kindLabel } from "./icons";
@@ -42,6 +42,16 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
   prefsRef.current = prefs;
   const themeRef = useRef(theme);
   themeRef.current = theme;
+  /** This connection's keyword-highlight profile (follows folder and Settings changes). */
+  const profileId = useRef<string | null>(null);
+  useEffect(() => {
+    const load = () =>
+      void getBackend()
+        .then((b) => b.effectiveHighlight(conn.id))
+        .then((id) => (profileId.current = id));
+    load();
+    return highlightStore.subscribe(load);
+  }, [conn.id]);
   /** Multi-line text waiting for the user to confirm the paste. */
   const [pending, setPending] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -191,7 +201,7 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
 
     const highlighter = attachHighlighter(t, () => ({
       enabled: prefsRef.current.highlightKeywords,
-      rules: prefsRef.current.highlightRules,
+      profile: highlightStore.profile(profileId.current),
       theme: themeRef.current,
     }));
 

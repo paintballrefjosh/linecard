@@ -1,6 +1,7 @@
 import type {
   ConnectionDraft,
   ConnectionNode,
+  FolderSettings,
   Device,
   ImportPreview,
   ImportSource,
@@ -17,6 +18,7 @@ import type {
   TreeNode,
 } from "./types";
 import { mockBackend } from "./mock";
+import type { HighlightProfile } from "./highlight";
 import type { Preferences } from "./prefs";
 
 export interface SessionHandle {
@@ -74,6 +76,20 @@ export interface Backend {
   importPreview(source: ImportSourceId, path: string | null): Promise<ImportPreview>;
   /** Returns the id of the new "Imported from …" folder. */
   importApply(source: ImportSourceId, path: string | null): Promise<string>;
+  getFolderSettings(id: string): Promise<FolderSettings>;
+  saveFolderSettings(id: string, settings: FolderSettings): Promise<void>;
+  /** Keyword-highlight profiles (sorted by name) and the app-wide default. */
+  getHighlight(): Promise<{ profiles: HighlightProfile[]; defaultId: string | null }>;
+  /** The profile a connection uses (the default for quick connects). */
+  effectiveHighlight(connectionId: string | null): Promise<string | null>;
+  /** Create (empty id) or replace. Returns the id. */
+  saveHighlightProfile(profile: HighlightProfile): Promise<string>;
+  deleteHighlightProfile(id: string): Promise<void>;
+  setDefaultHighlight(id: string): Promise<void>;
+  /** SecureCRT keyword lists found on this computer. */
+  securecrtKeywordFiles(): Promise<{ name: string; path: string }[]>;
+  /** Import a SecureCRT keyword list as a new profile. Returns its id. */
+  importHighlight(path: string): Promise<string>;
   getLogging(): Promise<LoggingSettings>;
   setLogging(l: LoggingSettings): Promise<void>;
   /** Serial ports present right now. */
@@ -135,6 +151,15 @@ async function tauriBackend(): Promise<Backend> {
     importSources: () => invoke<ImportSource[]>("import_sources"),
     importPreview: (source, path) => invoke<ImportPreview>("import_preview", { source, path }),
     importApply: (source, path) => invoke<string>("import_apply", { source, path }),
+    getFolderSettings: (id) => invoke<FolderSettings>("get_folder_settings", { id }),
+    saveFolderSettings: (id, settings) => invoke("save_folder_settings", { id, settings }),
+    getHighlight: () => invoke("get_highlight"),
+    effectiveHighlight: (connectionId) => invoke<string | null>("effective_highlight", { connectionId }),
+    saveHighlightProfile: (profile) => invoke<string>("save_highlight_profile", { profile }),
+    deleteHighlightProfile: (id) => invoke("delete_highlight_profile", { id }),
+    setDefaultHighlight: (id) => invoke("set_default_highlight", { id }),
+    securecrtKeywordFiles: () => invoke("securecrt_keyword_files"),
+    importHighlight: (path) => invoke<string>("import_highlight", { path }),
     getLogging: () => invoke<LoggingSettings>("get_logging"),
     setLogging: (logging) => invoke("set_logging", { logging }),
     listSerialPorts: () => invoke("list_serial_ports"),
