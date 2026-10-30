@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.0 — RDP, VNC, more ways to sync, password sync
 
 **Graphical sessions**
 - RDP: connections of type RDP open in a tab (IronRDP, on every platform). Network Level Authentication (CredSSP/NTLM) with the user name inherited like SSH and "Save password"; the server certificate is checked like an SSH host key before any password is sent; the remote desktop follows the tab's size when the server supports it.
