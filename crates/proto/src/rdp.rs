@@ -521,12 +521,13 @@ async fn attempt(
     let mut connector =
         ClientConnector::new(connector_config(&user, "", width, height), client_addr).with_static_channel(drdynvc);
 
-    let should_upgrade = match ironrdp_tokio::connect_begin(&mut framed, &mut connector).await {
-        Ok(s) => s,
-        Err(e) => return Ok(Err(e)),
-    };
+    let should_upgrade = ironrdp_tokio::connect_begin(&mut framed, &mut connector)
+        .await
+        .map_err(|e| err(format!("RDP negotiation failed: {}", describe(&e))))?;
     let (stream, leftover) = framed.into_inner();
-    let (tls, cert) = ironrdp_tls::upgrade(stream, &target.host).await.map_err(err)?;
+    let (tls, cert) = ironrdp_tls::upgrade(stream, &target.host)
+        .await
+        .map_err(|e| err(format!("the TLS handshake failed: {}", with_hint(&e.to_string()))))?;
     let der = x509_cert::der::Encode::to_der(&cert).map_err(err)?;
     let fp = fingerprint(&der);
     if login.accepted.as_deref() != Some(fp.as_str()) {
@@ -565,7 +566,8 @@ async fn attempt(
         Ok(ironrdp_connector::ConnectionOutcome::Redirected(_)) => Err(err(
             "the server redirected to another host (a broker); Linecard doesn't follow redirects yet",
         )),
-        Err(e) => Ok(Err(e)),
+        Err(e) if refused(&e) => Ok(Err(e)),
+        Err(e) => Err(err(format!("logging in failed: {}", describe(&e)))),
     }
 }
 
@@ -602,7 +604,20 @@ async fn run(target: &TerminalTarget, width: u16, height: u16, opts: &RdpOptions
 fn describe(e: &ironrdp_connector::ConnectorError) -> String {
     match e.kind() {
         ConnectorErrorKind::Negotiation(f) => format!("the server refused the connection ({f})"),
-        _ => format!("{e}"),
+        _ => with_hint(&e.to_string()),
+    }
+}
+
+/// A dropped connection says little on its own; say what usually causes it.
+fn with_hint(msg: &str) -> String {
+    let m = msg.to_lowercase();
+    if m.contains("10054") || m.contains("forcibly closed") || m.contains("connection reset") {
+        format!(
+            "{msg}. The server dropped the connection: older hosts (Windows 7, Server 2008 R2) may only offer TLS 1.0, \
+             and accounts not allowed to use Remote Desktop are dropped the same way"
+        )
+    } else {
+        msg.to_string()
     }
 }
 

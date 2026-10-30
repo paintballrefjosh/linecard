@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+**Fixes**
+- RDP to Windows 7 and Server 2008 R2: on Windows, Linecard now uses the system's TLS (as the built-in Remote Desktop client does), which still speaks TLS 1.0 to hosts that offer nothing newer. Before, those hosts dropped the connection ("forcibly closed by the remote host").
+- RDP errors say which step failed (negotiation, TLS handshake or login) and what a dropped connection usually means.
+
 ## v0.3.1 — movable connections pane, update prompt
 
 **Connections pane**
