@@ -45,7 +45,7 @@ jobs:
       - id: notes
         shell: bash
         run: |
-          notes="$(.github/scripts/changelog-section.sh "${{ github.ref_name }}")"
+          notes="$(bash .github/scripts/changelog-section.sh "${{ github.ref_name }}")"
           if [ -z "$notes" ]; then notes="See CHANGELOG.md for what's new."; fi
           {
             echo "body<<LINECARD_NOTES_EOF"
