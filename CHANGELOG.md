@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.1 — movable connections pane, update prompt
 
 **Connections pane**
 - Pin it open or set it to auto-hide (the pin in its title bar): hidden, it folds to a strip on the edge and slides out when you point at it or click it, then tucks away again.
