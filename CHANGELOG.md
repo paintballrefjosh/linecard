@@ -1,18 +1,35 @@
 # Changelog
 
+## Unreleased
+
+**Connections pane**
+- Pin it open or set it to auto-hide (the pin in its title bar): hidden, it folds to a strip on the edge and slides out when you point at it or click it, then tucks away again.
+- Drag its title bar to dock it on the left, right, top or bottom of the window. Its size is remembered for each orientation.
+- Folders stay collapsed or expanded the way you left them after a restart.
+
+**Updates**
+- Linecard no longer downloads updates on its own: the status bar says when one is available, and clicking it shows what's new with a Download and install button.
+- The version in the status bar opens that version's release notes.
+- Each release on GitHub lists its changes.
+
 ## v0.3.0 — RDP, VNC, more ways to sync, password sync
 
 **Graphical sessions**
 - RDP: connections of type RDP open in a tab (IronRDP, on every platform). Network Level Authentication (CredSSP/NTLM) with the user name inherited like SSH and "Save password"; the server certificate is checked like an SSH host key before any password is sent; the remote desktop follows the tab's size when the server supports it.
 - VNC: connections of type VNC open in a tab showing the remote screen, scaled to fit, with mouse, wheel and keyboard (Ctrl+Shift+V types the clipboard). VNC password authentication with "Save password"; ZRLE, CopyRect and Raw encodings; servers that change size.
 
+**Sync**
 - Sync saved passwords (opt-in, Settings → Saved passwords): encrypted with a vault passphrase that is separate from the sync phrase (Argon2id, then XChaCha20-Poly1305 per password). Each computer asks for the passphrase once; saving, changing or removing a password on one computer does the same on the others.
 - Sync on the local network with no server: pick "This network" in Settings → Sync. Computers find each other by multicast and sync directly; each keeps and passes on what it has, so changes reach a computer that was off when they were made.
 - Sync through a GitHub repository: pick GitHub in Settings → Sync, enter owner/name and a fine-grained token for that repository (Contents: read and write; kept in the keychain). Same layout as a shared folder, one commit per batch, checked every 30 seconds; the repository only holds ciphertext.
 - Relay sync is near-instant: computers wait on the relay, which answers as soon as a change arrives (about a quarter second end to end), instead of checking every 5 seconds.
 - Private relays: with LINECARD_RELAY_OPEN=false only accounts can start sync groups. The operator creates them with `linecard-relay account add`, which prints an access key to enter in Settings → Sync. Admin commands also list and remove groups and accounts (see docs/relay.md).
+
+**Links and command line**
 - Settings → Links and command line: "Add linecard to PATH" (Windows: your user PATH; Linux: ~/.local/bin; macOS shows the one-line command, which needs admin rights).
 - ssh:// and telnet:// links can open in Linecard on macOS and Linux too (Launch Services / xdg-mime), and the handler they replace comes back when turned off.
+
+**Fixes**
 - Drag and drop works in the desktop app: move connections and folders in the tree, and drag tabs between panes. (The window was claiming drags for file drops.)
 - Dragging an item further down in the same folder no longer lands it one place too far.
 

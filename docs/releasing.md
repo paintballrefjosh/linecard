@@ -15,10 +15,10 @@ npx tauri signer generate -w $HOME/.tauri/linecard.key
 
 ## Each release
 
-1. Bump `version` in `Cargo.toml` (workspace) and `app/src-tauri/tauri.conf.json`; add a `CHANGELOG.md` entry.
+1. Bump `version` in `Cargo.toml` (workspace) and `app/src-tauri/tauri.conf.json`; rename the `CHANGELOG.md` "Unreleased" heading to `## vX.Y.Z — summary`. That section becomes the release description and the notes the in-app update prompt shows.
 2. Tag and push: `git tag v0.2.0 && git push --tags`.
 3. The Release workflow builds Windows (NSIS), macOS (universal dmg, plus the `.app.tar.gz` the updater installs) and Linux (AppImage, deb), uploads them to a **draft** release with `latest.json`, and pushes `ghcr.io/<owner>/linecard-relay`.
-4. Review the draft and publish it. Installed apps see it within six hours (or on next launch), download in the background, and offer "Restart to install". A tag with a hyphen (`v0.3.0-beta.1`) is marked pre-release.
+4. Review the draft and publish it. Installed apps see it within six hours (or on next launch), and offer the update (with its notes); nothing downloads until the user chooses to install. A tag with a hyphen (`v0.3.0-beta.1`) is marked pre-release.
 
 ## Without code signing
 

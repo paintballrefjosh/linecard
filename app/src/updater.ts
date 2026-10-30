@@ -3,15 +3,17 @@ import { isTauri } from "./api";
 
 export interface UpdateInfo {
   version: string;
+  /** What's new (the release's description). */
   notes: string;
-  /** Downloads (if needed), installs and restarts the app. */
-  installAndRestart(): Promise<void>;
+  /** Download and install; `progress` gets 0–1 (or null when the size is unknown). */
+  install(progress: (fraction: number | null) => void): Promise<void>;
+  restart(): Promise<void>;
 }
 
 const SIX_HOURS = 6 * 60 * 60 * 1000;
 
-/** Checks GitHub Releases on launch and every six hours, downloading in the
- *  background so "Restart now" is instant. Never restarts on its own. */
+/** Checks GitHub Releases on launch and every six hours. Only checks:
+ *  nothing is downloaded or installed until the user says so. */
 export function useUpdater(): UpdateInfo | null {
   const [info, setInfo] = useState<UpdateInfo | null>(null);
 
@@ -25,15 +27,21 @@ export function useUpdater(): UpdateInfo | null {
         const { relaunch } = await import("@tauri-apps/plugin-process");
         const update = await check();
         if (!update || canceled) return;
-        await update.download();
-        if (canceled) return;
         setInfo({
           version: update.version,
           notes: update.body ?? "",
-          async installAndRestart() {
-            await update.install();
-            await relaunch();
+          async install(progress) {
+            let total: number | null = null;
+            let done = 0;
+            await update.downloadAndInstall((e) => {
+              if (e.event === "Started") total = e.data.contentLength ?? null;
+              else if (e.event === "Progress") {
+                done += e.data.chunkLength;
+                progress(total ? Math.min(1, done / total) : null);
+              } else progress(1);
+            });
           },
+          restart: () => relaunch(),
         });
       } catch (err) {
         console.warn("update check failed", err);

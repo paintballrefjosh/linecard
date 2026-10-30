@@ -149,6 +149,8 @@ export interface Backend {
   pickFolder(title: string): Promise<string | null>;
   /** Native file picker; null if canceled. */
   pickFile(mode: "open" | "save", title: string): Promise<string | null>;
+  /** Open a web page in the default browser. */
+  openUrl(url: string): Promise<void>;
   clipboardRead(): Promise<string>;
   clipboardWrite(text: string): Promise<void>;
   /** Open a session. Saved connections are looked up by id; quick-connect
@@ -247,6 +249,7 @@ async function tauriBackend(): Promise<Backend> {
           : await dialog.save({ title });
       return typeof picked === "string" ? picked : null;
     },
+    openUrl: async (url) => (await import("@tauri-apps/plugin-opener")).openUrl(url),
     // The clipboard plugin: WebView2 can refuse navigator.clipboard reads.
     clipboardRead: async () => (await clipboard).readText().catch(() => ""),
     clipboardWrite: async (text) => (await clipboard).writeText(text),

@@ -54,6 +54,13 @@ interface Props {
   onAckAll(): void;
   onRevert(opId: string): void;
   onMove(id: string, parentId: string | null, index: number): void;
+  /** Collapsed folders, remembered between runs. */
+  closedFolders: string[];
+  onClosedFolders(ids: string[]): void;
+}
+
+function folderIds(nodes: TreeNode[]): string[] {
+  return nodes.flatMap((n) => (n.type === "folder" ? [n.id, ...folderIds(n.children)] : []));
 }
 
 /** Folder a node lives in (null = top level). */
@@ -204,7 +211,26 @@ function Row({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
   );
 }
 
-export function ConnectionTree({ tree, actions, onOpen, onAck, onAckAll, onRevert, onMove }: Props) {
+export function ConnectionTree({
+  tree,
+  actions,
+  onOpen,
+  onAck,
+  onAckAll,
+  onRevert,
+  onMove,
+  closedFolders,
+  onClosedFolders,
+}: Props) {
+  /** Read once: the tree keeps its own open state after that. */
+  const [initialOpen] = useState(() => Object.fromEntries(closedFolders.map((id) => [id, false])));
+  const closed = useRef(new Set(closedFolders));
+  const saveClosed = (next: Set<string>) => {
+    // Forget folders that no longer exist.
+    const live = new Set(folderIds(tree));
+    closed.current = new Set([...next].filter((id) => live.has(id)));
+    onClosedFolders([...closed.current]);
+  };
   const [search, setSearch] = useState("");
   const [reviewing, setReviewing] = useState(false);
   const [hover, setHover] = useState<HoverState | null>(null);
@@ -251,8 +277,22 @@ export function ConnectionTree({ tree, actions, onOpen, onAck, onAckAll, onRever
         "separator",
         { label: "Import connections…", icon: <FileInput size={15} />, onSelect: actions.importConnections },
         "separator",
-        { label: "Expand all", icon: <ChevronsUpDown size={15} />, onSelect: () => treeApi.current?.openAll() },
-        { label: "Collapse all", icon: <ChevronsDownUp size={15} />, onSelect: () => treeApi.current?.closeAll() },
+        {
+          label: "Expand all",
+          icon: <ChevronsUpDown size={15} />,
+          onSelect: () => {
+            treeApi.current?.openAll();
+            saveClosed(new Set());
+          },
+        },
+        {
+          label: "Collapse all",
+          icon: <ChevronsDownUp size={15} />,
+          onSelect: () => {
+            treeApi.current?.closeAll();
+            saveClosed(new Set(folderIds(tree)));
+          },
+        },
       ];
     }
     const d = n.data;
@@ -391,6 +431,15 @@ export function ConnectionTree({ tree, actions, onOpen, onAck, onAckAll, onRever
               rowHeight={28}
               indent={16}
               openByDefault
+              initialOpenState={initialOpen}
+              onToggle={(id) => {
+                // Searching opens folders to show matches; that isn't a choice to remember.
+                if (search) return;
+                const next = new Set(closed.current);
+                if (next.has(id)) next.delete(id);
+                else next.add(id);
+                saveClosed(next);
+              }}
               searchTerm={search}
               searchMatch={(n: NodeApi<TreeNode>, term: string) => {
                 const t = term.toLowerCase();

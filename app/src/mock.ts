@@ -303,6 +303,7 @@ export function mockBackend(): Backend {
       const noop = () => {};
       return { pointer: noop, wheel: noop, key: noop, text: noop, reply: noop, resize: noop, close: noop };
     },
+    openUrl: async (url) => void window.open(url, "_blank", "noopener"),
     takeLaunch: async () => null,
     onLaunch: () => () => {},
     linkHandlerStatus: async () => linkHandler,

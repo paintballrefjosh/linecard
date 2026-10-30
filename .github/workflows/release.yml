@@ -40,6 +40,18 @@ jobs:
           cache-dependency-path: app/package-lock.json
       - working-directory: app
         run: npm ci
+      # This version's CHANGELOG.md section becomes the release description
+      # (and the notes the in-app update prompt shows).
+      - id: notes
+        shell: bash
+        run: |
+          notes="$(.github/scripts/changelog-section.sh "${{ github.ref_name }}")"
+          if [ -z "$notes" ]; then notes="See CHANGELOG.md for what's new."; fi
+          {
+            echo "body<<LINECARD_NOTES_EOF"
+            echo "$notes"
+            echo "LINECARD_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -50,7 +62,7 @@ jobs:
           projectPath: app
           tagName: ${{ github.ref_name }}
           releaseName: Linecard ${{ github.ref_name }}
-          releaseBody: See CHANGELOG.md for what's new.
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           includeUpdaterJson: true

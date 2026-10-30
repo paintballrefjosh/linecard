@@ -20,6 +20,8 @@ export interface Preferences {
   /** Color keywords (down, err-disabled, up…) in terminal output. */
   highlightKeywords: boolean;
   workspaces: SavedWorkspace[];
+  /** Folders collapsed in the connection tree (the rest are open). */
+  closedFolders: string[];
 }
 
 export const defaultPrefs: Preferences = {
@@ -28,6 +30,7 @@ export const defaultPrefs: Preferences = {
   confirmMultilinePaste: true,
   highlightKeywords: true,
   workspaces: [],
+  closedFolders: [],
 };
 
 export function withDefaults(stored: Partial<Preferences> | null | undefined): Preferences {

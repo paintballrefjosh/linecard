@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { DockviewApi } from "dockview";
 import { Download, Laptop, ListTree, Monitor, Moon, Settings as SettingsIcon, Sun } from "lucide-react";
 import { getBackend, type Backend } from "./api";
@@ -17,13 +17,14 @@ import type {
 } from "./types";
 import { ConnectionEditor, blankDraft } from "./components/ConnectionEditor";
 import { FolderSettingsDialog } from "./components/FolderSettings";
+import { UpdateDialog } from "./components/UpdateDialog";
 import { highlightStore } from "./highlight";
 import { ImportDialog } from "./components/ImportDialog";
 import { ConnectionTree, relativeTime, type TreeActions } from "./components/ConnectionTree";
 import { DevicesPage, versionMismatch } from "./components/DevicesPage";
 import { LayoutPicker, layoutShortcut } from "./components/LayoutPicker";
 import { SettingsPage } from "./components/SettingsPage";
-import { SidebarResizer, useSidebarWidth } from "./components/SidebarResizer";
+import { ConnectionPanel, usePanelLayout } from "./components/ConnectionPanel";
 import { Workspace, applyLayout, openConnection } from "./components/Workspace";
 import { WorkspaceMenu } from "./components/WorkspaceMenu";
 
@@ -79,6 +80,13 @@ function folderPath(nodes: TreeNode[], id: string | null, prefix = ""): string {
   return "/";
 }
 
+const REPO = "https://github.com/paintballrefjosh/linecard";
+
+/** A release's page lists its changes; development builds get the changelog. */
+function changelogUrl(version: string): string {
+  return /^\d+\.\d+\.\d+$/.test(version) ? `${REPO}/releases/tag/v${version}` : `${REPO}/blob/master/CHANGELOG.md`;
+}
+
 const themeCycle: Record<ThemePref, ThemePref> = { system: "light", light: "dark", dark: "system" };
 
 export default function App() {
@@ -94,10 +102,15 @@ export default function App() {
   const [quick, setQuick] = useState("");
   const [quickError, setQuickError] = useState(false);
   const dock = useRef<DockviewApi | null>(null);
-  const [sidebarWidth, setSidebarWidth] = useSidebarWidth();
+  const panel = usePanelLayout();
+  /** Auto-hidden connections pane: showing right now. */
+  const [peek, setPeek] = useState(false);
   const [editing, setEditing] = useState<ConnectionDraft | null>(null);
   const [prefs, setPrefs] = useState<Preferences>(defaultPrefs);
   const [importing, setImporting] = useState(false);
+  const [showUpdate, setShowUpdate] = useState(false);
+  /** The tree waits for preferences so folders open as they were left. */
+  const [prefsReady, setPrefsReady] = useState(false);
   const [folderSettings, setFolderSettings] = useState<{ id: string; parentId: string | null } | null>(null);
 
   const prefsValue = useMemo(
@@ -142,7 +155,10 @@ export default function App() {
     getBackend().then((b) => {
       setBackend(b);
       b.appVersion().then(setVersion);
-      b.getPreferences().then((p) => setPrefs(withDefaults(p)));
+      b.getPreferences().then((p) => {
+        setPrefs(withDefaults(p));
+        setPrefsReady(true);
+      });
       refresh(b);
       const offTree = b.onTreeChanged(() => refresh(b));
       const offSync = b.onSyncChanged(() => refresh(b));
@@ -175,6 +191,7 @@ export default function App() {
 
   const open = (conn: ConnectionNode) => {
     setView("connections");
+    setPeek(false);
     if (dock.current) openConnection(dock.current, conn);
   };
 
@@ -228,11 +245,14 @@ export default function App() {
 
   return (
     <PrefsContext.Provider value={prefsValue}>
-      <div className="app" style={{ "--sidebar-w": `${sidebarWidth}px` } as CSSProperties}>
+      <div className="app">
         <nav className="rail" aria-label="Views">
           <button
             className={view === "connections" ? "is-active" : ""}
-            onClick={() => setView("connections")}
+            onClick={() => {
+              setView("connections");
+              if (!panel.pinned) setPeek((p) => !p);
+            }}
             title="Connections"
             aria-label="Connections"
           >
@@ -265,17 +285,85 @@ export default function App() {
           </button>
         </nav>
 
-        <aside className="sidebar">
-          <div className="brand">
-            <span className="brand-mark" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-              <i />
-            </span>
-            Linecard
-          </div>
-          {backend && treeActions && (
+        <ConnectionPanel
+          layout={panel}
+          peek={peek}
+          onPeek={setPeek}
+          header={
+            <div className="brand">
+              <span className="brand-mark" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+                <i />
+              </span>
+              Linecard
+            </div>
+          }
+          main={
+            <main className="main">
+              <header className="toolbar">
+                <form className={`quick-connect ${quickError ? "has-error" : ""}`} onSubmit={submitQuick}>
+                  <input
+                    value={quick}
+                    onChange={(e) => {
+                      setQuick(e.target.value);
+                      setQuickError(false);
+                    }}
+                    placeholder="Quick connect: ssh admin@10.0.0.1, telnet cs1 2005, COM3 9600"
+                    aria-label="Quick connect"
+                    aria-invalid={quickError}
+                  />
+                </form>
+                <WorkspaceMenu dock={dock} findConnection={(id) => findConnection(tree, id)} />
+                <LayoutPicker value={layout} onChange={changeLayout} />
+              </header>
+
+              <div className="content">
+                <div className="workspace-wrap" hidden={view !== "connections"}>
+                  <Workspace
+                    theme={theme}
+                    onReady={(api) => {
+                      dock.current = api;
+                      const waiting = pendingLaunch.current;
+                      pendingLaunch.current = null;
+                      if (waiting) window.setTimeout(() => launch.current(waiting), 0);
+                    }}
+                  />
+                </div>
+                {view === "devices" && <DevicesPage devices={devices} syncOn={sync.state !== "off"} />}
+                {view === "settings" && <SettingsPage theme={pref} onTheme={setPref} />}
+              </div>
+
+              <footer className="statusbar">
+                <SyncStatus sync={sync} />
+                {mismatch && (
+                  <button className="status-link warn" onClick={() => setView("devices")}>
+                    Devices on different versions
+                  </button>
+                )}
+                {notice && <span className="status-notice">{notice}</span>}
+                <span className="status-spacer" />
+                {update && (
+                  <button className="status-link accent" onClick={() => setShowUpdate(true)}>
+                    <Download size={13} /> Update {update.version} available
+                  </button>
+                )}
+                <button
+                  className="status-version"
+                  title={`What's new in ${version}`}
+                  onClick={() => void backend?.openUrl(changelogUrl(version))}
+                >
+                  v{version}
+                </button>
+                {update && showUpdate && (
+                  <UpdateDialog update={update} current={version} onClose={() => setShowUpdate(false)} />
+                )}
+              </footer>
+            </main>
+          }
+        >
+          {backend && treeActions && prefsReady && (
             <ConnectionTree
               tree={tree}
               actions={treeActions}
@@ -284,10 +372,11 @@ export default function App() {
               onAckAll={() => backend.ackAll()}
               onRevert={(op) => backend.revert(op)}
               onMove={(id, parent, index) => backend.moveNode(id, parent, index)}
+              closedFolders={prefs.closedFolders}
+              onClosedFolders={(closedFolders) => prefsValue.update({ closedFolders })}
             />
           )}
-          <SidebarResizer width={sidebarWidth} onChange={setSidebarWidth} />
-        </aside>
+        </ConnectionPanel>
 
         {importing && <ImportDialog onClose={() => setImporting(false)} onImported={() => setView("connections")} />}
 
@@ -310,58 +399,6 @@ export default function App() {
             jumpHosts={sshConnections(tree)}
           />
         )}
-
-        <main className="main">
-          <header className="toolbar">
-            <form className={`quick-connect ${quickError ? "has-error" : ""}`} onSubmit={submitQuick}>
-              <input
-                value={quick}
-                onChange={(e) => {
-                  setQuick(e.target.value);
-                  setQuickError(false);
-                }}
-                placeholder="Quick connect: ssh admin@10.0.0.1, telnet cs1 2005, COM3 9600"
-                aria-label="Quick connect"
-                aria-invalid={quickError}
-              />
-            </form>
-            <WorkspaceMenu dock={dock} findConnection={(id) => findConnection(tree, id)} />
-            <LayoutPicker value={layout} onChange={changeLayout} />
-          </header>
-
-          <div className="content">
-            <div className="workspace-wrap" hidden={view !== "connections"}>
-              <Workspace
-                theme={theme}
-                onReady={(api) => {
-                  dock.current = api;
-                  const waiting = pendingLaunch.current;
-                  pendingLaunch.current = null;
-                  if (waiting) window.setTimeout(() => launch.current(waiting), 0);
-                }}
-              />
-            </div>
-            {view === "devices" && <DevicesPage devices={devices} syncOn={sync.state !== "off"} />}
-            {view === "settings" && <SettingsPage theme={pref} onTheme={setPref} />}
-          </div>
-
-          <footer className="statusbar">
-            <SyncStatus sync={sync} />
-            {mismatch && (
-              <button className="status-link warn" onClick={() => setView("devices")}>
-                Devices on different versions
-              </button>
-            )}
-            {notice && <span className="status-notice">{notice}</span>}
-            <span className="status-spacer" />
-            {update && (
-              <button className="status-link accent" onClick={() => update.installAndRestart()} title={update.notes}>
-                <Download size={13} /> Update {update.version} ready — restart to install
-              </button>
-            )}
-            <span className="status-version">v{version}</span>
-          </footer>
-        </main>
       </div>
     </PrefsContext.Provider>
   );
