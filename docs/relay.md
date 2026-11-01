@@ -32,6 +32,8 @@ Changes reach the other computers within about a second: each one keeps a reques
 | `LINECARD_RELAY_DB` | `/data/linecard-relay.db` (Docker) | SQLite database |
 | `LINECARD_RELAY_MAX_OPS` | `200000` | Batches kept per sync group |
 | `LINECARD_RELAY_OPEN` | `true` | `false` makes the relay private (accounts only) |
+| `LINECARD_RELAY_MAX_GROUP_BYTES` | `256MiB` | Storage per sync group (`1GiB`, `500MB`, `0` = no limit); writes beyond it fail with 507 |
+| `LINECARD_RELAY_IDLE_DAYS` | `0` (never) | Delete groups with no change and no computer reporting in for this many days |
 
 ## Private relays and accounts
 
@@ -43,6 +45,18 @@ docker exec linecard-relay linecard-relay account add alice --max-groups 3
 
 This prints an access key (`lcr_…`), shown only once. Alice enters it under **Settings → Sync → Access key** when she starts her sync group. Her other computers join with the 24-word phrase alone.
 
+## Storage limits and cleanup
+
+A relay left running for months stays bounded:
+
+- **Per-group quota.** A sync group may hold `LINECARD_RELAY_MAX_GROUP_BYTES` (256 MiB by default) and `LINECARD_RELAY_MAX_OPS` batches. Beyond either, writes fail with `507` and the app shows a sync error; nothing already stored is dropped, and reading keeps working.
+- **Stale computers.** A computer that hasn't reported in for 90 days drops off the group's device list.
+- **Idle groups.** With `LINECARD_RELAY_IDLE_DAYS` set (off by default), a group with no change and no computer reporting in for that long is deleted, with its data. The check runs when the relay starts and then daily, and logs each removal. Preview what it would remove with `linecard-relay group list --idle 90`.
+- **Disk space.** Deleting data frees space inside the database file; `linecard-relay vacuum` hands it back to the system (writes pause for a moment while it runs).
+- **Upgrades.** The database records its schema version and upgrades itself when a newer relay opens it. An older relay refuses a database from a newer one rather than damaging it.
+
+Compaction (shrinking a long history to a snapshot) needs a change to the sync protocol and isn't built yet.
+
 ## Admin commands
 
 Run them where the database lives (`docker exec linecard-relay …`):
@@ -51,7 +65,8 @@ Run them where the database lives (`docker exec linecard-relay …`):
 linecard-relay account add <name> [--max-groups N]   create an account, print its access key
 linecard-relay account list
 linecard-relay account remove <name> [--with-groups]
-linecard-relay group list                             id, owner, size, devices, last write
+linecard-relay group list [--idle [DAYS]]          id, owner, batches, size, devices, last write and last seen; --idle: only quiet groups
+linecard-relay vacuum                                 give deleted data's disk space back
 linecard-relay group remove <group-id>
 linecard-relay stats
 ```

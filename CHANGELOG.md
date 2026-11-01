@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Relay retention**: groups are capped by size as well as batch count (`LINECARD_RELAY_MAX_GROUP_BYTES`, 256 MiB by default); computers unseen for 90 days leave the device list; `LINECARD_RELAY_IDLE_DAYS` can delete abandoned groups; `linecard-relay vacuum` returns disk space; the database now carries a schema version and upgrades itself. `group list` shows sizes and last activity, and `group list --idle N` shows quiet groups.
+
 - **Relay deployment bundle** (`relay/deploy`): `docker compose up -d` runs the relay behind Caddy with automatic HTTPS, with notes for nginx, Traefik, Cloudflare Tunnel, plain Docker and systemd.
 
 - The relay image is now a small static build on a distroless base for amd64 and arm64, runs as a non-root user, reports its own health (`linecard-relay health`) and stops gracefully on `docker stop`. Image tags are now `:X.Y.Z`, `:X.Y` and `:latest` (no leading `v`).

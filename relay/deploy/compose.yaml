@@ -20,6 +20,8 @@ services:
     environment:
       LINECARD_RELAY_OPEN: ${LINECARD_RELAY_OPEN:-true}
       LINECARD_RELAY_MAX_OPS: ${LINECARD_RELAY_MAX_OPS:-200000}
+      LINECARD_RELAY_MAX_GROUP_BYTES: ${LINECARD_RELAY_MAX_GROUP_BYTES:-256MiB}
+      LINECARD_RELAY_IDLE_DAYS: ${LINECARD_RELAY_IDLE_DAYS:-0}
     volumes:
       - relay-data:/data
     # The image defines its own health check (linecard-relay health).

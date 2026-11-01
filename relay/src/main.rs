@@ -5,8 +5,9 @@
 //! linecard-relay account add <name> [--max-groups N]   prints the access key
 //! linecard-relay account list
 //! linecard-relay account remove <name> [--with-groups]
-//! linecard-relay group list
+//! linecard-relay group list [--idle [DAYS]]      sizes and last activity; --idle: only quiet groups
 //! linecard-relay group remove <group-id>
+//! linecard-relay vacuum                        give deleted data's disk space back (safe while serving; writes pause briefly)
 //! linecard-relay stats
 //! linecard-relay health                        exit 0 if the local server answers (for container health checks)
 //! ```
@@ -16,6 +17,8 @@
 //!   LINECARD_RELAY_DB        SQLite file (default ./linecard-relay.db)
 //!   LINECARD_RELAY_MAX_OPS   batches kept per sync group (default 200000)
 //!   LINECARD_RELAY_OPEN      "false" = only accounts may start sync groups
+//!   LINECARD_RELAY_MAX_GROUP_BYTES  storage per group, e.g. 256MiB (default; 0 = no limit)
+//!   LINECARD_RELAY_IDLE_DAYS delete groups with no write or heartbeat for this many days (default 0 = never)
 //!
 //! On SIGTERM or Ctrl+C the server stops accepting connections, gives requests
 //! in flight a few seconds (long-polls are released), and folds the SQLite
@@ -33,12 +36,38 @@ use std::sync::Arc;
 
 use linecard_relay::{router, Limits, Relay};
 
+/// "256MiB", "1GiB", "500000" or "0"/"off"/"unlimited" (= no limit) as bytes.
+fn parse_size(text: &str) -> Option<i64> {
+    let t = text.trim().to_ascii_lowercase();
+    if matches!(t.as_str(), "off" | "none" | "unlimited") {
+        return Some(0);
+    }
+    let digits = t.chars().take_while(char::is_ascii_digit).count();
+    let n: i64 = t[..digits].parse().ok()?;
+    let unit: i64 = match t[digits..].trim() {
+        "" | "b" => 1,
+        "k" | "kb" => 1000,
+        "kib" => 1 << 10,
+        "m" | "mb" => 1_000_000,
+        "mib" => 1 << 20,
+        "g" | "gb" => 1_000_000_000,
+        "gib" => 1 << 30,
+        _ => return None,
+    };
+    n.checked_mul(unit)
+}
+
 fn env_limits() -> Limits {
+    let default = Limits::default();
+    let number = |name: &str, fallback: i64| match std::env::var(name) {
+        Ok(v) => v.parse().unwrap_or_else(|_| {
+            eprintln!("{name}={v} is not a number; using {fallback}");
+            fallback
+        }),
+        Err(_) => fallback,
+    };
     Limits {
-        max_ops: std::env::var("LINECARD_RELAY_MAX_OPS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(200_000),
+        max_ops: number("LINECARD_RELAY_MAX_OPS", default.max_ops),
         open: !matches!(
             std::env::var("LINECARD_RELAY_OPEN")
                 .as_deref()
@@ -46,6 +75,14 @@ fn env_limits() -> Limits {
                 .as_deref(),
             Ok("false" | "0" | "no")
         ),
+        max_group_bytes: match std::env::var("LINECARD_RELAY_MAX_GROUP_BYTES") {
+            Ok(v) => parse_size(&v).unwrap_or_else(|| {
+                eprintln!("LINECARD_RELAY_MAX_GROUP_BYTES={v} is not a size (try 256MiB); using the default");
+                default.max_group_bytes
+            }),
+            Err(_) => default.max_group_bytes,
+        },
+        idle_days: number("LINECARD_RELAY_IDLE_DAYS", default.idle_days).max(0),
     }
 }
 
@@ -72,6 +109,15 @@ fn when(ms: Option<i64>) -> String {
                 s => format!("{}d ago", s / 86_400),
             }
         }
+    }
+}
+
+fn size(bytes: i64) -> String {
+    match bytes {
+        b if b < 10_000 => format!("{b} B"),
+        b if b < 10_000_000 => format!("{:.0} KB", b as f64 / 1e3),
+        b if b < 10_000_000_000 => format!("{:.1} MB", b as f64 / 1e6),
+        b => format!("{:.1} GB", b as f64 / 1e9),
     }
 }
 
@@ -118,21 +164,45 @@ fn admin(args: &[String]) -> Result<(), String> {
                 }
             );
         }
-        ["group", "list"] => {
-            let groups = relay.groups().map_err(err)?;
+        ["group", "list", rest @ ..] => {
+            // `--idle [DAYS]`: only groups with no write or heartbeat for that long
+            // (the daily cleanup's setting when no number is given).
+            let groups = match rest {
+                [] => relay.groups().map_err(err)?,
+                ["--idle", days @ ..] => {
+                    let days = match days {
+                        [d] => d
+                            .parse::<i64>()
+                            .map_err(|_| "--idle needs a number of days".to_string())?,
+                        [] if env_limits().idle_days > 0 => env_limits().idle_days,
+                        _ => return Err("give a number of days: group list --idle 30".into()),
+                    };
+                    relay.idle_groups(days).map_err(err)?
+                }
+                _ => return Err("usage: group list [--idle [DAYS]]".into()),
+            };
             if groups.is_empty() {
                 println!("No sync groups.");
             }
             for g in groups {
                 println!(
-                    "{}  {:<16} {:>7} batches  {} devices  last write {}",
+                    "{}  {:<16} {:>7} batches {:>9}  {} devices  last write {}, last seen {}",
                     g.id,
                     g.account.as_deref().unwrap_or("(open)"),
                     g.ops,
+                    size(g.bytes),
                     g.devices,
-                    when(g.last)
+                    when(g.last),
+                    when(Some(g.active))
                 );
             }
+        }
+        ["vacuum"] => {
+            let free = relay.vacuum().map_err(err)?;
+            println!(
+                "Rebuilt the database; about {} of free space went back to the system.",
+                size(free)
+            );
         }
         ["group", "remove", id] => {
             relay.remove_group(id).map_err(err)?;
@@ -141,11 +211,19 @@ fn admin(args: &[String]) -> Result<(), String> {
         ["stats"] => {
             let groups = relay.groups().map_err(err)?;
             let ops: i64 = groups.iter().map(|g| g.ops).sum();
+            let bytes: i64 = groups.iter().map(|g| g.bytes).sum();
             println!(
-                "{} accounts, {} sync groups, {ops} batches stored",
+                "{} accounts, {} sync groups, {ops} batches stored ({})",
                 relay.accounts().map_err(err)?.len(),
-                groups.len()
+                groups.len(),
+                size(bytes)
             );
+            if let Some(big) = groups.iter().max_by_key(|g| g.bytes) {
+                println!("largest group: {} ({})", big.id, size(big.bytes));
+            }
+            if let Some(old) = groups.iter().min_by_key(|g| g.active) {
+                println!("quietest group: {} (last seen {})", old.id, when(Some(old.active)));
+            }
         }
         _ => return Err("unknown command; see the top of src/main.rs or the README".into()),
     }
@@ -220,6 +298,41 @@ async fn shutdown_signal() {
     }
 }
 
+/// Background care of the database: fold the write-ahead log into the file
+/// every hour, and once a day delete idle groups and stale heartbeats.
+async fn upkeep(relay: Arc<Relay>) {
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+    let mut hours = 0u32;
+    loop {
+        tick.tick().await; // the first tick is immediate: run the daily round at start too
+        let relay = relay.clone();
+        let daily = hours.is_multiple_of(24);
+        hours = hours.wrapping_add(1);
+        let done = tokio::task::spawn_blocking(move || {
+            if daily {
+                match relay.maintain() {
+                    Ok(m) => {
+                        for g in &m.expired {
+                            println!("removed idle sync group {g}");
+                        }
+                        if m.devices_removed > 0 {
+                            println!("removed {} stale device records", m.devices_removed);
+                        }
+                    }
+                    Err(e) => eprintln!("maintenance failed: {e:?}"),
+                }
+            }
+            if let Err(e) = relay.checkpoint() {
+                eprintln!("checkpoint failed: {e}");
+            }
+        })
+        .await;
+        if done.is_err() {
+            eprintln!("maintenance task crashed");
+        }
+    }
+}
+
 /// How long requests in flight get after a stop signal. Docker kills at 10 s.
 const GRACE: std::time::Duration = std::time::Duration::from_secs(8);
 
@@ -267,7 +380,23 @@ async fn main() -> ExitCode {
             "private (accounts only)"
         }
     );
+    let limits = env_limits();
+    println!(
+        "limits: {} batches and {} per group; idle groups {}",
+        limits.max_ops,
+        if limits.max_group_bytes > 0 {
+            size(limits.max_group_bytes)
+        } else {
+            "no byte limit".into()
+        },
+        if limits.idle_days > 0 {
+            format!("deleted after {} days", limits.idle_days)
+        } else {
+            "kept".into()
+        }
+    );
     let relay = Arc::new(relay);
+    tokio::spawn(upkeep(relay.clone()));
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
     let server = axum::serve(listener, router(relay.clone())).with_graceful_shutdown(async {
         let _ = stop_rx.await;
@@ -298,6 +427,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sizes_take_units_and_zero_means_unlimited() {
+        assert_eq!(parse_size("256MiB"), Some(256 << 20));
+        assert_eq!(parse_size(" 1 GiB "), Some(1 << 30));
+        assert_eq!(parse_size("500KB"), Some(500_000));
+        assert_eq!(parse_size("1000000"), Some(1_000_000));
+        assert_eq!(parse_size("0"), Some(0));
+        assert_eq!(parse_size("unlimited"), Some(0));
+        assert_eq!(parse_size("lots"), None);
+        assert_eq!(parse_size("12 parsecs"), None);
+        assert_eq!(parse_size(""), None);
+    }
+
+    #[test]
     fn reads_the_status_line() {
         assert!(is_ok("HTTP/1.0 200 OK\r\n\r\nok"));
         assert!(is_ok("HTTP/1.1 200 OK\r\n"));
@@ -319,6 +461,7 @@ mod tests {
             Relay::in_memory(Limits {
                 max_ops: 10,
                 open: true,
+                ..Default::default()
             })
             .unwrap(),
         );
@@ -347,6 +490,7 @@ mod tests {
             Limits {
                 max_ops: 10,
                 open: true,
+                ..Default::default()
             },
         )
         .unwrap();

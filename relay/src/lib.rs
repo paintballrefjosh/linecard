@@ -104,13 +104,23 @@ pub struct Limits {
     pub max_ops: i64,
     /// Anyone may start a group (no account needed).
     pub open: bool,
+    /// Bytes of batches kept per group before writes are refused (0 = no limit).
+    pub max_group_bytes: i64,
+    /// Groups with no write or heartbeat for this many days are deleted by the
+    /// daily maintenance (0 = keep forever).
+    pub idle_days: i64,
 }
+
+/// A heartbeat older than this is a computer nobody uses any more.
+pub const DEVICE_STALE_DAYS: i64 = 90;
 
 impl Default for Limits {
     fn default() -> Self {
         Limits {
             max_ops: 200_000,
             open: true,
+            max_group_bytes: 256 << 20,
+            idle_days: 0,
         }
     }
 }
@@ -133,7 +143,20 @@ pub struct GroupInfo {
     pub devices: i64,
     /// Last write, Unix ms.
     pub last: Option<i64>,
+    /// Bytes of batches stored.
+    pub bytes: i64,
+    /// Last sign of life (a write, a heartbeat, or creation), Unix ms.
+    pub active: i64,
 }
+
+/// What one round of [`Relay::maintain`] removed.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Maintenance {
+    pub expired: Vec<String>,
+    pub devices_removed: usize,
+}
+
+const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
 pub struct Relay {
     db: Mutex<Connection>,
@@ -182,26 +205,11 @@ impl Relay {
 
     fn init(db: Connection, limits: Limits) -> rusqlite::Result<Self> {
         db.pragma_update(None, "journal_mode", "WAL")?;
-        db.execute_batch(
-            "CREATE TABLE IF NOT EXISTS groups (
-                id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, created INTEGER NOT NULL);
-             CREATE TABLE IF NOT EXISTS ops (
-                group_id TEXT NOT NULL, seq INTEGER NOT NULL, device TEXT NOT NULL,
-                blob TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (group_id, seq)) WITHOUT ROWID;
-             CREATE TABLE IF NOT EXISTS devices (
-                group_id TEXT NOT NULL, device TEXT NOT NULL, blob TEXT NOT NULL,
-                at INTEGER NOT NULL, PRIMARY KEY (group_id, device)) WITHOUT ROWID;
-             CREATE TABLE IF NOT EXISTS accounts (
-                name TEXT PRIMARY KEY, key_hash TEXT NOT NULL UNIQUE, created INTEGER NOT NULL,
-                max_groups INTEGER);",
-        )?;
-        // Relays from before accounts: groups gain an owner column.
-        let has_account: bool = db
-            .prepare("SELECT 1 FROM pragma_table_info('groups') WHERE name = 'account'")?
-            .exists([])?;
-        if !has_account {
-            db.execute_batch("ALTER TABLE groups ADD COLUMN account TEXT")?;
-        }
+        // WAL with NORMAL syncing can lose the last few commits on power loss
+        // (never corrupts); those are sync batches a device pushes again.
+        db.pragma_update(None, "synchronous", "NORMAL")?;
+        db.busy_timeout(Duration::from_secs(5))?;
+        migrate(&db)?;
         Ok(Relay {
             db: Mutex::new(db),
             limits,
@@ -292,10 +300,18 @@ impl Relay {
             if count >= self.limits.max_ops {
                 return Err(RelayError::Full);
             }
+            let bytes: i64 = tx.query_row("SELECT bytes FROM groups WHERE id = ?1", [group], |r| r.get(0))?;
+            if self.limits.max_group_bytes > 0 && bytes + blob.len() as i64 > self.limits.max_group_bytes {
+                return Err(RelayError::Full);
+            }
             let seq = last.unwrap_or(0) + 1;
             tx.execute(
                 "INSERT INTO ops (group_id, seq, device, blob, at) VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![group, seq, device, blob, now_ms()],
+            )?;
+            tx.execute(
+                "UPDATE groups SET bytes = bytes + ?2, updated = ?3 WHERE id = ?1",
+                params![group, blob.len() as i64, now_ms()],
             )?;
             tx.commit()?;
             seq
@@ -453,7 +469,8 @@ impl Relay {
             "SELECT g.id, g.account, g.created,
                     (SELECT COUNT(*) FROM ops o WHERE o.group_id = g.id),
                     (SELECT COUNT(*) FROM devices d WHERE d.group_id = g.id),
-                    (SELECT MAX(at) FROM ops o WHERE o.group_id = g.id)
+                    NULLIF(g.updated, 0), g.bytes,
+                    MAX(g.created, g.updated, COALESCE((SELECT MAX(at) FROM devices d WHERE d.group_id = g.id), 0))
              FROM groups g ORDER BY g.created",
         )?;
         let rows = stmt
@@ -465,10 +482,54 @@ impl Relay {
                     ops: r.get(3)?,
                     devices: r.get(4)?,
                     last: r.get(5)?,
+                    bytes: r.get(6)?,
+                    active: r.get(7)?,
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
         Ok(rows)
+    }
+
+    /// Groups with no write or heartbeat for `days` days, oldest first.
+    pub fn idle_groups(&self, days: i64) -> Result<Vec<GroupInfo>> {
+        let cutoff = now_ms() - days.max(0) * DAY_MS;
+        let mut idle: Vec<GroupInfo> = self.groups()?.into_iter().filter(|g| g.active < cutoff).collect();
+        idle.sort_by_key(|g| g.active);
+        Ok(idle)
+    }
+
+    /// The routine cleanup (run once a day): delete groups idle past
+    /// `limits.idle_days` (when set) and heartbeats from computers unseen for
+    /// [`DEVICE_STALE_DAYS`].
+    pub fn maintain(&self) -> Result<Maintenance> {
+        let mut expired = Vec::new();
+        if self.limits.idle_days > 0 {
+            for g in self.idle_groups(self.limits.idle_days)? {
+                self.remove_group(&g.id)?;
+                expired.push(g.id);
+            }
+        }
+        let devices_removed = self.db()?.execute(
+            "DELETE FROM devices WHERE at < ?1",
+            [now_ms() - DEVICE_STALE_DAYS * DAY_MS],
+        )?;
+        Ok(Maintenance {
+            expired,
+            devices_removed,
+        })
+    }
+
+    /// Rebuild the database file to give deleted data's space back to the
+    /// system. Returns the bytes that were free inside the file.
+    pub fn vacuum(&self) -> Result<i64> {
+        let db = self.db()?;
+        let free: i64 = db.query_row(
+            "SELECT freelist_count * page_size FROM pragma_freelist_count, pragma_page_size",
+            [],
+            |r| r.get(0),
+        )?;
+        db.execute_batch("VACUUM")?;
+        Ok(free)
     }
 
     pub fn remove_group(&self, id: &str) -> Result<()> {
@@ -478,11 +539,88 @@ impl Relay {
         tx.execute("DELETE FROM ops WHERE group_id = ?1", [id])?;
         tx.execute("DELETE FROM devices WHERE group_id = ?1", [id])?;
         tx.commit()?;
+        drop(db);
+        self.waiters.lock().unwrap_or_else(|p| p.into_inner()).remove(id);
         if n == 0 {
             return Err(RelayError::BadRequest("no such group"));
         }
         Ok(())
     }
+}
+
+// ---- schema versions ---------------------------------------------------------
+
+fn has_column(db: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
+    db.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?
+        .exists([table, column])
+}
+
+/// Ordered schema changes. Each runs once, in a transaction, and is written to
+/// be harmless on a database that already has its result (relays from before
+/// versions were recorded start at the first). Add new ones at the end; never
+/// edit or reorder an existing one.
+const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
+    // 1: the original tables.
+    |db| {
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS groups (
+                id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, created INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS ops (
+                group_id TEXT NOT NULL, seq INTEGER NOT NULL, device TEXT NOT NULL,
+                blob TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (group_id, seq)) WITHOUT ROWID;
+             CREATE TABLE IF NOT EXISTS devices (
+                group_id TEXT NOT NULL, device TEXT NOT NULL, blob TEXT NOT NULL,
+                at INTEGER NOT NULL, PRIMARY KEY (group_id, device)) WITHOUT ROWID;
+             CREATE TABLE IF NOT EXISTS accounts (
+                name TEXT PRIMARY KEY, key_hash TEXT NOT NULL UNIQUE, created INTEGER NOT NULL,
+                max_groups INTEGER);",
+        )
+    },
+    // 2: groups belong to an account.
+    |db| {
+        if !has_column(db, "groups", "account")? {
+            db.execute_batch("ALTER TABLE groups ADD COLUMN account TEXT")?;
+        }
+        Ok(())
+    },
+    // 3: per-group byte count and last write, kept up to date by every push
+    // (counting them on demand would scan a whole group's batches).
+    |db| {
+        if !has_column(db, "groups", "bytes")? {
+            db.execute_batch(
+                "ALTER TABLE groups ADD COLUMN bytes INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE groups ADD COLUMN updated INTEGER NOT NULL DEFAULT 0;
+                 UPDATE groups SET
+                    bytes = COALESCE((SELECT SUM(LENGTH(CAST(blob AS BLOB))) FROM ops WHERE group_id = groups.id), 0),
+                    updated = COALESCE((SELECT MAX(at) FROM ops WHERE group_id = groups.id), created);",
+            )?;
+        }
+        Ok(())
+    },
+];
+
+/// The schema version a database written by this relay has.
+pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
+
+fn migrate(db: &Connection) -> rusqlite::Result<()> {
+    db.execute_batch("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")?;
+    let current: i64 = db.query_row("SELECT COALESCE(MAX(version), 0) FROM schema_version", [], |r| r.get(0))?;
+    if current > SCHEMA_VERSION {
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_SCHEMA),
+            Some(format!(
+                "this database is from a newer relay (schema {current}; this one knows {SCHEMA_VERSION}): upgrade the relay"
+            )),
+        ));
+    }
+    for (i, step) in MIGRATIONS.iter().enumerate().skip(current as usize) {
+        let tx = db.unchecked_transaction()?;
+        step(&tx)?;
+        tx.execute("DELETE FROM schema_version", [])?;
+        tx.execute("INSERT INTO schema_version (version) VALUES (?1)", [i as i64 + 1])?;
+        tx.commit()?;
+    }
+    Ok(())
 }
 
 // ---- HTTP --------------------------------------------------------------------
@@ -611,7 +749,11 @@ mod tests {
     const T: &str = "token-for-the-group-xyz";
 
     fn open_relay(max_ops: i64) -> Relay {
-        Relay::in_memory(Limits { max_ops, open: true }).unwrap()
+        Relay::in_memory(Limits {
+            max_ops,
+            ..Default::default()
+        })
+        .unwrap()
     }
 
     #[test]
@@ -692,11 +834,183 @@ mod tests {
         );
     }
 
+    fn temp_db(label: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("linecard-relay-{label}-{}.db", std::process::id()));
+        for ext in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{ext}", p.display()));
+        }
+        p
+    }
+
+    fn remove_db(p: &std::path::Path) {
+        for ext in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{ext}", p.display()));
+        }
+    }
+
+    #[test]
+    fn a_relay_from_before_versions_is_upgraded_in_place() {
+        // The schema and data an old relay left behind: no owner column, no byte counts.
+        let path = temp_db("legacy");
+        {
+            let db = Connection::open(&path).unwrap();
+            db.execute_batch(
+                "CREATE TABLE groups (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, created INTEGER NOT NULL);
+                 CREATE TABLE ops (group_id TEXT NOT NULL, seq INTEGER NOT NULL, device TEXT NOT NULL,
+                    blob TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (group_id, seq)) WITHOUT ROWID;
+                 CREATE TABLE devices (group_id TEXT NOT NULL, device TEXT NOT NULL, blob TEXT NOT NULL,
+                    at INTEGER NOT NULL, PRIMARY KEY (group_id, device)) WITHOUT ROWID;
+                 CREATE TABLE accounts (name TEXT PRIMARY KEY, key_hash TEXT NOT NULL UNIQUE,
+                    created INTEGER NOT NULL, max_groups INTEGER);",
+            )
+            .unwrap();
+            db.execute("INSERT INTO groups VALUES (?1, 'h', 1000)", [G]).unwrap();
+            db.execute("INSERT INTO ops VALUES (?1, 1, 'd', 'aaaa', 5000)", [G])
+                .unwrap();
+            db.execute("INSERT INTO ops VALUES (?1, 2, 'd', 'bbbbbb', 7000)", [G])
+                .unwrap();
+        }
+        let r = Relay::open(&path, Limits::default()).unwrap();
+        let g = &r.groups().unwrap()[0];
+        assert_eq!((g.bytes, g.last, g.ops), (10, Some(7000), 2));
+        let version: i64 = r
+            .db()
+            .unwrap()
+            .query_row("SELECT version FROM schema_version", [], |x| x.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        drop(r);
+        // Opening again changes nothing.
+        let r = Relay::open(&path, Limits::default()).unwrap();
+        assert_eq!(r.groups().unwrap()[0].bytes, 10);
+        drop(r);
+
+        // A database from a newer relay is refused rather than damaged.
+        {
+            let db = Connection::open(&path).unwrap();
+            db.execute("UPDATE schema_version SET version = ?1", [SCHEMA_VERSION + 1])
+                .unwrap();
+        }
+        let err = Relay::open(&path, Limits::default())
+            .err()
+            .expect("a newer schema must be refused");
+        assert!(err.to_string().contains("newer relay"), "{err}");
+        remove_db(&path);
+    }
+
+    #[test]
+    fn groups_stop_at_their_byte_quota() {
+        let r = Relay::in_memory(Limits {
+            max_group_bytes: 100,
+            ..Default::default()
+        })
+        .unwrap();
+        let blob = |n: usize| "x".repeat(n);
+        r.push(G, T, None, "d", &blob(60)).unwrap();
+        assert_eq!(
+            r.push(G, T, None, "d", &blob(41)),
+            Err(RelayError::Full),
+            "60 + 41 > 100"
+        );
+        r.push(G, T, None, "d", &blob(40)).unwrap(); // exactly full is allowed
+        assert_eq!(r.push(G, T, None, "d", &blob(1)), Err(RelayError::Full));
+        assert_eq!(r.groups().unwrap()[0].bytes, 100);
+        // Another group has its own allowance, and reading is never blocked.
+        r.push("fedcba9876543210fedcba9876543210", T, None, "d", &blob(100))
+            .unwrap();
+        assert_eq!(r.pull(G, T, 0).unwrap().0.len(), 2);
+
+        // 0 = no limit.
+        let open = Relay::in_memory(Limits {
+            max_group_bytes: 0,
+            ..Default::default()
+        })
+        .unwrap();
+        open.push(G, T, None, "d", &blob(MAX_BLOB)).unwrap();
+        open.push(G, T, None, "d", &blob(MAX_BLOB)).unwrap();
+    }
+
+    #[test]
+    fn maintenance_removes_idle_groups_and_stale_devices_only() {
+        let r = Relay::in_memory(Limits {
+            idle_days: 30,
+            ..Default::default()
+        })
+        .unwrap();
+        let (quiet, busy, heartbeat_only) = (
+            "00000000000000000000000000000001",
+            "00000000000000000000000000000002",
+            "00000000000000000000000000000003",
+        );
+        for g in [quiet, busy, heartbeat_only] {
+            r.push(g, T, None, "d", "blob").unwrap();
+        }
+        r.put_device(heartbeat_only, T, None, "laptop", "hb").unwrap();
+        r.put_device(busy, T, None, "old-pc", "hb").unwrap();
+        let ago = |days: i64| now_ms() - days * DAY_MS;
+        {
+            // `quiet`: nothing for 40 days. `heartbeat_only`: last write 40 days
+            // ago, but a computer still reports in. `busy`: written today, with
+            // one computer unseen for 100 days.
+            let db = r.db().unwrap();
+            for g in [quiet, heartbeat_only] {
+                db.execute(
+                    "UPDATE groups SET updated = ?2, created = ?2 WHERE id = ?1",
+                    params![g, ago(40)],
+                )
+                .unwrap();
+            }
+            db.execute("UPDATE devices SET at = ?1 WHERE device = 'old-pc'", [ago(100)])
+                .unwrap();
+        }
+        let idle: Vec<String> = r.idle_groups(30).unwrap().into_iter().map(|g| g.id).collect();
+        assert_eq!(idle, [quiet]);
+
+        let m = r.maintain().unwrap();
+        assert_eq!(
+            m,
+            Maintenance {
+                expired: vec![quiet.to_string()],
+                devices_removed: 1
+            }
+        );
+        let mut left: Vec<String> = r.groups().unwrap().into_iter().map(|g| g.id).collect();
+        left.sort();
+        assert_eq!(left, [busy, heartbeat_only]);
+        assert!(r.devices(busy, T).unwrap().is_empty(), "the stale heartbeat is gone");
+        assert_eq!(r.devices(heartbeat_only, T).unwrap().len(), 1);
+        assert!(r.pull(quiet, T, 0).unwrap().0.is_empty(), "its batches went with it");
+    }
+
+    #[test]
+    fn nothing_expires_unless_asked_to() {
+        let r = open_relay(100); // idle_days = 0
+        r.push(G, T, None, "d", "blob").unwrap();
+        r.db()
+            .unwrap()
+            .execute("UPDATE groups SET updated = 1, created = 1", [])
+            .unwrap();
+        assert_eq!(r.maintain().unwrap(), Maintenance::default());
+        assert_eq!(r.groups().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn vacuum_runs_on_a_file_database() {
+        let path = temp_db("vacuum");
+        let r = Relay::open(&path, Limits::default()).unwrap();
+        r.push(G, T, None, "d", &"x".repeat(200_000)).unwrap();
+        r.remove_group(G).unwrap();
+        assert!(r.vacuum().unwrap() > 0, "deleted data leaves free pages");
+        drop(r);
+        remove_db(&path);
+    }
+
     #[test]
     fn private_relays_need_an_account_to_start_groups() {
         let r = Relay::in_memory(Limits {
             max_ops: 100,
             open: false,
+            ..Default::default()
         })
         .unwrap();
         assert_eq!(r.push(G, T, None, "d", "x"), Err(RelayError::NeedsAccount));
