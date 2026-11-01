@@ -20,6 +20,7 @@ import { FolderSettingsDialog } from "./components/FolderSettings";
 import { UpdateDialog } from "./components/UpdateDialog";
 import { highlightStore } from "./highlight";
 import { ImportDialog } from "./components/ImportDialog";
+import { PasswordDialog } from "./components/PasswordDialog";
 import { ConnectionTree, relativeTime, type TreeActions } from "./components/ConnectionTree";
 import { DevicesPage, versionMismatch } from "./components/DevicesPage";
 import { LayoutPicker, layoutShortcut } from "./components/LayoutPicker";
@@ -106,6 +107,7 @@ export default function App() {
   /** Auto-hidden connections pane: showing right now. */
   const [peek, setPeek] = useState(false);
   const [editing, setEditing] = useState<ConnectionDraft | null>(null);
+  const [passwordFor, setPasswordFor] = useState<{ id: string; name: string } | null>(null);
   const [prefs, setPrefs] = useState<Preferences>(defaultPrefs);
   const [importing, setImporting] = useState(false);
   const [showUpdate, setShowUpdate] = useState(false);
@@ -162,6 +164,7 @@ export default function App() {
       backend && {
         newConnection: (folderId) => setEditing(blankDraft(folderId)),
         editConnection: (id) => void backend.getConnection(id).then(setEditing),
+        setPassword: (id, name) => setPasswordFor({ id, name }),
         folderSettings: (id, parentId) => setFolderSettings({ id, parentId }),
         createFolder: (parentId, name) => backend.createFolder(parentId, name),
         rename: (id, name) => backend.renameNode(id, name),
@@ -418,6 +421,9 @@ export default function App() {
           )}
         </ConnectionPanel>
 
+        {passwordFor && (
+          <PasswordDialog connectionId={passwordFor.id} name={passwordFor.name} onClose={() => setPasswordFor(null)} />
+        )}
         {importing && <ImportDialog onClose={() => setImporting(false)} onImported={() => setView("connections")} />}
 
         {folderSettings && (

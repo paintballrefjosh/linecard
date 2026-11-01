@@ -461,6 +461,13 @@ export function mockBackend(): Backend {
     async listSavedPasswords() {
       return [...savedPasswords].map(([label, savedAt]) => ({ key: `ssh:${label}`, label, savedAt }));
     },
+    async passwordTarget() {
+      return { user: "admin", needsUser: true, saved: false };
+    },
+    async setConnectionPassword(_id, user, password) {
+      if (!password) throw new Error("enter a password");
+      savedPasswords.set(`${user || "admin"}@lab`, Date.now());
+    },
     async forgetSavedPassword(key) {
       savedPasswords.delete(key.replace(/^ssh:/, ""));
     },

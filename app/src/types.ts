@@ -275,3 +275,13 @@ export interface FolderSettings {
   log: boolean | null;
   highlight: string | null;
 }
+
+/** What a saved password for a connection is keyed by. */
+export interface PasswordTarget {
+  /** The user name the connection logs in as, if it has one. */
+  user: string | null;
+  /** SSH and RDP passwords are saved per user name; VNC's has none. */
+  needsUser: boolean;
+  /** A password is already saved. */
+  saved: boolean;
+}

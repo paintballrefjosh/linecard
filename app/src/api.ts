@@ -11,6 +11,7 @@ import type {
   Inherited,
   LoggingSettings,
   PromptReply,
+  PasswordTarget,
   SavedPassword,
   SessionEvent,
   GfxEvent,
@@ -121,6 +122,10 @@ export interface Backend {
   setPreferences(p: Preferences): Promise<void>;
   listSavedPasswords(): Promise<SavedPassword[]>;
   forgetSavedPassword(key: string): Promise<void>;
+  /** Which user name (if any) a connection's saved password is keyed by. */
+  passwordTarget(connectionId: string): Promise<PasswordTarget>;
+  /** Save a password for a connection without logging in first. */
+  setConnectionPassword(connectionId: string, user: string | null, password: string): Promise<void>;
   getPasswordSync(): Promise<PasswordSync>;
   /** Set (first computer) or enter (the others) the vault passphrase. */
   enablePasswordSync(passphrase: string): Promise<void>;
@@ -220,6 +225,9 @@ async function tauriBackend(): Promise<Backend> {
     setPreferences: (preferences) => invoke("set_preferences", { preferences }),
     listSavedPasswords: () => invoke<SavedPassword[]>("list_saved_passwords"),
     forgetSavedPassword: (key) => invoke("forget_saved_password", { key }),
+    passwordTarget: (connectionId) => invoke<PasswordTarget>("password_target", { connectionId }),
+    setConnectionPassword: (connectionId, user, password) =>
+      invoke("set_connection_password", { connectionId, user, password }),
     getPasswordSync: () => invoke<PasswordSync>("get_password_sync"),
     enablePasswordSync: (passphrase) => invoke("enable_password_sync", { passphrase }),
     disablePasswordSync: () => invoke("disable_password_sync"),

@@ -21,6 +21,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  KeyRound,
   Pencil,
   Play,
   Plus,
@@ -38,6 +39,8 @@ import { ChangeGlyph, KindIcon, Undo2, changeLabel } from "./icons";
 export interface TreeActions {
   newConnection(folderId: string | null): void;
   editConnection(id: string): void;
+  /** Save a password for a connection without logging in first. */
+  setPassword(id: string, name: string): void;
   folderSettings(id: string, parentId: string | null): void;
   createFolder(parentId: string | null, name: string): Promise<string>;
   rename(id: string, name: string): Promise<void>;
@@ -355,6 +358,9 @@ export function ConnectionTree({
     return [
       { label: "Connect", icon: <Play size={15} />, shortcut: "Enter", onSelect: () => onOpen(d) },
       { label: "Edit…", icon: <Pencil size={15} />, onSelect: () => actions.editConnection(d.id) },
+      ...(["ssh", "rdp", "vnc"].includes(d.kind)
+        ? [{ label: "Saved password…", icon: <KeyRound size={15} />, onSelect: () => actions.setPassword(d.id, d.name) }]
+        : []),
       rename,
       { label: "Duplicate", icon: <Copy size={15} />, onSelect: () => report(actions.duplicate(d.id)) },
       "separator",

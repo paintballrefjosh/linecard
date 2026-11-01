@@ -479,6 +479,82 @@ fn forget_saved_password(app: AppHandle, state: State<AppState>, key: String) ->
     Ok(())
 }
 
+/// Where a connection's saved password lives: the keychain slot and the
+/// label Settings shows. SSH and RDP slots include the user name; VNC has none.
+fn password_slot(tree: &Tree, id: &str, user: Option<&str>) -> CmdResult<(String, String)> {
+    let c = tree.connection(id).map_err(err)?;
+    let t = network_target(tree, id, 0)?;
+    let user = user
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .map(String::from)
+        .or(t.username.clone());
+    let need_user = || user.clone().ok_or_else(|| "enter a user name".to_string());
+    let (slot, label) = match c.kind {
+        ConnectionKind::Ssh => (
+            format!("ssh:{}@{}:{}", need_user()?, t.host, t.port),
+            format!("{}@{}", need_user()?, t.host),
+        ),
+        ConnectionKind::Rdp => (
+            format!("rdp:{}@{}:{}", need_user()?, t.host, t.port),
+            format!("{}@{} (RDP)", need_user()?, t.host),
+        ),
+        ConnectionKind::Vnc => (format!("vnc:{}:{}", t.host, t.port), format!("VNC {}", t.host)),
+        other => return Err(format!("{other:?} connections don't use saved passwords")),
+    };
+    // A shared credential (set on a folder) pools the password.
+    Ok((t.credential_key.unwrap_or(slot), label))
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PasswordTargetDto {
+    /// The user name the connection logs in as, if it has one.
+    user: Option<String>,
+    /// Whether a user name is part of the saved password's identity.
+    needs_user: bool,
+    /// A password is already saved for it.
+    saved: bool,
+}
+
+#[tauri::command]
+fn password_target(state: State<AppState>, connection_id: String) -> CmdResult<PasswordTargetDto> {
+    let lib = state.lib.lock().map_err(err)?;
+    let tree = lib.tree();
+    let kind = tree.connection(&connection_id).map_err(err)?.kind;
+    let user = network_target(tree, &connection_id, 0)?.username;
+    let needs_user = matches!(kind, ConnectionKind::Ssh | ConnectionKind::Rdp);
+    let saved = password_slot(tree, &connection_id, None)
+        .ok()
+        .and_then(|(slot, _)| state.vault.get(&slot))
+        .is_some();
+    Ok(PasswordTargetDto {
+        user,
+        needs_user,
+        saved,
+    })
+}
+
+/// Save a password for a connection without logging in first.
+#[tauri::command]
+fn set_connection_password(
+    state: State<AppState>,
+    connection_id: String,
+    user: Option<String>,
+    password: String,
+) -> CmdResult<()> {
+    if password.is_empty() {
+        return Err("enter a password".into());
+    }
+    let (slot, label) = {
+        let lib = state.lib.lock().map_err(err)?;
+        password_slot(lib.tree(), &connection_id, user.as_deref())?
+    };
+    let creds = state.ssh.credentials.as_ref().ok_or("passwords can't be saved here")?;
+    creds.save_password(&slot, &label, &password);
+    Ok(())
+}
+
 // ---- devices & sync ----------------------------------------------------------
 
 #[tauri::command]
@@ -927,6 +1003,8 @@ pub fn run() {
             import_apply,
             set_logging,
             forget_saved_password,
+            password_target,
+            set_connection_password,
             get_devices,
             get_sync_state,
             get_folder_settings,
@@ -1102,6 +1180,52 @@ mod tests {
         tree.add_connection(ssh("a", None, Some("b"))).unwrap();
         tree.add_connection(ssh("b", None, Some("a"))).unwrap();
         assert_eq!(network_target(&tree, "a", 0).unwrap_err(), "jump hosts form a loop");
+    }
+
+    #[test]
+    fn password_slots_match_the_ones_logins_use() {
+        let conn = |id: &str, kind: ConnectionKind, user: Option<&str>, cred: Option<&str>| Connection {
+            id: id.into(),
+            name: id.into(),
+            folder: None,
+            order: 0.0,
+            kind,
+            endpoint: Endpoint::network(kind, format!("{id}.lab")),
+            overrides: Settings {
+                username: user.map(Into::into),
+                credential_id: cred.map(Into::into),
+                ..Default::default()
+            },
+            notes: String::new(),
+            tags: vec![],
+            forwards: vec![],
+        };
+        let mut tree = Tree::default();
+        tree.add_connection(conn("sw", ConnectionKind::Ssh, Some("admin"), None))
+            .unwrap();
+        tree.add_connection(conn("bare", ConnectionKind::Ssh, None, None))
+            .unwrap();
+        tree.add_connection(conn("pc", ConnectionKind::Rdp, None, None))
+            .unwrap();
+        tree.add_connection(conn("screen", ConnectionKind::Vnc, None, None))
+            .unwrap();
+        tree.add_connection(conn("shared", ConnectionKind::Ssh, Some("admin"), Some("c1")))
+            .unwrap();
+
+        let slot = |id: &str, user: Option<&str>| password_slot(&tree, id, user);
+        assert_eq!(
+            slot("sw", None).unwrap(),
+            ("ssh:admin@sw.lab:22".into(), "admin@sw.lab".into())
+        );
+        // A typed name wins over the connection's own.
+        assert_eq!(slot("sw", Some(" root ")).unwrap().0, "ssh:root@sw.lab:22");
+        assert!(slot("bare", None).is_err(), "no user name to key the password by");
+        assert_eq!(slot("pc", Some("DOM\\bob")).unwrap().0, "rdp:DOM\\bob@pc.lab:3389");
+        assert_eq!(
+            slot("screen", None).unwrap(),
+            ("vnc:screen.lab:5900".into(), "VNC screen.lab".into())
+        );
+        assert_eq!(slot("shared", None).unwrap().0, "cred:c1");
     }
 
     #[test]
