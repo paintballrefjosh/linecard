@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The relay image is now a small static build on a distroless base for amd64 and arm64, runs as a non-root user, reports its own health (`linecard-relay health`) and stops gracefully on `docker stop`. Image tags are now `:X.Y.Z`, `:X.Y` and `:latest` (no leading `v`).
+
 - **SFTP file browser**: right-click an SSH connection → **Open file browser (SFTP)**. A tab lists the server's folders; double-click to go in, then upload files or whole folders, download selections to a folder, make folders, rename and delete. It logs in on its own (jump hosts, host-key and password prompts work as in a terminal).
 
 - **Button bar**: save commands you type often and send each with one click. Turn the bar on with the terminal button in the toolbar, then use the pencil to add, reorder or remove buttons. A button can show for every connection or only for one folder (and what is inside it). Buttons sync to your other computers, and while broadcasting they go to every session in the group.

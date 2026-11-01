@@ -169,6 +169,13 @@ impl Relay {
         Self::init(Connection::open(path)?, limits)
     }
 
+    /// Fold the write-ahead log into the database file (done on shutdown, so
+    /// a copied or backed-up file is complete).
+    pub fn checkpoint(&self) -> rusqlite::Result<()> {
+        let db = self.db.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+    }
+
     pub fn in_memory(limits: Limits) -> rusqlite::Result<Self> {
         Self::init(Connection::open_in_memory()?, limits)
     }

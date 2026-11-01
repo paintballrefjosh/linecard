@@ -1,0 +1,20 @@
+# The relay image builds only the Rust workspace. The app's manifest and
+# sources stay (Cargo reads every workspace member); its frontend, icons and
+# generated files go.
+.git
+.github
+.claude
+**/target
+**/node_modules
+docs
+*.md
+app/src
+app/dist
+app/public
+app/*.html
+app/*.json
+app/*.ts
+app/src-tauri/icons
+app/src-tauri/gen
+app/src-tauri/capabilities
+relay/deploy

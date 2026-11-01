@@ -10,6 +10,8 @@ docker run -d --name linecard-relay -p 8443:8443 -v linecard-relay:/data ghcr.io
 
 Put it behind HTTPS (Caddy, Traefik, nginx), then in Linecard choose **Settings → Sync → Relay** and enter its address, e.g. `https://relay.example.com`.
 
+The image is small (a static binary on a distroless base): it has no shell, runs as a non-root user (65532), is built for `linux/amd64` and `linux/arm64`, and carries a built-in health check (`linecard-relay health`). Tags are `:X.Y.Z`, `:X.Y` and `:latest`; a published version is never re-tagged. `docker stop` ends it cleanly within a few seconds. It also runs with `--read-only --cap-drop ALL --security-opt no-new-privileges:true`; mount the `/data` volume (a bind mount must be owned by uid 65532). Admin commands work as before: `docker exec linecard-relay linecard-relay stats`.
+
 Changes reach the other computers within about a second: each one keeps a request open on the relay, which answers as soon as something new arrives.
 
 ## Settings
