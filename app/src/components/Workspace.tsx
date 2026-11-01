@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type CSSProperties } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   DockviewReact,
   type DockviewApi,
@@ -15,6 +15,8 @@ import type { Theme } from "../theme";
 import { KindIcon } from "./icons";
 import { TerminalView, type SessionStatus } from "./TerminalView";
 import { RemoteView } from "./RemoteView";
+import { Modal } from "./Dialog";
+import { usePrefs } from "../prefs";
 
 interface PanelParams {
   conn: ConnectionNode;
@@ -28,6 +30,8 @@ interface Shared {
   setStatus(panelId: string, s: SessionStatus): void;
   /** Panels that received output while hidden behind another tab. */
   activity: Record<string, boolean>;
+  /** Close a tab, asking first if its session is open. */
+  askClose(panelId: string): void;
   setActivity(panelId: string, on: boolean): void;
 }
 
@@ -37,6 +41,7 @@ const SharedCtx = createContext<Shared>({
   setStatus: () => {},
   activity: {},
   setActivity: () => {},
+  askClose: () => {},
 });
 
 function SessionPanel({ api, params }: IDockviewPanelProps<PanelParams>) {
@@ -59,7 +64,7 @@ function SessionPanel({ api, params }: IDockviewPanelProps<PanelParams>) {
 }
 
 function SessionTab({ api, params }: IDockviewPanelHeaderProps<PanelParams>) {
-  const { status, activity } = useContext(SharedCtx);
+  const { status, activity, askClose } = useContext(SharedCtx);
   const conn = params.conn;
   const s = status[api.id] ?? "connecting";
   const active = activity[api.id];
@@ -68,6 +73,14 @@ function SessionTab({ api, params }: IDockviewPanelHeaderProps<PanelParams>) {
       className={`session-tab ${active ? "has-activity" : ""}`}
       style={conn.tabColor ? ({ "--tab-color": conn.tabColor } as CSSProperties) : undefined}
       title={`${api.title} · ${conn.endpoint}${active ? " · new output" : ""}`}
+      // Middle-click closes, as in browsers (mousedown would start autoscroll).
+      onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+      onAuxClick={(e) => {
+        if (e.button !== 1) return;
+        e.preventDefault();
+        e.stopPropagation();
+        askClose(api.id);
+      }}
     >
       <span className={`led led-${s}`} aria-label={s} />
       <KindIcon kind={conn.kind} size={14} />
@@ -78,7 +91,7 @@ function SessionTab({ api, params }: IDockviewPanelHeaderProps<PanelParams>) {
         aria-label={`Close ${api.title}`}
         onClick={(e) => {
           e.stopPropagation();
-          api.close();
+          askClose(api.id);
         }}
       >
         <X size={13} />
@@ -198,7 +211,29 @@ export function applyLayout(api: DockviewApi, layout: LayoutId) {
   });
 }
 
-export function Workspace({ theme, onReady }: { theme: Theme; onReady(api: DockviewApi): void }) {
+/** Tabs in screen order: pane by pane, then left to right. */
+function tabOrder(api: DockviewApi) {
+  return api.groups.flatMap((g) => g.panels);
+}
+
+/** Open sessions: tabs whose session isn't disconnected. */
+export function openSessionCount(api: DockviewApi, status: Record<string, SessionStatus>): number {
+  return api.panels.filter((p) => (status[p.id] ?? "connecting") !== "disconnected").length;
+}
+
+export function Workspace({
+  theme,
+  onReady,
+  onOpenCount,
+}: {
+  theme: Theme;
+  onReady(api: DockviewApi): void;
+  /** Sessions still open (for the prompt when quitting). */
+  onOpenCount?(n: number): void;
+}) {
+  const { prefs, update } = usePrefs();
+  const api = useRef<DockviewApi | null>(null);
+  const [closing, setClosing] = useState<string | null>(null);
   const [status, setStatusMap] = useState<Record<string, SessionStatus>>({});
   const setStatus = useCallback(
     (id: string, s: SessionStatus) => setStatusMap((m) => (m[id] === s ? m : { ...m, [id]: s })),
@@ -210,15 +245,122 @@ export function Workspace({ theme, onReady }: { theme: Theme; onReady(api: Dockv
     (id: string, on: boolean) => setActivityMap((m) => (!!m[id] === on ? m : { ...m, [id]: on })),
     [],
   );
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  const askClose = useCallback(
+    (id: string) => {
+      const panel = api.current?.getPanel(id);
+      if (!panel) return;
+      const open = (statusRef.current[id] ?? "connecting") !== "disconnected";
+      if (open && prefs.confirmCloseTab) setClosing(id);
+      else panel.api.close();
+    },
+    [prefs.confirmCloseTab],
+  );
+
+  // Ctrl+Tab / Ctrl+Shift+Tab: next / previous tab, across panes. Caught
+  // before terminals and remote screens see the keys.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || !e.ctrlKey || e.altKey || e.metaKey) return;
+      const a = api.current;
+      const tabs = a ? tabOrder(a) : [];
+      if (!a || tabs.length < 2) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const at = Math.max(
+        0,
+        tabs.findIndex((p) => p.id === a.activePanel?.id),
+      );
+      const next = tabs[(at + (e.shiftKey ? -1 : 1) + tabs.length) % tabs.length];
+      next.api.setActive();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
+  // Forget closed tabs, and report how many sessions are open.
+  useEffect(() => {
+    const a = api.current;
+    if (a) onOpenCount?.(openSessionCount(a, status));
+  }, [status, onOpenCount]);
+
+  const closingPanel = closing ? api.current?.getPanel(closing) : undefined;
   return (
-    <SharedCtx.Provider value={{ theme, status, setStatus, activity, setActivity }}>
+    <SharedCtx.Provider value={{ theme, status, setStatus, activity, setActivity, askClose }}>
       <DockviewReact
         className={`workspace ${theme === "dark" ? "dockview-theme-dark" : "dockview-theme-light"}`}
         components={{ session: SessionPanel }}
         tabComponents={{ session: SessionTab }}
         watermarkComponent={Watermark}
-        onReady={(e) => onReady(e.api)}
+        onReady={(e) => {
+          api.current = e.api;
+          e.api.onDidRemovePanel((p) => {
+            setStatusMap(({ [p.id]: _, ...rest }) => rest);
+            setActivityMap(({ [p.id]: _, ...rest }) => rest);
+          });
+          e.api.onDidAddPanel(() => onOpenCount?.(openSessionCount(e.api, statusRef.current)));
+          onReady(e.api);
+        }}
       />
+      {closingPanel && (
+        <CloseConfirm
+          title={`Close ${closingPanel.title}?`}
+          message="Its session ends."
+          confirmLabel="Close tab"
+          onConfirm={(dontAsk) => {
+            if (dontAsk) update({ confirmCloseTab: false });
+            closingPanel.api.close();
+            setClosing(null);
+          }}
+          onCancel={() => setClosing(null)}
+        />
+      )}
     </SharedCtx.Provider>
+  );
+}
+
+/** "Close …?" with an optional "Don't ask again". */
+export function CloseConfirm({
+  title,
+  message,
+  confirmLabel,
+  offerDontAsk = true,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  offerDontAsk?: boolean;
+  onConfirm(dontAskAgain: boolean): void;
+  onCancel(): void;
+}) {
+  const [dontAsk, setDontAsk] = useState(false);
+  return (
+    <Modal
+      title={title}
+      className="modal-confirm"
+      onSubmit={() => onConfirm(dontAsk)}
+      onClose={onCancel}
+      actions={
+        <>
+          {offerDontAsk && (
+            <label className="modal-foot-note close-dont-ask">
+              <input type="checkbox" checked={dontAsk} onChange={(e) => setDontAsk(e.target.checked)} />
+              Don't ask again
+            </label>
+          )}
+          <button type="button" className="btn" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-danger" data-autofocus>
+            {confirmLabel}
+          </button>
+        </>
+      }
+    >
+      <p>{message}</p>
+    </Modal>
   );
 }

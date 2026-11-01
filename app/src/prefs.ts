@@ -22,6 +22,10 @@ export interface Preferences {
   workspaces: SavedWorkspace[];
   /** Folders collapsed in the connection tree (the rest are open). */
   closedFolders: string[];
+  /** Ask before closing a tab whose session is open. */
+  confirmCloseTab: boolean;
+  /** Ask once before quitting with sessions open. */
+  confirmQuit: boolean;
 }
 
 export const defaultPrefs: Preferences = {
@@ -31,6 +35,8 @@ export const defaultPrefs: Preferences = {
   highlightKeywords: true,
   workspaces: [],
   closedFolders: [],
+  confirmCloseTab: true,
+  confirmQuit: true,
 };
 
 export function withDefaults(stored: Partial<Preferences> | null | undefined): Preferences {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { DockviewApi } from "dockview";
 import { Download, Laptop, ListTree, Monitor, Moon, Settings as SettingsIcon, Sun } from "lucide-react";
-import { getBackend, type Backend } from "./api";
+import { getBackend, isTauri, type Backend } from "./api";
 import { useTheme, type ThemePref } from "./theme";
 import { useUpdater } from "./updater";
 import { PrefsContext, defaultPrefs, withDefaults, type Preferences } from "./prefs";
@@ -25,7 +25,7 @@ import { DevicesPage, versionMismatch } from "./components/DevicesPage";
 import { LayoutPicker, layoutShortcut } from "./components/LayoutPicker";
 import { SettingsPage } from "./components/SettingsPage";
 import { ConnectionPanel, usePanelLayout } from "./components/ConnectionPanel";
-import { Workspace, applyLayout, openConnection } from "./components/Workspace";
+import { CloseConfirm, Workspace, applyLayout, openConnection } from "./components/Workspace";
 import { WorkspaceMenu } from "./components/WorkspaceMenu";
 
 type View = "connections" | "devices" | "settings";
@@ -109,6 +109,36 @@ export default function App() {
   const [prefs, setPrefs] = useState<Preferences>(defaultPrefs);
   const [importing, setImporting] = useState(false);
   const [showUpdate, setShowUpdate] = useState(false);
+  /** Sessions open right now, and whether we're asking before quitting. */
+  const [openCount, setOpenCount] = useState(0);
+  const [quitting, setQuitting] = useState(false);
+  const quitGuard = useRef({ openCount, ask: true });
+  quitGuard.current = { openCount, ask: prefs.confirmQuit };
+  useEffect(() => {
+    if (!isTauri) return;
+    let unlisten: (() => void) | undefined;
+    let gone = false;
+    void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
+      getCurrentWindow()
+        .onCloseRequested((e) => {
+          // One question for all of them, not one per tab.
+          if (quitGuard.current.ask && quitGuard.current.openCount > 0) {
+            e.preventDefault();
+            setQuitting(true);
+          }
+        })
+        .then((u) => (gone ? u() : (unlisten = u))),
+    );
+    return () => {
+      gone = true;
+      unlisten?.();
+    };
+  }, []);
+  const quit = async (dontAsk: boolean) => {
+    if (dontAsk) prefsValue.update({ confirmQuit: false });
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().destroy();
+  };
   /** The tree waits for preferences so folders open as they were left. */
   const [prefsReady, setPrefsReady] = useState(false);
   const [folderSettings, setFolderSettings] = useState<{ id: string; parentId: string | null } | null>(null);
@@ -323,6 +353,7 @@ export default function App() {
                 <div className="workspace-wrap" hidden={view !== "connections"}>
                   <Workspace
                     theme={theme}
+                    onOpenCount={setOpenCount}
                     onReady={(api) => {
                       dock.current = api;
                       const waiting = pendingLaunch.current;
@@ -356,6 +387,15 @@ export default function App() {
                 >
                   v{version}
                 </button>
+                {quitting && (
+                  <CloseConfirm
+                    title="Quit Linecard?"
+                    message={`${openCount} open ${openCount === 1 ? "connection closes" : "connections close"}.`}
+                    confirmLabel="Close all and quit"
+                    onConfirm={(dontAsk) => void quit(dontAsk)}
+                    onCancel={() => setQuitting(false)}
+                  />
+                )}
                 {update && showUpdate && (
                   <UpdateDialog update={update} current={version} onClose={() => setShowUpdate(false)} />
                 )}

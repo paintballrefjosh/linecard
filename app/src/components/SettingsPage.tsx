@@ -47,6 +47,23 @@ export function SettingsPage({ theme, onTheme }: Props) {
 
       <SyncSettings />
 
+      <Section title="Tabs">
+        <Row
+          label="Ask before closing a tab"
+          hint="Only for tabs whose session is still open. Middle-click a tab to close it; Ctrl+Tab and Ctrl+Shift+Tab move between tabs."
+          htmlFor="set-confirm-close"
+        >
+          <Toggle
+            id="set-confirm-close"
+            checked={prefs.confirmCloseTab}
+            onChange={(v) => update({ confirmCloseTab: v })}
+          />
+        </Row>
+        <Row label="Ask once before quitting with connections open" htmlFor="set-confirm-quit">
+          <Toggle id="set-confirm-quit" checked={prefs.confirmQuit} onChange={(v) => update({ confirmQuit: v })} />
+        </Row>
+      </Section>
+
       <Section title="Terminal mouse and clipboard">
         <Row
           label="Copy when you highlight text"

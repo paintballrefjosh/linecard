@@ -2215,3 +2215,20 @@ button.status-version:hover {
   bottom: 8px;
   height: 80px;
 }
+
+/* Where a dragged item would land. */
+.tree-row.is-drop-target {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  border-radius: var(--radius-s);
+}
+.tree-box.is-drop-root {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+.close-dont-ask {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+}

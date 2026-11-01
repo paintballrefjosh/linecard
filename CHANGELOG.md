@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Tabs**
+- Middle-click a tab to close it.
+- Closing a tab whose session is open asks first (with "Don't ask again"); quitting with connections open asks once for all of them. Both can be turned off in Settings → Tabs.
+- Ctrl+Tab and Ctrl+Shift+Tab move to the next and previous tab, across panes.
+
+**Connections pane**
+- While dragging a connection or folder, the folder it would land in is highlighted (the whole list for the top level).
+
 **Fixes**
 - RDP to Windows 7 and Server 2008 R2: on Windows, Linecard now uses the system's TLS (as the built-in Remote Desktop client does), which still speaks TLS 1.0 to hosts that offer nothing newer. Before, those hosts dropped the connection ("forcibly closed by the remote host").
 - RDP errors say which step failed (negotiation, TLS handshake or login) and what a dropped connection usually means.

@@ -125,6 +125,8 @@ interface HoverState {
 }
 
 interface RowCtxValue {
+  /** While dragging: the folder an item would land in; null = top level. */
+  dropParent: string | null | undefined;
   showHover(node: TreeNode, el: HTMLElement): void;
   scheduleHide(): void;
   openMenu(x: number, y: number, node: NodeApi<TreeNode> | null): void;
@@ -132,6 +134,7 @@ interface RowCtxValue {
 }
 
 const RowCtx = createContext<RowCtxValue>({
+  dropParent: undefined,
   showHover: () => {},
   scheduleHide: () => {},
   openMenu: () => {},
@@ -159,16 +162,17 @@ function RenameInput({ node }: { node: NodeApi<TreeNode> }) {
 }
 
 function Row({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
-  const { showHover, scheduleHide, openMenu, onOpen } = useContext(RowCtx);
+  const { showHover, scheduleHide, openMenu, onOpen, dropParent } = useContext(RowCtx);
   const d = node.data;
   const change = d.change;
   const below = d.type === "folder" && !node.isOpen ? changedBelow(d) : 0;
   const tabColor = d.type === "connection" ? d.tabColor : undefined;
+  const dropInto = dropParent === d.id && !node.isDragging;
   return (
     <div
       ref={dragHandle}
       style={tabColor ? ({ ...style, "--tab-color": tabColor } as CSSProperties) : style}
-      className={`tree-row ${tabColor ? "has-tab-color" : ""} ${node.isSelected ? "is-selected" : ""} ${change ? `chg chg-${change.kind}` : ""}`}
+      className={`tree-row ${tabColor ? "has-tab-color" : ""} ${node.isSelected ? "is-selected" : ""} ${change ? `chg chg-${change.kind}` : ""} ${dropInto ? "is-drop-target" : ""}`}
       onMouseEnter={change ? (e) => showHover(d, e.currentTarget) : undefined}
       onMouseLeave={change ? scheduleHide : undefined}
       onClick={() => d.type === "folder" && !node.isEditing && node.toggle()}
@@ -252,6 +256,33 @@ export function ConnectionTree({
     node.select();
     node.edit();
   }, [tree]);
+
+  /** Where a dragged item would land, shown on that folder (or the whole
+   *  tree for the top level). */
+  const [dropParent, setDropParent] = useState<string | null | undefined>(undefined);
+  const readDrop = () => {
+    const t = treeApi.current;
+    if (!t?.dragNode) return setDropParent(undefined);
+    const d = t.dragDestinationParent;
+    const id = !d || d.isRoot ? null : d.id;
+    setDropParent((cur) => (cur === id ? cur : id));
+  };
+  // The tree works out the drop target in its own handler, which runs after
+  // this one (and may finish a moment later), so read it just after.
+  const trackDrop = () => {
+    window.setTimeout(readDrop, 0);
+    window.setTimeout(readDrop, 60);
+  };
+  useEffect(() => {
+    if (dropParent === undefined) return;
+    const end = () => setDropParent(undefined);
+    window.addEventListener("dragend", end);
+    window.addEventListener("drop", end);
+    return () => {
+      window.removeEventListener("dragend", end);
+      window.removeEventListener("drop", end);
+    };
+  }, [dropParent]);
 
   const report = (p: Promise<unknown>) =>
     p.catch((e) => {
@@ -386,7 +417,9 @@ export function ConnectionTree({
     ));
 
   return (
-    <RowCtx.Provider value={{ showHover, scheduleHide, openMenu: (x, y, node) => setMenu({ x, y, node }), onOpen }}>
+    <RowCtx.Provider
+      value={{ dropParent, showHover, scheduleHide, openMenu: (x, y, node) => setMenu({ x, y, node }), onOpen }}
+    >
       <section className="tree-pane" aria-label="Connections">
         <div className="tree-search">
           <Search size={14} />
@@ -413,8 +446,14 @@ export function ConnectionTree({
         )}
 
         <div
-          className="tree-box"
+          className={`tree-box ${dropParent === null ? "is-drop-root" : ""}`}
           ref={boxRef}
+          onDragOver={trackDrop}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropParent(undefined);
+          }}
+          onDrop={() => setDropParent(undefined)}
+          onDragEnd={() => setDropParent(undefined)}
           onKeyDownCapture={onKeyDownCapture}
           onContextMenu={(e) => {
             // Rows handle their own menu; this is the empty space below them.
