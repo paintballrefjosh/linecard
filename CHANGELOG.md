@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Broadcast input**: the radio button in the toolbar sends what you type to every open terminal tab at once. A red banner and a red count show it is on; the radio icon on each tab includes or leaves it. Tabs opened later join only if you include them. Remote screens (RDP/VNC) never take part.
+
 - **Settings → Debug log**: Linecard keeps a small log of sync, SSH/Telnet/RDP/VNC and update errors (no terminal output, passwords or keys). Copy it or show its folder to attach to a bug report.
 
 - Right-click a connection → **Saved password…** to save or replace its password without logging in first (SSH, RDP and VNC).

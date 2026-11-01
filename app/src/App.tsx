@@ -23,6 +23,7 @@ import { ImportDialog } from "./components/ImportDialog";
 import { PasswordDialog } from "./components/PasswordDialog";
 import { ConnectionTree, relativeTime, type TreeActions } from "./components/ConnectionTree";
 import { DevicesPage, versionMismatch } from "./components/DevicesPage";
+import { BroadcastButton } from "./components/BroadcastButton";
 import { LayoutPicker, layoutShortcut } from "./components/LayoutPicker";
 import { SettingsPage } from "./components/SettingsPage";
 import { ConnectionPanel, usePanelLayout } from "./components/ConnectionPanel";
@@ -349,6 +350,7 @@ export default function App() {
                   />
                 </form>
                 <WorkspaceMenu dock={dock} findConnection={(id) => findConnection(tree, id)} />
+                <BroadcastButton dock={dock} />
                 <LayoutPicker value={layout} onChange={changeLayout} />
               </header>
 

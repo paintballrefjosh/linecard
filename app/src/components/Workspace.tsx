@@ -9,7 +9,7 @@ import {
   type SerializedDockview,
 } from "dockview";
 import "dockview/dist/styles/dockview.css";
-import { X } from "lucide-react";
+import { Radio, X } from "lucide-react";
 import type { ConnectionNode, LayoutId } from "../types";
 import type { Theme } from "../theme";
 import { KindIcon } from "./icons";
@@ -17,6 +17,7 @@ import { TerminalView, type SessionStatus } from "./TerminalView";
 import { RemoteView } from "./RemoteView";
 import { Modal } from "./Dialog";
 import { usePrefs } from "../prefs";
+import { broadcast, useBroadcast } from "../broadcast";
 
 interface PanelParams {
   conn: ConnectionNode;
@@ -55,6 +56,7 @@ function SessionPanel({ api, params }: IDockviewPanelProps<PanelParams>) {
     return <RemoteView conn={conn} onStatus={(s) => setStatus(api.id, s)} />;
   return (
     <TerminalView
+      panelId={api.id}
       conn={conn}
       theme={theme}
       onStatus={(s) => setStatus(api.id, s)}
@@ -68,6 +70,8 @@ function SessionTab({ api, params }: IDockviewPanelHeaderProps<PanelParams>) {
   const conn = params.conn;
   const s = status[api.id] ?? "connecting";
   const active = activity[api.id];
+  const { on: casting, members } = useBroadcast();
+  const member = members.has(api.id);
   return (
     <div
       className={`session-tab ${active ? "has-activity" : ""}`}
@@ -86,6 +90,20 @@ function SessionTab({ api, params }: IDockviewPanelHeaderProps<PanelParams>) {
       <KindIcon kind={conn.kind} size={14} />
       <span className="session-tab-title">{api.title}</span>
       {active && <span className="activity-dot" aria-label="New output" />}
+      {casting && conn.kind !== "rdp" && conn.kind !== "vnc" && (
+        <button
+          className={`tab-broadcast ${member ? "is-member" : ""}`}
+          aria-pressed={member}
+          aria-label={member ? `Stop broadcasting to ${api.title}` : `Include ${api.title} in broadcast`}
+          title={member ? "Receiving broadcast input (click to leave)" : "Not in the broadcast (click to join)"}
+          onClick={(e) => {
+            e.stopPropagation();
+            broadcast.toggleMember(api.id);
+          }}
+        >
+          <Radio size={12} />
+        </button>
+      )}
       <button
         className="tab-close"
         aria-label={`Close ${api.title}`}
@@ -298,6 +316,7 @@ export function Workspace({
           e.api.onDidRemovePanel((p) => {
             setStatusMap(({ [p.id]: _, ...rest }) => rest);
             setActivityMap(({ [p.id]: _, ...rest }) => rest);
+            broadcast.prune(e.api.panels.map((x) => x.id));
           });
           e.api.onDidAddPanel(() => onOpenCount?.(openSessionCount(e.api, statusRef.current)));
           onReady(e.api);

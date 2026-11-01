@@ -2232,3 +2232,58 @@ button.status-version:hover {
   gap: 6px;
   margin-right: auto;
 }
+
+/* ---- broadcast input -------------------------------------------------------- */
+.broadcast-btn {
+  position: relative;
+}
+.broadcast-btn.is-on {
+  background: var(--chg-deleted-bg);
+  color: var(--chg-deleted);
+}
+.broadcast-count {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  min-width: 13px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--chg-deleted);
+  color: #fff;
+  font-size: 10px;
+  line-height: 13px;
+  text-align: center;
+}
+.tab-broadcast {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-quiet);
+  opacity: 0.6;
+}
+.tab-broadcast.is-member {
+  color: var(--chg-deleted);
+  opacity: 1;
+}
+.tab-broadcast:hover {
+  background: var(--bg-hover);
+}
+.broadcast-banner {
+  position: absolute;
+  top: 0;
+  right: 14px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 0 0 var(--radius-s) var(--radius-s);
+  background: var(--chg-deleted);
+  color: #fff;
+  font-size: 11px;
+  pointer-events: none;
+}

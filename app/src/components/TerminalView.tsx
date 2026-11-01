@@ -16,6 +16,7 @@ import type {
 } from "../types";
 import {
   ArrowLeftRight,
+  Radio,
   ClipboardPaste,
   Copy,
   Download,
@@ -27,12 +28,15 @@ import {
 } from "lucide-react";
 import { attachHighlighter, highlightStore } from "../highlight";
 import { pasteLineCount, usePrefs } from "../prefs";
+import { broadcast, useBroadcast } from "../broadcast";
 import { ContextMenu } from "./ContextMenu";
 import { PasteConfirm, SessionPrompt } from "./SessionPrompt";
 
 export type SessionStatus = "connecting" | "connected" | "disconnected";
 
 interface Props {
+  /** The tab's id, for broadcast input. */
+  panelId?: string;
   conn: ConnectionNode;
   theme: Theme;
   onStatus(status: SessionStatus): void;
@@ -42,7 +46,7 @@ interface Props {
 
 const FONT = '"Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, "DejaVu Sans Mono", monospace';
 
-export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
+export function TerminalView({ panelId, conn, theme, onStatus, onOutput }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const term = useRef<Terminal | null>(null);
   const statusRef = useRef(onStatus);
@@ -92,6 +96,7 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
       term.current?.write(`\r\n\x1b[31m[${err}]\x1b[0m\r\n`);
     }
   };
+  const { on: casting, members } = useBroadcast();
   const [status, setStatus] = useState<SessionStatus>("connecting");
   const report = (st: SessionStatus) => {
     setStatus(st);
@@ -227,11 +232,13 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
       theme: themeRef.current,
     }));
 
+    if (panelId) broadcast.register(panelId, (d) => !ended && session?.write(d));
     const input = t.onData((d) => {
       if (ended) {
         if (d === "\r") start();
         return;
       }
+      if (panelId && broadcast.send(panelId, d)) return;
       session?.write(d);
     });
 
@@ -294,6 +301,7 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
       selection.dispose();
       highlighter.dispose();
       input.dispose();
+      if (panelId) broadcast.register(panelId, null);
       resize.dispose();
       session?.close();
       t.dispose();
@@ -307,6 +315,11 @@ export function TerminalView({ conn, theme, onStatus, onOutput }: Props) {
 
   return (
     <div className="terminal-pane">
+      {casting && members.has(panelId ?? "") && (
+        <div className="broadcast-banner" role="status">
+          <Radio size={12} /> Broadcasting: typing goes to {members.size} {members.size === 1 ? "session" : "sessions"}
+        </div>
+      )}
       <div className="terminal-host" ref={host} />
       {prompt && <SessionPrompt prompt={prompt} onReply={reply} />}
       {forwards.length > 0 && (
