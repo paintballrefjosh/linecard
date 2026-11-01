@@ -23,6 +23,7 @@ const CHALLENGE: [u8; 16] = *b"0123456789abcdef";
 enum Input {
     Pointer(u8, u16, u16),
     Key(bool, u32),
+    Clipboard(Vec<u8>),
 }
 
 fn zlib(data: &[u8], z: &mut ZlibEncoder<Vec<u8>>) -> Vec<u8> {
@@ -154,6 +155,14 @@ async fn server(inputs: UnboundedSender<Input>) -> u16 {
                     let (x, y) = (s.read_u16().await.unwrap(), s.read_u16().await.unwrap());
                     let _ = inputs.send(Input::Pointer(b, x, y));
                 }
+                6 => {
+                    let mut pad = [0u8; 3];
+                    s.read_exact(&mut pad).await.unwrap();
+                    let len = s.read_u32().await.unwrap();
+                    let mut text = vec![0u8; len as usize];
+                    s.read_exact(&mut text).await.unwrap();
+                    let _ = inputs.send(Input::Clipboard(text));
+                }
                 other => panic!("unexpected client message {other}"),
             }
         }
@@ -262,8 +271,9 @@ async fn password_frames_and_input() {
     session.pointer(5, 6, 1).unwrap();
     session.wheel(5, 6, 0, 1).unwrap();
     session.key("KeyA", "a", true).unwrap();
+    session.clipboard("caf\u{e9} \u{2603}").unwrap();
     let mut got = Vec::new();
-    while got.len() < 4 {
+    while got.len() < 5 {
         got.push(
             tokio::time::timeout(Duration::from_secs(5), inputs.recv())
                 .await
@@ -278,6 +288,7 @@ async fn password_frames_and_input() {
             Input::Pointer(1 | 16, 5, 6), // wheel down while holding left
             Input::Pointer(1, 5, 6),
             Input::Key(true, 0x61),
+            Input::Clipboard(b"caf\xe9 ?".to_vec()), // Latin-1; the snowman becomes ?
         ]
     );
     session.close().unwrap();

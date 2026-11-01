@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- VNC: the local clipboard is sent to the server when the screen gets focus (if it changed), so Ctrl+V on the remote side pastes it. Latin-1 text only, as the protocol allows.
 - VNC and RDP connections can go through an SSH jump host (including chains and jump hosts inherited from folders). The jump host's host-key and password prompts appear in the tab, and RDP's login retries reuse the one jump-host login.
 
 ## v0.3.2 — tab shortcuts and close prompts, Windows 7 RDP

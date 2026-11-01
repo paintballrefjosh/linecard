@@ -301,7 +301,7 @@ export function mockBackend(): Backend {
         onEvent({ event: "frame", x: 0, y: 0, width: w, height: h, rgba });
       }, 300);
       const noop = () => {};
-      return { pointer: noop, wheel: noop, key: noop, text: noop, reply: noop, resize: noop, close: noop };
+      return { pointer: noop, wheel: noop, key: noop, text: noop, clipboard: noop, reply: noop, resize: noop, close: noop };
     },
     openUrl: async (url) => void window.open(url, "_blank", "noopener"),
     takeLaunch: async () => null,

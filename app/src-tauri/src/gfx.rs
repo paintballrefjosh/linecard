@@ -131,6 +131,11 @@ pub fn gfx_text(state: State<AppState>, session_id: String, text: String) -> Cmd
 }
 
 #[tauri::command]
+pub fn gfx_clipboard(state: State<AppState>, session_id: String, text: String) -> CmdResult<()> {
+    with(&state, &session_id, |s| s.clipboard(&text))
+}
+
+#[tauri::command]
 pub fn gfx_reply(state: State<AppState>, session_id: String, reply: PromptReplyDto) -> CmdResult<()> {
     with(&state, &session_id, |s| s.reply(reply.into()))
 }

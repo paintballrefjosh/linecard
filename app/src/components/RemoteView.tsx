@@ -25,6 +25,8 @@ export function RemoteView({ conn, onStatus }: Props) {
   const [prompt, setPrompt] = useState<HostKeyEvent | AuthEvent | null>(null);
   const [ended, setEnded] = useState<string | null | undefined>(undefined);
   const [attempt, setAttempt] = useState(0);
+  /** The clipboard text the server last had (sent or received). */
+  const sentClip = useRef("");
   const statusRef = useRef(onStatus);
   statusRef.current = onStatus;
 
@@ -68,6 +70,7 @@ export function RemoteView({ conn, onStatus }: Props) {
           setPrompt(e);
           break;
         case "clipboard":
+          sentClip.current = e.text; // don't send it straight back
           void getBackend().then((b) => b.clipboardWrite(e.text));
           break;
         case "disconnected":
@@ -172,6 +175,19 @@ export function RemoteView({ conn, onStatus }: Props) {
     session.current?.key(e.code, e.key, down);
   };
 
+  /** VNC: when the screen gets focus, offer the local clipboard if it changed,
+   *  so a plain Ctrl+V on the remote side pastes it. */
+  const shareClipboard = () => {
+    if (conn.kind !== "vnc") return;
+    void getBackend()
+      .then((b) => b.clipboardRead())
+      .then((t) => {
+        if (!t || t === sentClip.current) return;
+        sentClip.current = t;
+        session.current?.clipboard(t);
+      });
+  };
+
   const reply = (r: PromptReply) => {
     setPrompt(null);
     session.current?.reply(r);
@@ -189,6 +205,7 @@ export function RemoteView({ conn, onStatus }: Props) {
         onPointerUp={pointer}
         onPointerMove={pointer}
         onWheel={wheel}
+        onFocus={shareClipboard}
         onKeyDown={(e) => key(e, true)}
         onKeyUp={(e) => key(e, false)}
         onContextMenu={(e) => e.preventDefault()}

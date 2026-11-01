@@ -28,7 +28,21 @@ enum Cmd {
     Wheel(u16, u16, i16, i16),
     Key(u32, bool),
     Text(String),
+    Clipboard(String),
     Close,
+}
+
+/// ClientCutText: the RFB clipboard is Latin-1, so other characters become `?`.
+pub fn client_cut_text(text: &str) -> Vec<u8> {
+    let bytes: Vec<u8> = text
+        .chars()
+        .take(1 << 20)
+        .map(|c| u8::try_from(u32::from(c)).unwrap_or(b'?'))
+        .collect();
+    let mut out = vec![6, 0, 0, 0];
+    out.extend((bytes.len() as u32).to_be_bytes());
+    out.extend(bytes);
+    out
 }
 
 pub struct VncSession {
@@ -100,6 +114,10 @@ impl GfxSession for VncSession {
 
     fn text(&mut self, text: &str) -> io::Result<()> {
         self.send(Cmd::Text(text.to_string()))
+    }
+
+    fn clipboard(&mut self, text: &str) -> io::Result<()> {
+        self.send(Cmd::Clipboard(text.to_string()))
     }
 
     fn reply(&mut self, reply: PromptReply) -> io::Result<()> {
@@ -411,6 +429,7 @@ async fn run(
                     }
                     w.write_all(&out).await?;
                 }
+                Some(Cmd::Clipboard(t)) => w.write_all(&client_cut_text(&t)).await?,
                 Some(Cmd::Close) | None => return Ok(()),
             },
         }

@@ -45,6 +45,8 @@ export interface GfxHandle {
   key(code: string, key: string, down: boolean): void;
   /** Type text (paste). */
   text(text: string): void;
+  /** Offer the local clipboard to the server (VNC). */
+  clipboard(text: string): void;
   reply(r: PromptReply): void;
   resize(width: number, height: number): void;
   close(): void;
@@ -295,6 +297,7 @@ async function tauriBackend(): Promise<Backend> {
         wheel: (x, y, dx, dy) => void invoke("gfx_wheel", { sessionId, x, y, dx, dy }),
         key: (code, key, down) => void invoke("gfx_key", { sessionId, code, key, down }),
         text: (text) => void invoke("gfx_text", { sessionId, text }),
+        clipboard: (text) => void invoke("gfx_clipboard", { sessionId, text }),
         reply: (reply) => void invoke("gfx_reply", { sessionId, reply }),
         resize: (width, height) => void invoke("gfx_resize", { sessionId, width, height }),
         close: () => void invoke("gfx_close", { sessionId }),

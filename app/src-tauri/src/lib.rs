@@ -939,6 +939,7 @@ pub fn run() {
             gfx::gfx_wheel,
             gfx::gfx_key,
             gfx::gfx_text,
+            gfx::gfx_clipboard,
             gfx::gfx_reply,
             gfx::gfx_resize,
             gfx::gfx_close,
