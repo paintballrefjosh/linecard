@@ -87,3 +87,14 @@ jobs:
             -p 8444:8443 -v relay-data:/data linecard-relay:ci
           for i in $(seq 1 15); do curl -fsS http://127.0.0.1:8444/health && break; sleep 1; done
           curl -fsS http://127.0.0.1:8444/health
+      - name: The Compose bundle comes up and proxies the relay
+        working-directory: relay/deploy
+        run: |
+          docker tag linecard-relay:ci ghcr.io/paintballrefjosh/linecard-relay:ci
+          printf 'RELAY_DOMAIN=:80\nRELAY_VERSION=ci\n' > .env
+          docker compose config -q
+          docker compose up -d --pull never
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1/health && break; sleep 2; done
+          curl -fsS http://127.0.0.1/health
+          docker compose exec -T relay linecard-relay stats
+          docker compose down -v

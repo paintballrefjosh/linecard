@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Relay deployment bundle** (`relay/deploy`): `docker compose up -d` runs the relay behind Caddy with automatic HTTPS, with notes for nginx, Traefik, Cloudflare Tunnel, plain Docker and systemd.
+
 - The relay image is now a small static build on a distroless base for amd64 and arm64, runs as a non-root user, reports its own health (`linecard-relay health`) and stops gracefully on `docker stop`. Image tags are now `:X.Y.Z`, `:X.Y` and `:latest` (no leading `v`).
 
 - **SFTP file browser**: right-click an SSH connection → **Open file browser (SFTP)**. A tab lists the server's folders; double-click to go in, then upload files or whole folders, download selections to a folder, make folders, rename and delete. It logs in on its own (jump hosts, host-key and password prompts work as in a terminal).

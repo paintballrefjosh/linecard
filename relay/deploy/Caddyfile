@@ -1,0 +1,22 @@
+# RELAY_DOMAIN comes from .env. A real DNS name gets a Let's Encrypt
+# certificate automatically. For a trial on a LAN without HTTPS, set
+# RELAY_DOMAIN=:80 (plain HTTP: sync tokens then travel unencrypted).
+{$RELAY_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	# The relay accepts blobs up to 1 MiB (plus a little framing).
+	request_body {
+		max_size 1100KB
+	}
+
+	# Devices hold a request open for up to 25 s waiting for changes; Caddy
+	# sets no read timeout on proxied responses, so nothing to configure here.
+	reverse_proxy relay:8443
+}

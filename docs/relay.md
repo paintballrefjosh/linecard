@@ -4,11 +4,21 @@ The relay lets your computers sync over the internet. It stores only end-to-end 
 
 ## Start it
 
+The easy way is the Docker Compose bundle in [`relay/deploy`](../relay/deploy/README.md): it runs the relay and Caddy, which gets a Let's Encrypt certificate for your domain automatically.
+
+```bash
+cd relay/deploy
+cp .env.example .env      # set RELAY_DOMAIN to the DNS name of your server
+docker compose up -d
+```
+
+Or just the relay, for a network you trust:
+
 ```bash
 docker run -d --name linecard-relay -p 8443:8443 -v linecard-relay:/data ghcr.io/paintballrefjosh/linecard-relay
 ```
 
-Put it behind HTTPS (Caddy, Traefik, nginx), then in Linecard choose **Settings → Sync → Relay** and enter its address, e.g. `https://relay.example.com`.
+Put that behind HTTPS (Caddy, Traefik, nginx, a Cloudflare Tunnel; the deploy README has examples), then in Linecard choose **Settings → Sync → Relay** and enter its address, e.g. `https://relay.example.com`.
 
 The image is small (a static binary on a distroless base): it has no shell, runs as a non-root user (65532), is built for `linux/amd64` and `linux/arm64`, and carries a built-in health check (`linecard-relay health`). Tags are `:X.Y.Z`, `:X.Y` and `:latest`; a published version is never re-tagged. `docker stop` ends it cleanly within a few seconds. It also runs with `--read-only --cap-drop ALL --security-opt no-new-privileges:true`; mount the `/data` volume (a bind mount must be owned by uid 65532). Admin commands work as before: `docker exec linecard-relay linecard-relay stats`.
 
