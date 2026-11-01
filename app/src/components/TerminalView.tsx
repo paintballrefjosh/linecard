@@ -29,6 +29,8 @@ import {
 import { attachHighlighter, highlightStore } from "../highlight";
 import { pasteLineCount, usePrefs } from "../prefs";
 import { broadcast, useBroadcast } from "../broadcast";
+import { scripts } from "../scripts";
+import { screens } from "../screens";
 import { ContextMenu } from "./ContextMenu";
 import { PasteConfirm, SessionPrompt } from "./SessionPrompt";
 
@@ -47,6 +49,11 @@ interface Props {
 }
 
 const FONT = '"Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, "DejaVu Sans Mono", monospace';
+
+const NEWLINE = String.fromCharCode(10);
+
+/** Shown instead of starting an on-connect script while another script runs. */
+const MSG_SCRIPT_BUSY = "\r\n\x1b[2m[A script is already running; not starting the on-connect script.]\x1b[0m\r\n";
 
 export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput }: Props) {
   const activeRef = useRef(active);
@@ -169,9 +176,25 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
       t.write(`\r\n\x1b[2m[Disconnected${why}] Press Enter to reconnect.\x1b[0m\r\n`);
     };
 
+    /** "Run on connect": once the login is done and the handle exists. */
+    let unregisterScreen = () => {};
+    let loggedIn = false;
+    let autoRan = false;
+    const autoRun = () => {
+      if (autoRan || !loggedIn || !session) return;
+      autoRan = true;
+      const rule = prefsRef.current.onConnect.find((r) => r.connectionId === conn.id);
+      if (!rule) return;
+      session.focus();
+      if (scripts.state.running) t.write(MSG_SCRIPT_BUSY);
+      else void scripts.start(rule.script);
+    };
+
     const start = () => {
       const mine = ++attempt;
       ended = false;
+      loggedIn = false;
+      autoRan = false;
       report("connecting");
       t.write(`\x1b[2mConnecting to ${conn.endpoint}…\x1b[0m\r\n`);
       getBackend()
@@ -197,6 +220,8 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
             } else if (e.event === "connected") {
               setPrompt(null);
               report("connected");
+              loggedIn = true;
+              autoRun();
             } else if (e.event === "forwards") setForwards(e.forwards);
             else if (e.event === "title") document.title = `${e.title} · Linecard`;
             else if (e.event === "disconnected") {
@@ -215,6 +240,14 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
           session = s;
           sessionRef.current = s;
           if (activeRef.current) s.focus();
+          unregisterScreen = screens.register(s.id, () => {
+            const b = t.buffer.active;
+            const rows: string[] = [];
+            for (let y = 0; y < t.rows; y++) rows.push(b.getLine(b.viewportY + y)?.translateToString(true) ?? "");
+            while (rows.length && !rows[rows.length - 1]) rows.pop();
+            return rows.join(NEWLINE);
+          });
+          autoRun();
           if (pendingReply.current) {
             s.reply(pendingReply.current);
             pendingReply.current = null;
@@ -298,6 +331,7 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
 
     return () => {
       disposed = true;
+      unregisterScreen();
       cancelAnimationFrame(frame);
       window.clearTimeout(copyTimer);
       ro.disconnect();

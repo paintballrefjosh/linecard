@@ -898,6 +898,7 @@ export function mockBackend(): Backend {
           };
           setTimeout(tick, 300);
         },
+        id: "mock-session",
         focus() {},
         cancelTransfer() {
           transferCanceled = true;
@@ -908,6 +909,8 @@ export function mockBackend(): Backend {
         close() {},
       };
     },
+    onScreenRequest: () => () => {},
+    async screenReply() {},
     onTreeChanged(cb) {
       listeners.add(cb);
       return () => listeners.delete(cb);

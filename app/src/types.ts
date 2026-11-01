@@ -161,7 +161,10 @@ export interface PasswordSync {
 
 /** Something to open from the command line or a link. */
 export type Launch =
-  { kind: "saved"; id: string } | { kind: "quick"; text: string } | { kind: "error"; message: string };
+  | { kind: "saved"; id: string }
+  | { kind: "quick"; text: string }
+  | { kind: "script"; path: string }
+  | { kind: "error"; message: string };
 
 /** local = -L, remote = -R, dynamic = -D (SOCKS). */
 export type ForwardKind = "local" | "remote" | "dynamic";

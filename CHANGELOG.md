@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Scripting, more ways in**: `linecard run script.py` (or the name of a script in the scripts folder) runs a script in the running window; **Run on connect** in the Scripts window starts a script whenever a chosen connection logs in; and `session.screen()` returns the text on the terminal screen right now.
+
 - **SFTP**: a Cancel button for transfers, **Resume** after a cancel or failure (continues the files already partly copied), and a Permissions button (read/write/execute grid or octal number, optionally for everything inside a folder).
 
 - **Sync phrase QR code**: Settings → Sync → Show phrase → **QR code**, to scan the phrase into a phone's password manager.

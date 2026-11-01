@@ -45,6 +45,9 @@ pub trait Host: Send + Sync + 'static {
     /// session appears within `timeout`.
     fn open(&self, connection: &str, timeout: Duration) -> Result<String, String>;
     fn close(&self, session: &str) -> Result<(), String>;
+    /// The text on the terminal screen right now (what the user sees, not the
+    /// stream of output), one line per row.
+    fn screen(&self, session: &str) -> Result<String, String>;
     /// Ask the person at the keyboard. `None`: they cancelled, or the script was stopped.
     fn ask(&self, run: u64, prompt: &str, secret: bool) -> Option<String>;
 }

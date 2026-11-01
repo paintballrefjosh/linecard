@@ -1,13 +1,29 @@
 import { useEffect, useRef, useState } from "react";
-import { FolderOpen, Play, Plus, Square } from "lucide-react";
+import { FolderOpen, Play, Plus, Square, X } from "lucide-react";
 import { getBackend } from "../api";
 import { scripts, useScripts } from "../scripts";
-import type { ScriptFile, ScriptStatus } from "../types";
+import { usePrefs } from "../prefs";
+import type { ScriptFile, ScriptStatus, TreeNode } from "../types";
 import { relativeTime } from "./ConnectionTree";
 import { Modal } from "./Dialog";
 
 /** Run Python scripts that drive the open sessions. */
-export function ScriptsDialog({ onClose }: { onClose(): void }) {
+/** Every connection as (id, "folder/name"), for choosing one. */
+function connectionsIn(nodes: TreeNode[], prefix = ""): { id: string; path: string }[] {
+  return nodes.flatMap((n) =>
+    n.type === "folder"
+      ? connectionsIn(n.children, `${prefix}${n.name}/`)
+      : n.kind === "rdp" || n.kind === "vnc"
+        ? []
+        : [{ id: n.id, path: `${prefix}${n.name}` }],
+  );
+}
+
+export function ScriptsDialog({ tree, onClose }: { tree: TreeNode[]; onClose(): void }) {
+  const { prefs, update } = usePrefs();
+  const [ruleConn, setRuleConn] = useState("");
+  const [ruleScript, setRuleScript] = useState("");
+  const places = connectionsIn(tree);
   const [status, setStatus] = useState<ScriptStatus | null>(null);
   const [files, setFiles] = useState<ScriptFile[]>([]);
   const [naming, setNaming] = useState<string | null>(null);
@@ -132,6 +148,63 @@ export function ScriptsDialog({ onClose }: { onClose(): void }) {
           ))}
         </ul>
       )}
+
+      <div className="scripts-head">
+        <h3>Run on connect</h3>
+      </div>
+      {prefs.onConnect.length > 0 && (
+        <ul className="script-list">
+          {prefs.onConnect.map((r) => (
+            <li key={r.connectionId}>
+              <span className="script-name">
+                {places.find((p) => p.id === r.connectionId)?.path ?? "(deleted connection)"} →{" "}
+                {r.script.split(/[\/]/).pop()}
+              </span>
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="Stop running it on connect"
+                title="Remove"
+                onClick={() => update({ onConnect: prefs.onConnect.filter((x) => x !== r) })}
+              >
+                <X size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="scripts-new">
+        <select aria-label="Connection" value={ruleConn} onChange={(e) => setRuleConn(e.target.value)}>
+          <option value="">When this connects…</option>
+          {places.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.path}
+            </option>
+          ))}
+        </select>
+        <select aria-label="Script to run" value={ruleScript} onChange={(e) => setRuleScript(e.target.value)}>
+          <option value="">…run this script</option>
+          {files.map((f) => (
+            <option key={f.path} value={f.path}>
+              {f.name}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="btn"
+          disabled={!ruleConn || !ruleScript}
+          onClick={() => {
+            update({
+              onConnect: [...prefs.onConnect.filter((r) => r.connectionId !== ruleConn), { connectionId: ruleConn, script: ruleScript }],
+            });
+            setRuleConn("");
+            setRuleScript("");
+          }}
+        >
+          Add
+        </button>
+      </div>
 
       <div className="scripts-head">
         <h3>{name ? `Output: ${name}` : "Output"}</h3>

@@ -40,6 +40,8 @@ export interface SessionHandle {
   /** XMODEM/YMODEM on serial lines; progress arrives as transfer events. */
   startTransfer(send: boolean, protocol: TransferProtocol, path: string): Promise<void>;
   cancelTransfer(): void;
+  /** The backend's id for this session. */
+  readonly id: string;
   /** This tab is the one in use now (scripts act on it by default). */
   focus(): void;
   close(): void;
@@ -134,6 +136,9 @@ export interface Backend {
   cliPathStatus(): Promise<{ on: boolean | null; manual: string | null }>;
   setCliPath(on: boolean): Promise<void>;
   /** Fires when the sync status changes. */
+  /** A script wants the text on a terminal screen. */
+  onScreenRequest(cb: (req: { id: number; session: string }) => void): () => void;
+  screenReply(id: number, text: string | null): Promise<void>;
   onSyncChanged(cb: () => void): () => void;
   ackChange(objectId: string): Promise<void>;
   ackAll(): Promise<void>;
@@ -267,6 +272,11 @@ async function tauriBackend(): Promise<Backend> {
     setLinkHandler: (on) => invoke("set_link_handler", { on }),
     cliPathStatus: () => invoke("cli_path_status"),
     setCliPath: (on) => invoke("set_cli_path", { on }),
+    onScreenRequest(cb) {
+      const unlisten = listen<{ id: number; session: string }>("script-screen", (e) => cb(e.payload));
+      return () => void unlisten.then((u) => u());
+    },
+    screenReply: (id, text) => invoke("script_screen_reply", { id, text }),
     onSyncChanged(cb) {
       const unlisten = listen("sync-changed", () => cb());
       return () => void unlisten.then((u) => u());
@@ -362,6 +372,7 @@ async function tauriBackend(): Promise<Backend> {
         onEvent: channel,
       });
       return {
+        id: sessionId,
         write: (data) => void invoke("session_write", { sessionId, data: Array.from(encoder.encode(data)) }),
         resize: (cols, rows) => void invoke("session_resize", { sessionId, cols, rows }),
         reply: (reply) => void invoke("session_reply", { sessionId, reply }),

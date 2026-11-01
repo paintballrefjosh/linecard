@@ -54,6 +54,9 @@ pub struct Scripting {
     /// The terminal tab used last.
     active: Mutex<Option<String>>,
     runs: Mutex<HashMap<u64, Arc<Live>>>,
+    /// Screen reads waiting for the window to answer.
+    screens: Mutex<HashMap<u64, mpsc::Sender<Option<String>>>>,
+    next_screen: AtomicU64,
 }
 
 impl Scripting {
@@ -215,6 +218,26 @@ impl Host for AppHost {
         }
     }
 
+    fn screen(&self, session: &str) -> Result<String, String> {
+        let st = self.state();
+        let (tx, rx) = mpsc::channel();
+        let id = st.scripting.next_screen.fetch_add(1, Ordering::Relaxed) + 1;
+        lock(&st.scripting.screens).insert(id, tx);
+        let sent = self.0.emit(
+            "script-screen",
+            ScreenRequest {
+                id,
+                session: session.to_string(),
+            },
+        );
+        let answer = match sent {
+            Ok(()) => rx.recv_timeout(Duration::from_secs(5)).ok().flatten(),
+            Err(_) => None,
+        };
+        lock(&st.scripting.screens).remove(&id);
+        answer.ok_or_else(|| "that terminal can't be read right now".to_string())
+    }
+
     fn ask(&self, run: u64, prompt: &str, secret: bool) -> Option<String> {
         let live = lock(&self.state().scripting.runs).get(&run)?.clone();
         let (tx, rx) = mpsc::channel();
@@ -230,6 +253,12 @@ impl Host for AppHost {
         // A dropped sender (script stopped) ends the wait with None.
         rx.recv().ok().flatten()
     }
+}
+
+#[derive(Clone, Serialize)]
+struct ScreenRequest {
+    id: u64,
+    session: String,
 }
 
 // ---- commands ----------------------------------------------------------------
@@ -442,5 +471,13 @@ pub fn script_answer(state: State<AppState>, run_id: u64, ask_id: u64, value: Op
 pub fn session_focus(state: State<AppState>, session_id: String) {
     if lock(&state.scripting.sessions).contains_key(&session_id) {
         *lock(&state.scripting.active) = Some(session_id);
+    }
+}
+
+/// The window's answer to a screen read (`None`: no such terminal).
+#[tauri::command]
+pub fn script_screen_reply(state: State<AppState>, id: u64, text: Option<String>) {
+    if let Some(tx) = lock(&state.scripting.screens).get(&id) {
+        let _ = tx.send(text);
     }
 }

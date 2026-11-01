@@ -335,6 +335,10 @@ impl Ctx<'_> {
                 self.cursors.insert(session.to_string(), tap.end_offset());
                 Ok(json!({}))
             }
+            "screen" => {
+                let text = self.host.screen(text(req, "session")?).map_err(|e| ("other", e))?;
+                Ok(json!({ "text": text }))
+            }
             "close" => {
                 self.host.close(text(req, "session")?).map_err(|e| ("closed", e))?;
                 Ok(json!({}))

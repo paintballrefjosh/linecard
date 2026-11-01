@@ -998,8 +998,8 @@ pub fn run() {
     // One window: a second launch (command line or link) opens its tab there.
     // A separate profile (LINECARD_DATA_DIR) runs as its own instance.
     if std::env::var_os("LINECARD_DATA_DIR").is_none() {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            launch::second_instance(app, argv)
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            launch::second_instance(app, argv, &cwd)
         }));
     }
     builder
@@ -1050,6 +1050,7 @@ pub fn run() {
             scripting::script_stop,
             scripting::script_answer,
             scripting::session_focus,
+            scripting::script_screen_reply,
             sftp::sftp_cancel,
             sftp::sftp_chmod,
             scripting::open_scripts_folder,

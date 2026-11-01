@@ -51,6 +51,7 @@ Scripts print with `print()`; that is what shows in the window. An error ends th
 | `s.wait_quiet(quiet=1.0, timeout=60)` | Wait until nothing has arrived for `quiet` seconds, and return it all. For commands with no recognizable prompt. |
 | `s.run(command, prompt=None, timeout=30)` | Send a command, wait for the prompt, return what it printed (without the echoed command or the prompt). `prompt` is a regex; set `s.prompt = r"\S+[#>]\s*$"` once instead of passing it each time. |
 | `s.flush()` | Throw away what has been received so far. |
+| `s.screen()` | The text on the terminal screen right now, one line per row: what you see, including inside a full-screen program such as `top` or a menu, rather than the stream of output. |
 | `s.close()` | Close the session. |
 | `s.name`, `s.kind`, `s.endpoint` | What it is: the connection's name, `"ssh"`/`"telnet"`/`"serial"`, and its address. |
 | `s.before`, `s.match` | What preceded the last successful `expect()`, and the match itself. |
@@ -116,8 +117,13 @@ A script is a program that runs as you: it can do anything you can on this compu
 
 The latest 512 KB of each session's output is kept for scripts; one that falls further behind than that loses the oldest text.
 
+## Starting scripts without the window
+
+- **Command line.** `linecard run versions.py` (a path, relative to where you typed it) or `linecard run versions` (a script in the scripts folder) opens Linecard's Scripts window and runs it there; if Linecard is already running it uses that window. The command returns at once; the output is in the window.
+- **On connect.** In the Scripts window, under **Run on connect**, choose a connection and a script. Each time that connection logs in, the script starts with that tab as `lc.active()`. If another script is still running, a note appears in the tab and nothing starts. Rules are kept per computer (script paths differ between computers) and aren't synced.
+
 ## Not (yet) there
 
-- Reading what is on the terminal's screen right now (as opposed to the stream of output).
-- Running a script from the command line, on a schedule, or on every new connection.
+- Running a script on a schedule, or without Linecard's window.
 - A script editor or debugger inside Linecard; use your own editor.
+- More than one script at a time.

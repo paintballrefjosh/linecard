@@ -36,7 +36,8 @@ import { DevicesPage, versionMismatch } from "./components/DevicesPage";
 import { BroadcastButton } from "./components/BroadcastButton";
 import { ButtonBar } from "./components/ButtonBar";
 import { ScriptsDialog } from "./components/ScriptsDialog";
-import { useScripts } from "./scripts";
+import { scripts, useScripts } from "./scripts";
+import { screens } from "./screens";
 import { LayoutPicker, layoutShortcut } from "./components/LayoutPicker";
 import { SettingsPage } from "./components/SettingsPage";
 import { ConnectionPanel, usePanelLayout } from "./components/ConnectionPanel";
@@ -274,6 +275,11 @@ export default function App() {
       setNotice(l.message);
       return;
     }
+    if (l.kind === "script") {
+      setScriptsOpen(true);
+      void scripts.start(l.path);
+      return;
+    }
     if (l.kind === "quick") {
       const conn = parseQuickConnect(l.text);
       if (conn) open(conn);
@@ -285,6 +291,11 @@ export default function App() {
       if (conn) open(conn);
     });
   };
+  // A script asking for what a terminal shows.
+  useEffect(() => {
+    if (!backend) return;
+    return backend.onScreenRequest((r) => void backend.screenReply(r.id, screens.read(r.session)));
+  }, [backend]);
   useEffect(() => {
     if (!backend) return;
     void backend.takeLaunch().then((l) => l && launch.current(l));
@@ -479,7 +490,7 @@ export default function App() {
           <PasswordDialog connectionId={passwordFor.id} name={passwordFor.name} onClose={() => setPasswordFor(null)} />
         )}
         {importing && <ImportDialog onClose={() => setImporting(false)} onImported={() => setView("connections")} />}
-        {scriptsOpen && <ScriptsDialog onClose={() => setScriptsOpen(false)} />}
+        {scriptsOpen && <ScriptsDialog tree={tree} onClose={() => setScriptsOpen(false)} />}
 
         {folderSettings && (
           <FolderSettingsDialog

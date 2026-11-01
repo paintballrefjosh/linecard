@@ -26,6 +26,8 @@ export interface Preferences {
   confirmCloseTab: boolean;
   /** Show the saved-command button bar above the tabs. */
   showButtonBar: boolean;
+  /** Scripts to start when a connection logs in (per computer: paths differ). */
+  onConnect: { connectionId: string; script: string }[];
   /** Python for scripts (empty: find one on this computer). */
   pythonPath: string;
   /** Ask once before quitting with sessions open. */
@@ -43,6 +45,7 @@ export const defaultPrefs: Preferences = {
   confirmQuit: true,
   showButtonBar: false,
   pythonPath: "",
+  onConnect: [],
 };
 
 export function withDefaults(stored: Partial<Preferences> | null | undefined): Preferences {

@@ -331,6 +331,12 @@ class Session:
 
     # -- other ------------------------------------------------------------
 
+    def screen(self):
+        """The text on the terminal screen right now, as a string with one line
+        per row (trailing blanks removed): what you would see, including a
+        full-screen program, rather than the stream of output."""
+        return self._call("screen")["text"]
+
     def close(self):
         """Close the session (its tab stays, disconnected)."""
         self._call("close")

@@ -8,6 +8,7 @@
 //! linecard telnet cs1 2005
 //! linecard serial COM3 9600
 //! linecard ssh://admin@10.0.0.1:2222     a link
+//! linecard run versions.py               run a script (a path, or the name of one in the scripts folder)
 //! ```
 //!
 //! A second launch hands its arguments to the running window (single
@@ -31,6 +32,10 @@ pub enum Launch {
     Quick {
         text: String,
     },
+    /// Run a Python script (`linecard run script.py`); `path` is absolute.
+    Script {
+        path: String,
+    },
     Error {
         message: String,
     },
@@ -41,6 +46,14 @@ pub enum Launch {
 pub fn parse(args: &[String], tree: &Tree) -> Option<Launch> {
     let args: Vec<&str> = args.iter().map(String::as_str).filter(|a| !a.is_empty()).collect();
     let first = *args.first()?;
+    if first.eq_ignore_ascii_case("run") {
+        return Some(match args.get(1) {
+            Some(p) => Launch::Script { path: p.to_string() },
+            None => Launch::Error {
+                message: "run: which script?".into(),
+            },
+        });
+    }
     if let Some(l) = parse_url(first) {
         return Some(l);
     }
@@ -160,18 +173,37 @@ pub struct Pending(pub std::sync::Mutex<Vec<String>>);
 pub fn take_launch(state: State<AppState>, pending: State<Pending>) -> CmdResult<Option<Launch>> {
     let args = std::mem::take(&mut *pending.0.lock().map_err(|e| e.to_string())?);
     let lib = state.lib.lock().map_err(|e| e.to_string())?;
-    Ok(parse(&args, lib.tree()))
+    let cwd = std::env::current_dir().unwrap_or_default();
+    Ok(parse(&args, lib.tree()).map(|l| resolve_script(l, &cwd, &state.data_dir.join("scripts"))))
+}
+
+/// Turn the script named on the command line into a file that exists: a path
+/// (relative to where the command ran), or a name from the scripts folder
+/// (with or without `.py`).
+pub fn resolve_script(l: Launch, cwd: &std::path::Path, scripts: &std::path::Path) -> Launch {
+    let Launch::Script { path } = l else { return l };
+    let given = std::path::Path::new(&path);
+    let candidates = [cwd.join(given), scripts.join(given), scripts.join(format!("{path}.py"))];
+    match candidates.into_iter().find(|c| c.is_file()) {
+        Some(p) => Launch::Script {
+            path: p.display().to_string(),
+        },
+        None => Launch::Error {
+            message: format!("run: no script called {path}"),
+        },
+    }
 }
 
 /// Another launch (command line or link) while the app is running.
-pub fn second_instance(app: &AppHandle, argv: Vec<String>) {
+pub fn second_instance(app: &AppHandle, argv: Vec<String>, cwd: &str) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.set_focus();
     }
     let state = app.state::<AppState>();
     let launch = match state.lib.lock() {
-        Ok(lib) => parse(argv.get(1..).unwrap_or_default(), lib.tree()),
+        Ok(lib) => parse(argv.get(1..).unwrap_or_default(), lib.tree())
+            .map(|l| resolve_script(l, std::path::Path::new(cwd), &state.data_dir.join("scripts"))),
         Err(_) => None,
     };
     if let Some(l) = launch {
@@ -215,6 +247,28 @@ pub fn opened_urls(app: &AppHandle, urls: Vec<String>) {
 mod tests {
     use super::*;
     use linecard_core_model::{Connection, ConnectionKind, Endpoint, Folder, Settings};
+
+    #[test]
+    fn run_names_a_script_by_path_or_by_name_in_the_scripts_folder() {
+        let dir = std::env::temp_dir().join(format!("lc-run-{}", std::process::id()));
+        let (cwd, scripts) = (dir.join("cwd"), dir.join("scripts"));
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::create_dir_all(&scripts).unwrap();
+        std::fs::write(cwd.join("here.py"), "").unwrap();
+        std::fs::write(scripts.join("versions.py"), "").unwrap();
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let go = |a: &[&str]| resolve_script(parse(&args(a), &tree()).unwrap(), &cwd, &scripts);
+        let path = |l: Launch| match l {
+            Launch::Script { path } => path,
+            other => panic!("{other:?}"),
+        };
+        assert!(path(go(&["run", "here.py"])).ends_with("here.py"));
+        assert!(path(go(&["run", "versions"])).contains("scripts"));
+        assert!(path(go(&["run", "versions.py"])).contains("scripts"));
+        assert!(matches!(go(&["run", "nope"]), Launch::Error { .. }));
+        assert!(matches!(go(&["run"]), Launch::Error { .. }));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     fn tree() -> Tree {
         let mut t = Tree::default();

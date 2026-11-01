@@ -116,6 +116,13 @@ impl Host for Fake {
         self.sessions.lock().unwrap().push((info, fresh));
         Ok("s2".into())
     }
+    fn screen(&self, session: &str) -> Result<String, String> {
+        self.tap(session).ok_or("closed")?;
+        Ok(format!(
+            "SCREEN of {session}
+line two"
+        ))
+    }
     fn close(&self, session: &str) -> Result<(), String> {
         self.sessions.lock().unwrap().retain(|(i, _)| i.id != session);
         Ok(())
@@ -474,4 +481,17 @@ print(repr(f.readline()))
     );
     drop(dir);
     assert_eq!(r.out, ["''"]);
+}
+
+#[test]
+fn the_screen_can_be_read() {
+    if python().is_none() {
+        return;
+    }
+    let r = run_script(
+        Fake::new(),
+        "import linecard as lc\ns = lc.active()\nprint(repr(s.screen()))\n",
+    );
+    assert_eq!(r.err, Vec::<String>::new());
+    assert_eq!(r.out, [r"'SCREEN of s1\nline two'"]);
 }
