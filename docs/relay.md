@@ -107,6 +107,9 @@ A relay left running for months stays bounded:
 
 Compaction (shrinking a long history to a snapshot) needs a change to the sync protocol and isn't built yet.
 
+### Compaction
+
+A sync group keeps every batch that was ever pushed, which is mostly superseded edits. Linecard trims this itself: when a group holds 500 or more batches, one computer that is fully caught up (the one with the lowest id of those seen in the past week, at most once an hour) replaces the old batches with a snapshot of the current state. The relay does this in one step, only accepts a snapshot that is smaller than what it replaces, and still never reads any of it. Other computers, including ones that were behind and ones that join later, end up with the same library. The one thing lost is the ability to revert a change that was compacted before a computer saw it. Nothing to configure; `linecard-relay group list` shows the batch counts shrinking. Details: [sync-protocol.md](sync-protocol.md#compaction-relay-only-draft).
 ## Backups and restoring
 
 The relay's whole state is one SQLite file. Make a copy of it at any time, while the relay serves, with no downtime:

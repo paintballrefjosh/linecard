@@ -145,6 +145,11 @@ impl Library {
         Ok(self.last_own_op())
     }
 
+    /// The fewest ops that rebuild the current state (for compacting a relay group).
+    pub fn snapshot_ops(&self) -> Vec<Op> {
+        self.replica.snapshot()
+    }
+
     /// Every op from every device, oldest first (to seed a new sync group).
     pub fn all_ops(&self) -> Vec<Op> {
         let mut ops = self.replica.log().to_vec();

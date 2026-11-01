@@ -675,6 +675,104 @@ fn pinned_ok(app: &AppHandle, sealed: &Sealed) -> bool {
     }
 }
 
+// ---- relay compaction (see docs/sync-protocol.md) ----------------------------------
+
+/// A relay group this big (in batches) is worth compacting.
+const COMPACT_AT_BATCHES: i64 = 500;
+/// Don't try more often than this.
+const COMPACT_EVERY: u64 = 60 * 60 * 1000;
+/// Computers that reported in this recently take part in choosing who compacts.
+const ACTIVE_WINDOW: u64 = 7 * 24 * 60 * 60 * 1000;
+/// A snapshot batch stays well under the relay's 1 MiB limit.
+const SNAPSHOT_BATCH_BYTES: usize = 600_000;
+
+static LAST_COMPACT: AtomicU64 = AtomicU64::new(0);
+
+/// Only one computer compacts: the one with the lowest id among those seen
+/// lately (so two computers don't do it at once).
+fn is_compactor(me: &str, peers: &[(DeviceInfo, String)], now: u64) -> bool {
+    peers
+        .iter()
+        .filter(|(info, _)| now.saturating_sub(info.sent_at) <= ACTIVE_WINDOW)
+        .all(|(_, id)| id.as_str() > me)
+}
+
+/// Snapshot ops in batches of at most `BATCH_OPS` ops and about
+/// `SNAPSHOT_BATCH_BYTES` of JSON.
+fn snapshot_chunks(ops: Vec<Op>) -> Vec<Vec<Op>> {
+    let mut chunks: Vec<Vec<Op>> = Vec::new();
+    let mut size = 0;
+    for op in ops {
+        let len = serde_json::to_string(&op).map_or(0, |s| s.len());
+        match chunks.last_mut() {
+            Some(c) if c.len() < BATCH_OPS && size + len <= SNAPSHOT_BATCH_BYTES => {
+                c.push(op);
+                size += len;
+            }
+            _ => {
+                chunks.push(vec![op]);
+                size = len;
+            }
+        }
+    }
+    chunks
+}
+
+/// After a round that pulled to the relay's newest batch: if the group has
+/// grown large and this is the computer that compacts, replace the old
+/// batches with a snapshot. Best effort; the next round carries on either way.
+async fn maybe_compact(
+    app: &AppHandle,
+    transport: &Transport,
+    group: &GroupKey,
+    key: &DeviceKey,
+    device: &str,
+    applied_through: i64,
+) {
+    let Transport::Relay(relay) = transport else { return };
+    let now = now_ms();
+    if now.saturating_sub(LAST_COMPACT.load(Ordering::Relaxed)) < COMPACT_EVERY {
+        return;
+    }
+    let state = app.state::<AppState>();
+    let chosen = state
+        .sync
+        .peers
+        .lock()
+        .map(|p| is_compactor(device, &p, now))
+        .unwrap_or(false);
+    if !chosen {
+        return;
+    }
+    let stats = match relay.stats().await {
+        Ok(Some(s)) => s,
+        _ => return, // an older relay, or a hiccup
+    };
+    // Everything on the relay must already be in this computer's library.
+    if stats.batches < COMPACT_AT_BATCHES || stats.head != applied_through {
+        return;
+    }
+    LAST_COMPACT.store(now, Ordering::Relaxed);
+    let snapshot = match state.lib.lock() {
+        Ok(lib) => lib.snapshot_ops(),
+        Err(_) => return,
+    };
+    let sealed: Vec<Sealed> = snapshot_chunks(snapshot)
+        .into_iter()
+        .map(|ops| seal(group, key, device, &Batch { ops }))
+        .collect();
+    match relay.compact(applied_through, &sealed).await {
+        Ok(removed) => crate::debuglog::write(
+            "sync",
+            &format!(
+                "compacted the relay: {removed} batches became {} snapshot batches",
+                sealed.len()
+            ),
+        ),
+        Err(e) => crate::debuglog::write("sync", &format!("relay compaction failed: {e}")),
+    }
+}
+
 async fn round(
     app: &AppHandle,
     transport: &Transport,
@@ -783,6 +881,10 @@ async fn round(
         *p = peers;
     }
 
+    if problem.is_none() {
+        maybe_compact(app, transport, group, key, device, split_relay_cursor(&next).1).await;
+    }
+
     match problem {
         Some(e) => Err(e),
         None => Ok(None),
@@ -793,6 +895,51 @@ async fn round(
 mod tests {
     use super::*;
 
+    fn peer(id: &str, age_ms: u64) -> (DeviceInfo, String) {
+        (
+            DeviceInfo {
+                id: id.into(),
+                name: id.into(),
+                os: "x".into(),
+                app_version: "1".into(),
+                protocol_version: 1,
+                sent_at: 10 * ACTIVE_WINDOW - age_ms,
+            },
+            id.into(),
+        )
+    }
+
+    #[test]
+    fn the_lowest_recently_seen_computer_compacts() {
+        let now = 10 * ACTIVE_WINDOW;
+        assert!(is_compactor("b", &[], now), "alone");
+        assert!(is_compactor("b", &[peer("c", 0), peer("d", 0)], now));
+        assert!(!is_compactor("b", &[peer("a", 0), peer("c", 0)], now));
+        // A computer nobody has heard from for a week doesn't hold the job.
+        assert!(is_compactor("b", &[peer("a", ACTIVE_WINDOW + 1)], now));
+    }
+
+    #[test]
+    fn snapshots_are_cut_into_relay_sized_batches() {
+        use linecard_core_sync::Replica;
+        let mut r = Replica::new("A");
+        for i in 0..1000 {
+            let f = [("name".to_string(), linecard_core_sync::Value::from(format!("c{i}")))];
+            r.create(&format!("o{i}"), "connection", f.into_iter().collect(), 100 + i);
+        }
+        let chunks = snapshot_chunks(r.snapshot());
+        assert_eq!(chunks.iter().map(Vec::len).sum::<usize>(), 1000);
+        assert!(chunks.iter().all(|c| c.len() <= BATCH_OPS));
+        assert_eq!(chunks.len(), 3);
+        // A few huge ops split by size, not count.
+        let big = |n: u64| {
+            let f = [("blob".to_string(), linecard_core_sync::Value::from("z".repeat(400_000)))];
+            r.clone()
+                .create(&format!("big{n}"), "connection", f.into_iter().collect(), 5000 + n)
+        };
+        let chunks = snapshot_chunks(vec![big(1), big(2), big(3)]);
+        assert_eq!(chunks.len(), 3, "400 KB each: no two fit under 600 KB");
+    }
     #[test]
     fn relay_cursors_carry_the_epoch_and_still_read_old_ones() {
         assert_eq!(split_relay_cursor("a1b2c3:42"), (Some("a1b2c3"), 42));

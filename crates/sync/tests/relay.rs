@@ -210,3 +210,109 @@ async fn compaction_replaces_old_batches_for_every_computer() {
     assert!(a.compact(7, &[big]).await.is_err());
     assert!(a.compact(99, &[seal(&group, &ka, "laptop", &"s")]).await.is_err());
 }
+
+/// Three computers share a library through a relay; one compacts it midway.
+/// A computer that was behind, one that joins afterwards, and the compactor
+/// itself all end up with the same library.
+#[tokio::test]
+async fn libraries_converge_across_a_compaction() {
+    use linecard_core_sync::{Replica, Value};
+    use linecard_sync::Batch;
+    use std::collections::BTreeMap;
+
+    let base = start_relay().await;
+    let group = GroupKey::generate();
+    let keys = [DeviceKey::generate(), DeviceKey::generate(), DeviceKey::generate()];
+    let (ta, tb, tc) = (
+        client(&base, &group, "a"),
+        client(&base, &group, "b"),
+        client(&base, &group, "c"),
+    );
+    let one = |k: &str, v: String| BTreeMap::from([(k.to_string(), Value::from(v))]);
+    let state = |r: &Replica| -> Vec<(String, Vec<(String, String)>)> {
+        r.all_objects()
+            .map(|(id, o)| {
+                (
+                    id.clone(),
+                    o.fields.iter().map(|(k, (v, _))| (k.clone(), v.to_string())).collect(),
+                )
+            })
+            .collect()
+    };
+    // Pull what is new and apply it; returns the new cursor.
+    async fn sync_in(t: &RelayTransport, g: &GroupKey, r: &mut Replica, me: &str, cursor: i64) -> i64 {
+        let (got, next) = t.pull(cursor).await.unwrap();
+        for item in got.into_iter().filter(|x| x.sealed.device != me) {
+            for op in open::<Batch>(g, &item.sealed).unwrap().ops {
+                r.apply_remote(op, 9_000);
+            }
+        }
+        next
+    }
+
+    let (mut a, mut b) = (Replica::new("a"), Replica::new("b"));
+    // A and B edit the same objects over many pushes.
+    let mut ops_a = Vec::new();
+    for i in 0..30 {
+        ops_a.push(a.create(&format!("c{i}"), "connection", one("name", format!("sw{i}")), 100 + i));
+    }
+    ta.push(&seal(&group, &keys[0], "a", &Batch { ops: ops_a }))
+        .await
+        .unwrap();
+    let mut cb = sync_in(&tb, &group, &mut b, "b", 0).await;
+    for round in 0..20u64 {
+        let op = b
+            .update("c1", one("host", format!("10.0.0.{round}")), 1_000 + round)
+            .unwrap();
+        tb.push(&seal(&group, &keys[1], "b", &Batch { ops: vec![op] }))
+            .await
+            .unwrap();
+        let op = a
+            .update("c1", one("name", format!("core{round}")), 2_000 + round)
+            .unwrap();
+        ta.push(&seal(&group, &keys[0], "a", &Batch { ops: vec![op] }))
+            .await
+            .unwrap();
+    }
+    // B has only taken in the first 5 batches when A (fully caught up) compacts.
+    let mut ca = sync_in(&ta, &group, &mut a, "a", 0).await;
+    let head = ca;
+    let before = ta.stats().await.unwrap().unwrap();
+    assert_eq!(before.batches, head);
+    let snapshot: Vec<_> = a
+        .snapshot()
+        .chunks(400)
+        .map(|c| seal(&group, &keys[0], "a", &Batch { ops: c.to_vec() }))
+        .collect();
+    let removed = ta.compact(head, &snapshot).await.unwrap();
+    assert_eq!(removed, head);
+    let after = ta.stats().await.unwrap().unwrap();
+    assert_eq!(after.batches, 1);
+    assert!(
+        after.bytes < before.bytes / 2,
+        "{} -> {} bytes",
+        before.bytes,
+        after.bytes
+    );
+
+    // B was behind: takes the snapshot (ops it has seen are skipped, the rest merge).
+    cb = cb.min(5);
+    sync_in(&tb, &group, &mut b, "b", cb).await;
+    // C joins after the compaction with nothing.
+    let mut c = Replica::new("c");
+    let cc = sync_in(&tc, &group, &mut c, "c", 0).await;
+    // A edit made after compaction still flows to everyone.
+    let op = a.update("c2", one("name", "renamed".into()), 5_000).unwrap();
+    ta.push(&seal(&group, &keys[0], "a", &Batch { ops: vec![op] }))
+        .await
+        .unwrap();
+    ca = sync_in(&ta, &group, &mut a, "a", ca).await;
+    sync_in(&tb, &group, &mut b, "b", tb.stats().await.unwrap().unwrap().head - 1).await;
+    sync_in(&tc, &group, &mut c, "c", cc).await;
+
+    assert_eq!(state(&b), state(&a), "the computer that was behind");
+    assert_eq!(state(&c), state(&a), "the computer that joined afterwards");
+    assert_eq!(ca, ta.stats().await.unwrap().unwrap().head);
+    assert_eq!(a.object("c2").unwrap().get("name").unwrap().to_string(), "renamed");
+    let _ = &keys[2];
+}

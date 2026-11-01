@@ -318,7 +318,8 @@ mod tests {
         assert_eq!(a.log().len(), 103);
 
         // A fresh replica built from the snapshot, in any order, matches.
-        let state = |r: &Replica| -> Vec<(String, Vec<(String, String, String)>)> {
+        type State = Vec<(String, Vec<(String, String, String)>)>;
+        let state = |r: &Replica| -> State {
             r.all_objects()
                 .map(|(id, o)| {
                     (
@@ -345,11 +346,7 @@ mod tests {
 
         // A replica that already has the full history takes the snapshot as a no-op.
         let before = state(&b);
-        let fresh: usize = snap
-            .iter()
-            .cloned()
-            .filter(|op| b.apply_remote(op.clone(), 2000))
-            .count();
+        let fresh = snap.iter().filter(|op| b.apply_remote((*op).clone(), 2000)).count();
         assert_eq!(fresh, 0);
         assert_eq!(state(&b), before);
         // One that is partway through the history ends up in the same place.
