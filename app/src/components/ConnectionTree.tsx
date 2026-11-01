@@ -41,6 +41,8 @@ export interface TreeActions {
   editConnection(id: string): void;
   /** Save a password for a connection without logging in first. */
   setPassword(id: string, name: string): void;
+  /** Open an SFTP file browser on an SSH connection. */
+  openFiles(id: string): void;
   folderSettings(id: string, parentId: string | null): void;
   createFolder(parentId: string | null, name: string): Promise<string>;
   rename(id: string, name: string): Promise<void>;
@@ -358,6 +360,9 @@ export function ConnectionTree({
     return [
       { label: "Connect", icon: <Play size={15} />, shortcut: "Enter", onSelect: () => onOpen(d) },
       { label: "Edit…", icon: <Pencil size={15} />, onSelect: () => actions.editConnection(d.id) },
+      ...(d.kind === "ssh"
+        ? [{ label: "Open file browser (SFTP)", icon: <FolderOpen size={15} />, onSelect: () => actions.openFiles(d.id) }]
+        : []),
       ...(["ssh", "rdp", "vnc"].includes(d.kind)
         ? [{ label: "Saved password…", icon: <KeyRound size={15} />, onSelect: () => actions.setPassword(d.id, d.name) }]
         : []),

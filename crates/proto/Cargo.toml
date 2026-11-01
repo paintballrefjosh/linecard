@@ -28,6 +28,8 @@ ironrdp-displaycontrol = "0.10"
 x509-cert = { version = "0.3", features = ["std"] }
 sha2 = "0.10"
 base64 = "0.22"
+# SFTP client (independent of russh; works over any stream).
+russh-sftp = "3"
 
 
 # RDP's TLS. On Windows, the system's (SChannel, as mstsc uses): older hosts

@@ -9,12 +9,13 @@ import {
   type SerializedDockview,
 } from "dockview";
 import "dockview/dist/styles/dockview.css";
-import { Radio, X } from "lucide-react";
+import { FolderOpen, Radio, X } from "lucide-react";
 import type { ConnectionNode, LayoutId } from "../types";
 import type { Theme } from "../theme";
 import { KindIcon } from "./icons";
 import { TerminalView, type SessionStatus } from "./TerminalView";
 import { RemoteView } from "./RemoteView";
+import { SftpView } from "./SftpView";
 import { Modal } from "./Dialog";
 import { usePrefs } from "../prefs";
 import { broadcast, useBroadcast } from "../broadcast";
@@ -23,6 +24,8 @@ interface PanelParams {
   conn: ConnectionNode;
   /** Sessions to the same connection: 1 for the first, 2 for "spine01 (2)"… */
   instance: number;
+  /** A file browser (SFTP) on this SSH connection, not a terminal. */
+  files?: boolean;
 }
 
 interface Shared {
@@ -52,6 +55,7 @@ function SessionPanel({ api, params }: IDockviewPanelProps<PanelParams>) {
     const sub = api.onDidVisibilityChange((e) => e.isVisible && setActivity(api.id, false));
     return () => sub.dispose();
   }, [api, setActivity]);
+  if (params.files) return <SftpView conn={conn} onStatus={(s) => setStatus(api.id, s)} />;
   if (conn.kind === "rdp" || conn.kind === "vnc")
     return <RemoteView conn={conn} onStatus={(s) => setStatus(api.id, s)} />;
   return (
@@ -87,10 +91,10 @@ function SessionTab({ api, params }: IDockviewPanelHeaderProps<PanelParams>) {
       }}
     >
       <span className={`led led-${s}`} aria-label={s} />
-      <KindIcon kind={conn.kind} size={14} />
+      {params.files ? <FolderOpen size={14} style={{ color: "var(--tab-color, var(--kind-ssh))" }} /> : <KindIcon kind={conn.kind} size={14} />}
       <span className="session-tab-title">{api.title}</span>
       {active && <span className="activity-dot" aria-label="New output" />}
-      {casting && conn.kind !== "rdp" && conn.kind !== "vnc" && (
+      {casting && !params.files && conn.kind !== "rdp" && conn.kind !== "vnc" && (
         <button
           className={`tab-broadcast ${member ? "is-member" : ""}`}
           aria-pressed={member}
@@ -134,12 +138,13 @@ const sessionKey = (conn: ConnectionNode) => (conn.id.startsWith("quick-") ? `${
 /** Open a connection as a tab in the active pane. A second session to the
  *  same connection is titled "name (2)"; numbers stay put while a tab is open
  *  and the lowest free one is reused, so the first session is plain "name". */
-export function openConnection(api: DockviewApi, conn: ConnectionNode) {
+export function openConnection(api: DockviewApi, conn: ConnectionNode, opts: { files?: boolean } = {}) {
+  const files = !!opts.files;
   const key = sessionKey(conn);
   const taken = new Set(
     api.panels
       .map((p) => p.params as PanelParams | undefined)
-      .filter((p) => p && sessionKey(p.conn) === key)
+      .filter((p) => p && sessionKey(p.conn) === key && !!p.files === files)
       .map((p) => p!.instance),
   );
   let instance = 1;
@@ -148,8 +153,8 @@ export function openConnection(api: DockviewApi, conn: ConnectionNode) {
     id: `${conn.id}#${++counter}`,
     component: "session",
     tabComponent: "session",
-    title: instance === 1 ? conn.name : `${conn.name} (${instance})`,
-    params: { conn, instance },
+    title: `${conn.name}${files ? " · files" : ""}${instance === 1 ? "" : ` (${instance})`}`,
+    params: { conn, instance, ...(files ? { files } : {}) },
     position: api.activeGroup ? { referenceGroup: api.activeGroup } : undefined,
   });
 }

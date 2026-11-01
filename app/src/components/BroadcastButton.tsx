@@ -8,7 +8,7 @@ export function terminalTabIds(api: DockviewApi): string[] {
   return api.panels
     .filter((p) => {
       const kind = (p.params as { conn?: { kind?: string } } | undefined)?.conn?.kind;
-      return kind !== "rdp" && kind !== "vnc";
+      return kind !== "rdp" && kind !== "vnc" && !(p.params as { files?: boolean } | undefined)?.files;
     })
     .map((p) => p.id);
 }

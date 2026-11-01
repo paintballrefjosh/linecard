@@ -13,6 +13,7 @@ import type {
   PromptReply,
   PasswordTarget,
   SavedPassword,
+  SftpEntry,
   Snippet,
   SessionEvent,
   GfxEvent,
@@ -36,6 +37,23 @@ export interface SessionHandle {
   /** XMODEM/YMODEM on serial lines; progress arrives as transfer events. */
   startTransfer(send: boolean, protocol: TransferProtocol, path: string): Promise<void>;
   cancelTransfer(): void;
+  close(): void;
+}
+
+/** An SFTP session. Paths on the server are always "/"-separated. */
+export interface SftpHandle {
+  list(path: string): Promise<SftpEntry[]>;
+  /** The absolute form of a path (resolves ".."). */
+  resolve(path: string): Promise<string>;
+  mkdir(path: string): Promise<void>;
+  rename(from: string, to: string): Promise<void>;
+  /** Delete files and folders (folders with all their contents). */
+  remove(paths: string[]): Promise<void>;
+  /** Copy remote files or folders into a local folder. `onProgress` gets bytes so far. */
+  download(remote: string[], destFolder: string, onProgress: (bytes: number) => void): Promise<void>;
+  /** Copy local files or folders into a remote folder. */
+  upload(local: string[], remoteDir: string, onProgress: (bytes: number) => void): Promise<void>;
+  reply(r: PromptReply): void;
   close(): void;
 }
 
@@ -170,6 +188,8 @@ export interface Backend {
   pickFolder(title: string): Promise<string | null>;
   /** Native file picker; null if canceled. */
   pickFile(mode: "open" | "save", title: string): Promise<string | null>;
+  /** Native picker for several files; empty if canceled. */
+  pickFiles(title: string): Promise<string[]>;
   /** Open a web page in the default browser. */
   openUrl(url: string): Promise<void>;
   clipboardRead(): Promise<string>;
@@ -187,6 +207,9 @@ export interface Backend {
     size: { width: number; height: number },
     onEvent: (e: GfxEvent) => void,
   ): Promise<GfxHandle>;
+  /** Start an SFTP session to an SSH connection. The handle can answer
+   *  login prompts at once; `opened` resolves with the login folder. */
+  openSftp(conn: ConnectionNode, onEvent: (e: SessionEvent) => void): { handle: SftpHandle; opened: Promise<string> };
   /** Fires when the tree changes (local edit or remote sync). */
   onTreeChanged(cb: () => void): () => void;
 }
@@ -281,6 +304,11 @@ async function tauriBackend(): Promise<Backend> {
           : await dialog.save({ title });
       return typeof picked === "string" ? picked : null;
     },
+    async pickFiles(title) {
+      const dialog = await import("@tauri-apps/plugin-dialog");
+      const picked = await dialog.open({ title, multiple: true, directory: false });
+      return Array.isArray(picked) ? picked : [];
+    },
     openUrl: async (url) => (await import("@tauri-apps/plugin-opener")).openUrl(url),
     // The clipboard plugin: WebView2 can refuse navigator.clipboard reads.
     clipboardRead: async () => (await clipboard).readText().catch(() => ""),
@@ -332,6 +360,36 @@ async function tauriBackend(): Promise<Backend> {
         resize: (width, height) => void invoke("gfx_resize", { sessionId, width, height }),
         close: () => void invoke("gfx_close", { sessionId }),
       };
+    },
+    openSftp(conn, onEvent) {
+      const sessionId = crypto.randomUUID();
+      const channel = new Channel<SessionEvent>();
+      channel.onmessage = onEvent;
+      const opened = invoke<string>("sftp_open", {
+        sessionId,
+        connectionId: conn.id,
+        endpoint: conn.endpoint,
+        onEvent: channel,
+      });
+      const progress = (cb: (n: number) => void) => {
+        const ch = new Channel<number>();
+        ch.onmessage = cb;
+        return ch;
+      };
+      const handle: SftpHandle = {
+        list: (path) => invoke<SftpEntry[]>("sftp_list", { sessionId, path }),
+        resolve: (path) => invoke<string>("sftp_resolve", { sessionId, path }),
+        mkdir: (path) => invoke("sftp_mkdir", { sessionId, path }),
+        rename: (from, to) => invoke("sftp_rename", { sessionId, from, to }),
+        remove: (paths) => invoke("sftp_remove", { sessionId, paths }),
+        download: (remote, dest, onProgress) =>
+          invoke("sftp_download", { sessionId, remote, dest, onProgress: progress(onProgress) }),
+        upload: (local, dir, onProgress) =>
+          invoke("sftp_upload", { sessionId, local, dir, onProgress: progress(onProgress) }),
+        reply: (reply) => void invoke("sftp_reply", { sessionId, reply }).catch(() => {}),
+        close: () => void invoke("sftp_close", { sessionId }).catch(() => {}),
+      };
+      return { handle, opened };
     },
     onTreeChanged(cb) {
       const unlisten = listen("tree-changed", () => cb());

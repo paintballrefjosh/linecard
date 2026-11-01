@@ -18,6 +18,7 @@ pub mod forward;
 pub mod gfx;
 pub mod rdp;
 pub mod serial;
+pub mod sftp;
 pub mod ssh;
 pub mod telnet;
 pub mod vnc;

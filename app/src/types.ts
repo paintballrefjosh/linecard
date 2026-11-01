@@ -297,3 +297,14 @@ export interface Snippet {
   /** Press Enter after the text. */
   enter: boolean;
 }
+
+/** One entry in an SFTP folder listing. */
+export interface SftpEntry {
+  name: string;
+  kind: "file" | "dir" | "link" | "other";
+  size: number;
+  /** Seconds since the Unix epoch. */
+  modified: number | null;
+  /** Unix permission bits. */
+  mode: number | null;
+}

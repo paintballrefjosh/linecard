@@ -168,6 +168,11 @@ export default function App() {
         newConnection: (folderId) => setEditing(blankDraft(folderId)),
         editConnection: (id) => void backend.getConnection(id).then(setEditing),
         setPassword: (id, name) => setPasswordFor({ id, name }),
+        openFiles: (id) =>
+          void backend.getTree().then((t) => {
+            const conn = findConnection(t, id);
+            if (conn) openFilesRef.current(conn);
+          }),
         folderSettings: (id, parentId) => setFolderSettings({ id, parentId }),
         createFolder: (parentId, name) => backend.createFolder(parentId, name),
         rename: (id, name) => backend.renameNode(id, name),
@@ -224,6 +229,13 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [changeLayout]);
+
+  const openFilesRef = useRef<(conn: ConnectionNode) => void>(() => {});
+  openFilesRef.current = (conn: ConnectionNode) => {
+    setView("connections");
+    setPeek(false);
+    if (dock.current) openConnection(dock.current, conn, { files: true });
+  };
 
   const open = (conn: ConnectionNode) => {
     setView("connections");

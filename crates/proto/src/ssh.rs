@@ -243,7 +243,7 @@ fn forget_line(path: &Path, line: usize) -> io::Result<()> {
     std::fs::write(path, kept.join("\n") + "\n")
 }
 
-struct Client {
+pub(crate) struct Client {
     host: String,
     port: u16,
     ui: Ui,
@@ -420,6 +420,24 @@ async fn reach(
     }
     let last = jumps.pop().expect("chain has at least the target");
     Ok((last, jumps))
+}
+
+/// Log in to `target` (through its jump hosts) without opening a shell: for
+/// subsystems such as SFTP. Returns the target's handle and the earlier hops,
+/// which must stay alive as long as the handle is used.
+pub(crate) async fn login(
+    target: &TerminalTarget,
+    opts: &SshOptions,
+    events: EventSink,
+    replies: SharedReplies,
+) -> io::Result<(Handle<Client>, Vec<Handle<Client>>)> {
+    let ui = Ui {
+        events: Arc::new(Mutex::new(events)),
+        replies,
+    };
+    reach(target, &Arc::new(opts.clone()), &ui, &RemoteForwards::default())
+        .await
+        .map_err(|f| io::Error::other(f.to_string()))
 }
 
 /// Prompt answers shared with the session that owns them, so a jump host's

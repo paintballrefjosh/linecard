@@ -13,6 +13,7 @@ mod launch;
 mod library;
 mod logging;
 mod secrets;
+mod sftp;
 mod snippets;
 mod sync;
 mod system;
@@ -37,6 +38,8 @@ struct AppState {
     sessions: Mutex<HashMap<String, Box<dyn Session>>>,
     /// VNC and RDP sessions.
     gfx: Mutex<HashMap<String, Box<dyn linecard_proto::gfx::GfxSession>>>,
+    /// SFTP browser tabs.
+    sftp: Mutex<HashMap<String, sftp::Slot>>,
     ssh: SshOptions,
     vault: Arc<Vault>,
     /// Where session logs go unless a folder is configured.
@@ -1003,6 +1006,7 @@ pub fn run() {
                 lib: Mutex::new(lib),
                 sessions: Mutex::new(HashMap::new()),
                 gfx: Mutex::new(HashMap::new()),
+                sftp: Mutex::new(HashMap::new()),
                 ssh: ssh_options(app.handle(), vault.clone()),
                 vault,
                 log_dir: default_log_dir(app.handle()),
@@ -1070,6 +1074,16 @@ pub fn run() {
             snippets::save_snippet,
             snippets::delete_snippet,
             snippets::reorder_snippets,
+            sftp::sftp_open,
+            sftp::sftp_reply,
+            sftp::sftp_list,
+            sftp::sftp_resolve,
+            sftp::sftp_mkdir,
+            sftp::sftp_rename,
+            sftp::sftp_remove,
+            sftp::sftp_download,
+            sftp::sftp_upload,
+            sftp::sftp_close,
             highlight::save_highlight_profile,
             highlight::delete_highlight_profile,
             highlight::set_default_highlight,

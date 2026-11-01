@@ -16,6 +16,7 @@ export function snippetInput(s: Pick<Snippet, "text" | "enter">): string {
 interface Active {
   id: string;
   conn: ConnectionNode;
+  files: boolean;
 }
 
 /** Saved commands for the active terminal tab: one click types the text into
@@ -29,8 +30,9 @@ export function ButtonBar({ dock, tree }: { dock: DockviewApi | null; tree: Tree
     if (!dock) return;
     const read = () => {
       const p = dock.activePanel;
-      const conn = (p?.params as { conn?: ConnectionNode } | undefined)?.conn;
-      setActive(p && conn ? { id: p.id, conn } : null);
+      const params = p?.params as { conn?: ConnectionNode; files?: boolean } | undefined;
+      const conn = params?.conn;
+      setActive(p && conn ? { id: p.id, conn, files: !!params?.files } : null);
     };
     read();
     const subs = [dock.onDidActivePanelChange(read), dock.onDidRemovePanel(read)];
@@ -49,7 +51,7 @@ export function ButtonBar({ dock, tree }: { dock: DockviewApi | null; tree: Tree
     };
   }, [connId, tree, managing]);
 
-  const terminal = active && active.conn.kind !== "rdp" && active.conn.kind !== "vnc";
+  const terminal = active && !active.files && active.conn.kind !== "rdp" && active.conn.kind !== "vnc";
   return (
     <div className="button-bar" role="toolbar" aria-label="Saved commands">
       {snippets.length === 0 && <span className="button-bar-empty">No saved commands yet.</span>}

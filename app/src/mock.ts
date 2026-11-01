@@ -1,7 +1,7 @@
 // In-browser stand-in for the Rust backend, used by `npm run dev`.
 // It demonstrates every highlight state and simulates a remote change.
 
-import type { Backend, SessionHandle } from "./api";
+import type { Backend, SessionHandle, SftpHandle } from "./api";
 import type {
   ConnectionDraft,
   ConnectionNode,
@@ -15,6 +15,7 @@ import type {
   SyncConfig,
   TreeNode,
   Snippet,
+  SftpEntry,
 } from "./types";
 import { defaultRules, type HighlightProfile } from "./highlight";
 
@@ -644,6 +645,74 @@ export function mockBackend(): Backend {
     async clipboardWrite(text) {
       memClipboard = text;
       await navigator.clipboard.writeText(text).catch(() => {});
+    },
+    async pickFiles() {
+      return ["C:\temp\firmware.bin"];
+    },
+    openSftp(_conn, _onEvent) {
+      const files = new Map<string, SftpEntry[]>([
+        ["/", [
+          { name: "home", kind: "dir", size: 0, modified: 1_700_000_000, mode: 0o755 },
+          { name: "etc", kind: "dir", size: 0, modified: 1_700_000_000, mode: 0o755 },
+          { name: "motd", kind: "file", size: 312, modified: 1_700_000_500, mode: 0o644 },
+        ]],
+        ["/home", [
+          { name: "admin", kind: "dir", size: 0, modified: 1_700_000_000, mode: 0o700 },
+        ]],
+        ["/home/admin", [
+          { name: "backups", kind: "dir", size: 0, modified: 1_700_100_000, mode: 0o755 },
+          { name: "running-config.txt", kind: "file", size: 48_213, modified: 1_700_200_000, mode: 0o644 },
+          { name: "image.bin", kind: "file", size: 52_428_800, modified: 1_700_300_000, mode: 0o755 },
+        ]],
+        ["/home/admin/backups", []],
+        ["/etc", [{ name: "hosts", kind: "file", size: 90, modified: 1_700_000_000, mode: 0o644 }]],
+      ]);
+      const handle: SftpHandle = {
+        async list(path) {
+          const l = files.get(path);
+          if (!l) throw `${path}: No such file`;
+          return l;
+        },
+        async resolve(path) {
+          const out: string[] = [];
+          for (const p of path.split("/").filter(Boolean)) p === ".." ? out.pop() : p !== "." && out.push(p);
+          return "/" + out.join("/");
+        },
+        async mkdir(path) {
+          const i = path.lastIndexOf("/");
+          const dir = path.slice(0, i) || "/";
+          files.get(dir)?.push({ name: path.slice(i + 1), kind: "dir", size: 0, modified: Date.now() / 1000, mode: 0o755 });
+          files.set(path, []);
+        },
+        async rename(from, to) {
+          const i = from.lastIndexOf("/");
+          const dir = from.slice(0, i) || "/";
+          const e = files.get(dir)?.find((x) => x.name === from.slice(i + 1));
+          if (e) e.name = to.slice(to.lastIndexOf("/") + 1);
+        },
+        async remove(paths) {
+          for (const p of paths) {
+            const i = p.lastIndexOf("/");
+            const dir = p.slice(0, i) || "/";
+            files.set(dir, (files.get(dir) ?? []).filter((x) => x.name !== p.slice(i + 1)));
+          }
+        },
+        async download(_remote, _dest, onProgress) {
+          for (let n = 0; n <= 100; n += 25) {
+            onProgress(n * 1000);
+            await new Promise((r) => setTimeout(r, 120));
+          }
+        },
+        async upload(_local, _dir, onProgress) {
+          for (let n = 0; n <= 100; n += 25) {
+            onProgress(n * 1000);
+            await new Promise((r) => setTimeout(r, 120));
+          }
+        },
+        reply() {},
+        close() {},
+      };
+      return { handle, opened: Promise.resolve("/home/admin") };
     },
     async openSession(node, _size, onEvent): Promise<SessionHandle> {
       const send = (s: string) => onEvent({ event: "data", data: Array.from(new TextEncoder().encode(s)) });
