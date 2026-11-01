@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.2 — tab shortcuts and close prompts, Windows 7 RDP
 
 **Tabs**
 - Middle-click a tab to close it.

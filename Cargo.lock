@@ -3493,7 +3493,7 @@ dependencies = [
 
 [[package]]
 name = "linecard"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "chrono",
  "core-foundation 0.10.1",
@@ -3522,14 +3522,14 @@ dependencies = [
 
 [[package]]
 name = "linecard-core-model"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "linecard-core-store"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "linecard-core-sync",
  "rusqlite",
@@ -3539,14 +3539,14 @@ dependencies = [
 
 [[package]]
 name = "linecard-core-sync"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "linecard-importers"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "linecard-core-model",
  "roxmltree",
@@ -3555,7 +3555,7 @@ dependencies = [
 
 [[package]]
 name = "linecard-proto"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "base64 0.22.1",
  "des 0.8.1",
@@ -3579,7 +3579,7 @@ dependencies = [
 
 [[package]]
 name = "linecard-relay"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "axum",
  "getrandom 0.2.17",
@@ -3592,7 +3592,7 @@ dependencies = [
 
 [[package]]
 name = "linecard-sync"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -3614,7 +3614,7 @@ dependencies = [
 
 [[package]]
 name = "linecard-vault"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "argon2 0.5.3",
  "base64 0.22.1",
