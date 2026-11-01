@@ -57,6 +57,29 @@ A relay left running for months stays bounded:
 
 Compaction (shrinking a long history to a snapshot) needs a change to the sync protocol and isn't built yet.
 
+## Backups and restoring
+
+The relay's whole state is one SQLite file. Make a copy of it at any time, while the relay serves, with no downtime:
+
+```bash
+docker exec linecard-relay linecard-relay backup /data/backups/      # a folder: the file is named for the time
+docker exec linecard-relay linecard-relay backup /data/relay.bak.db  # or a file
+```
+
+Every copy is checked after it is made (integrity and schema) and appears only when it is good. For a daily copy without cron, set `LINECARD_RELAY_BACKUP_DIR` (the Compose bundle does, to a volume) and `LINECARD_RELAY_BACKUP_KEEP` (default 7): the relay writes `linecard-relay-YYYYMMDD-HHMMSS.db` once a day and deletes the oldest beyond that. Copy them off the server too.
+
+To restore, **stop the relay**, then:
+
+```bash
+linecard-relay restore /path/to/linecard-relay-20260101-040000.db
+```
+
+It refuses damaged files, files from a newer relay, and (when it can tell) a relay that is still running. The database it replaces is kept beside it as `…before-restore-<time>`.
+
+Restoring sends the relay back in time, so it gives itself a new history id. Linecard on each computer notices within about half a minute, re-sends its own changes and re-reads the relay from the start; changes made after the backup come back from the computers that made them. (Only Linecard versions that include this feature notice; update the computers before relying on a restore.)
+
+Backups contain only encrypted sync data, plus hashes of the groups' tokens and accounts' keys: keep them private.
+
 ## Admin commands
 
 Run them where the database lives (`docker exec linecard-relay …`):

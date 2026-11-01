@@ -22,8 +22,12 @@ services:
       LINECARD_RELAY_MAX_OPS: ${LINECARD_RELAY_MAX_OPS:-200000}
       LINECARD_RELAY_MAX_GROUP_BYTES: ${LINECARD_RELAY_MAX_GROUP_BYTES:-256MiB}
       LINECARD_RELAY_IDLE_DAYS: ${LINECARD_RELAY_IDLE_DAYS:-0}
+      # A backup of the database every day, the newest few kept (see README: copy them off this server).
+      LINECARD_RELAY_BACKUP_DIR: ${LINECARD_RELAY_BACKUP_DIR:-/backups}
+      LINECARD_RELAY_BACKUP_KEEP: ${LINECARD_RELAY_BACKUP_KEEP:-7}
     volumes:
       - relay-data:/data
+      - relay-backups:/backups
     # The image defines its own health check (linecard-relay health).
     networks: [backend]
     stop_grace_period: 10s
@@ -57,5 +61,6 @@ networks:
 
 volumes:
   relay-data:
+  relay-backups:
   caddy-data:
   caddy-config:

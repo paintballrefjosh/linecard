@@ -27,7 +27,7 @@ COPY --from=planner /src/recipe.json recipe.json
 RUN cargo chef cook --release -p linecard-relay --recipe-path recipe.json
 COPY . .
 RUN cargo build --release -p linecard-relay \
- && mkdir /data-seed
+ && mkdir /data-seed /backups-seed
 
 FROM gcr.io/distroless/static-debian12:nonroot
 LABEL org.opencontainers.image.title="Linecard relay" \
@@ -38,6 +38,8 @@ COPY --from=build /src/target/release/linecard-relay /usr/local/bin/linecard-rel
 # The data folder, owned by the image's non-root user (65532) so a named
 # volume starts out writable. A bind mount needs the same ownership.
 COPY --from=build --chown=65532:65532 /data-seed /data
+# Where built-in backups go when LINECARD_RELAY_BACKUP_DIR=/backups is set.
+COPY --from=build --chown=65532:65532 /backups-seed /backups
 USER 65532:65532
 ENV LINECARD_RELAY_ADDR=0.0.0.0:8443 \
     LINECARD_RELAY_DB=/data/linecard-relay.db

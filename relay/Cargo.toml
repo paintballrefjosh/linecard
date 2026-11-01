@@ -18,6 +18,6 @@ axum = "0.8"
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-rusqlite = { workspace = true }
+rusqlite = { workspace = true, features = ["backup"] }
 sha2 = "0.10"
 getrandom = "0.2"

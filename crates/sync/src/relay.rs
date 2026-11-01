@@ -118,6 +118,24 @@ impl RelayTransport {
         Ok(reply.latest)
     }
 
+    /// Which database history the relay is serving. It changes when the
+    /// operator restores a backup, which sends the relay back in time:
+    /// computers must then send their history again. `None` from a relay
+    /// that doesn't say (an older one).
+    pub async fn epoch(&self) -> Result<Option<String>, SyncError> {
+        let resp = self
+            .http
+            .get(format!("{}/health", self.base))
+            .send()
+            .await
+            .map_err(http_err)?;
+        Ok(resp
+            .headers()
+            .get("x-linecard-epoch")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string))
+    }
+
     fn url(&self, rest: &str) -> String {
         format!("{}/v1/groups/{}/{rest}", self.base, self.group)
     }

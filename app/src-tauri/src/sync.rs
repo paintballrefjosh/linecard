@@ -126,7 +126,7 @@ impl Transport {
                     .lock()
                     .ok()
                     .and_then(|l| l.sync_cursor("sync").ok().flatten())
-                    .and_then(|c| c.parse().ok())
+                    .map(|c| split_relay_cursor(&c).1)
                     .unwrap_or(0);
                 if r.wait(cursor).await.is_err() {
                     // Offline or an old relay without waiting: don't spin.
@@ -177,9 +177,18 @@ impl Transport {
                 Ok((got, serde_json::to_string(&next).unwrap_or_default()))
             }
             Transport::Relay(r) => {
-                let c = cursor.and_then(|c| c.parse().ok()).unwrap_or(0);
-                let (got, next) = r.pull(c).await?;
-                Ok((got, next.to_string()))
+                let (known, seq) = match cursor.as_deref().map(split_relay_cursor) {
+                    Some((e, s)) => (e.map(str::to_string), s),
+                    None => (None, 0),
+                };
+                let now = r.epoch().await?;
+                if matches!((&known, &now), (Some(k), Some(n)) if k != n) {
+                    // The operator restored a backup: the relay's history went back in
+                    // time. Start over from its beginning; `round` re-sends ours.
+                    return Ok((Vec::new(), join_relay_cursor(now.as_deref(), 0)));
+                }
+                let (got, next) = r.pull(seq).await?;
+                Ok((got, join_relay_cursor(now.as_deref(), next)))
             }
             Transport::GitHub(g) => {
                 let c: FolderCursor = cursor.and_then(|c| serde_json::from_str(&c).ok()).unwrap_or_default();
@@ -596,6 +605,30 @@ impl SyncEngine {
     }
 }
 
+/// The relay's cursor is "epoch:seq"; a bare "seq" is from before epochs.
+fn split_relay_cursor(c: &str) -> (Option<&str>, i64) {
+    match c.rsplit_once(':') {
+        Some((epoch, seq)) => (Some(epoch), seq.parse().unwrap_or(0)),
+        None => (None, c.parse().unwrap_or(0)),
+    }
+}
+
+fn join_relay_cursor(epoch: Option<&str>, seq: i64) -> String {
+    match epoch {
+        Some(e) => format!("{e}:{seq}"),
+        None => seq.to_string(),
+    }
+}
+
+/// True when moving from cursor `old` to `new` crossed a restore of the relay
+/// (both name an epoch, and it differs).
+fn relay_restored(old: Option<&str>, new: &str) -> bool {
+    match (old.map(split_relay_cursor), split_relay_cursor(new)) {
+        (Some((Some(a), _)), (Some(b), _)) => a != b,
+        _ => false,
+    }
+}
+
 fn closed_text(n: &Notice) -> String {
     format!(
         "{} replaced the sync phrase, so this computer stopped syncing. Enter the new phrase from {} under Settings → Sync → Use a new phrase.",
@@ -671,7 +704,22 @@ async fn round(
         .sync_cursor("sync")
         .map_err(lib_err)?
         .filter(|c| !c.is_empty());
-    let (received, next) = transport.pull(cursor).await?;
+    let (received, next) = transport.pull(cursor.clone()).await?;
+    if matches!(transport, Transport::Relay(_)) && relay_restored(cursor.as_deref(), &next) {
+        // Its history went back in time (a restored backup): what we had already
+        // sent may be gone. Send everything again (other computers skip what they
+        // have), and pull its history from the start on the next round.
+        let lib = state.lib.lock().map_err(|e| lib_err(e.to_string()))?;
+        lib.set_local_setting(PUSHED_KEY, "null").map_err(lib_err)?;
+        lib.set_sync_cursor("sync", &next).map_err(lib_err)?;
+        drop(lib);
+        crate::debuglog::write(
+            "sync",
+            "the relay was restored from a backup: sending this computer's changes again",
+        );
+        state.sync.poke();
+        return Ok(None);
+    }
     let mut incoming = Vec::new();
     let mut problem = None;
     let mut closed = None;
@@ -729,5 +777,39 @@ async fn round(
     match problem {
         Some(e) => Err(e),
         None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relay_cursors_carry_the_epoch_and_still_read_old_ones() {
+        assert_eq!(split_relay_cursor("a1b2c3:42"), (Some("a1b2c3"), 42));
+        assert_eq!(split_relay_cursor("42"), (None, 42), "a cursor from before epochs");
+        assert_eq!(split_relay_cursor(""), (None, 0));
+        assert_eq!(join_relay_cursor(Some("e"), 7), "e:7");
+        assert_eq!(join_relay_cursor(None, 7), "7");
+        for (e, s) in [(Some("abc"), 0), (None, 9), (Some("f00"), 123_456)] {
+            assert_eq!(split_relay_cursor(&join_relay_cursor(e, s)), (e, s));
+        }
+    }
+
+    #[test]
+    fn only_a_changed_epoch_counts_as_a_restore() {
+        // Same history, a first sight of the relay, an old relay: nothing to do.
+        assert!(!relay_restored(Some("a:60"), "a:70"));
+        assert!(!relay_restored(None, "a:0"), "first sync adopts the epoch");
+        assert!(
+            !relay_restored(Some("60"), "a:60"),
+            "a cursor from before epochs adopts it too"
+        );
+        assert!(
+            !relay_restored(Some("a:60"), "70"),
+            "a relay that stopped reporting one"
+        );
+        // The operator restored a backup.
+        assert!(relay_restored(Some("a:60"), "b:0"));
     }
 }

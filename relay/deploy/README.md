@@ -32,18 +32,35 @@ docker compose pull && docker compose up -d                                 # up
 
 Upgrading keeps your data: it lives in the `relay-data` volume. Keep the `caddy-data` volume too, or Caddy has to fetch new certificates.
 
-### A copy of the data
+### Backups
 
-The database is one SQLite file in the `relay-data` volume. For a copy that is certainly complete, stop the relay first (the image has no shell or `tar`, so a throwaway container does the copying):
+The relay makes a backup of its database every day into the `relay-backups` volume and keeps the newest seven (`LINECARD_RELAY_BACKUP_KEEP`). A backup is taken while the relay serves, with no downtime, and is checked after it is made.
+
+A backup on the same disk doesn't survive losing the server, so copy them elsewhere. Everything in them is already encrypted sync data, but they also hold hashes of the groups' tokens and of account keys, so keep them private.
+
+```bash
+docker compose exec relay linecard-relay backup /backups/     # make one now
+docker compose cp relay:/backups/. ./relay-backups            # copy them all to this folder (then onto another machine)
+```
+
+A nightly copy off the server, as a cron job on the host:
+
+```bash
+0 4 * * *  cd /path/to/relay/deploy && docker compose cp relay:/backups/. /mnt/offsite/linecard-relay/
+```
+
+**Restoring** replaces the database with a backup. Stop the relay first; the database it replaces is kept beside it (as `…db.before-restore-<time>`), never deleted:
 
 ```bash
 docker compose stop relay
-docker run --rm -v linecard-relay_relay-data:/data -v "$PWD":/backup alpine \
-  cp /data/linecard-relay.db /backup/linecard-relay-backup.db
+docker compose cp ./relay-backups/linecard-relay-20260101-040000.db relay:/backups/   # skip if it is already in the volume
+docker compose run --rm --no-deps relay restore /backups/linecard-relay-20260101-040000.db
 docker compose start relay
 ```
 
-Everything in the file is already encrypted, so the copy needs no extra protection beyond keeping it private (it holds hashes of the groups' tokens). A built-in online backup is planned.
+(`docker compose cp` into a stopped container works; if yours refuses, start a throwaway container with the `relay-backups` volume mounted and copy the file there.)
+
+After a restore the relay announces a new history. Each computer notices within about half a minute, sends all of its own changes again (computers skip what they already have), and re-reads the relay from the start, so changes made after the backup was taken come back from the computers that made them. Computers running a Linecard from before this feature do not notice, so update them before relying on a restore.
 
 ## Other ways to run it
 

@@ -129,3 +129,24 @@ async fn private_relays_take_an_access_key() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn the_relay_reports_which_history_it_is_serving() {
+    let (one, two) = (start_relay().await, start_relay().await);
+    let group = GroupKey::generate();
+    let (a, b) = (client(&one, &group, "laptop"), client(&two, &group, "laptop"));
+    let first = a.epoch().await.unwrap().expect("this relay reports an epoch");
+    assert_eq!(
+        a.epoch().await.unwrap().as_deref(),
+        Some(first.as_str()),
+        "stable while it runs"
+    );
+    assert_ne!(
+        b.epoch().await.unwrap().unwrap(),
+        first,
+        "another database, another history"
+    );
+    // Authenticated responses carry it too.
+    let resp = reqwest::get(format!("{one}/health")).await.unwrap();
+    assert_eq!(resp.headers()["x-linecard-epoch"], first.as_str());
+}

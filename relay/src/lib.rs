@@ -22,7 +22,7 @@
 //! ```
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -35,6 +35,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Notify;
+
+/// Response header naming the database's epoch (see `add_epoch`).
+pub const EPOCH_HEADER: &str = "x-linecard-epoch";
 
 /// Largest single blob (one sealed batch or heartbeat).
 pub const MAX_BLOB: usize = 1 << 20;
@@ -159,6 +162,10 @@ pub struct Maintenance {
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
 pub struct Relay {
+    /// The database file (`None` for an in-memory relay), so a backup can read it on its own connection.
+    path: Option<PathBuf>,
+    /// Identifies this database's history; replaced when a backup is restored.
+    epoch: String,
     db: Mutex<Connection>,
     limits: Limits,
     /// Wakes waiters on a group when something is pushed to it.
@@ -189,7 +196,9 @@ fn valid_device(d: &str) -> bool {
 
 impl Relay {
     pub fn open(path: &Path, limits: Limits) -> rusqlite::Result<Self> {
-        Self::init(Connection::open(path)?, limits)
+        let mut relay = Self::init(Connection::open(path)?, limits)?;
+        relay.path = Some(path.to_path_buf());
+        Ok(relay)
     }
 
     /// Fold the write-ahead log into the database file (done on shutdown, so
@@ -210,11 +219,19 @@ impl Relay {
         db.pragma_update(None, "synchronous", "NORMAL")?;
         db.busy_timeout(Duration::from_secs(5))?;
         migrate(&db)?;
+        let epoch: String = db.query_row("SELECT value FROM meta WHERE key = 'epoch'", [], |r| r.get(0))?;
         Ok(Relay {
+            path: None,
+            epoch,
             db: Mutex::new(db),
             limits,
             waiters: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Which database history this is (changes when a backup is restored).
+    pub fn epoch(&self) -> &str {
+        &self.epoch
     }
 
     fn db(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
@@ -548,6 +565,11 @@ impl Relay {
     }
 }
 
+mod backup;
+pub use backup::{
+    check as check_backup, list_backups, prune as prune_backups, restore as restore_backup, stamp, BackupInfo,
+};
+
 // ---- schema versions ---------------------------------------------------------
 
 fn has_column(db: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
@@ -597,10 +619,29 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
         }
         Ok(())
     },
+    // 4: an epoch naming this database's history. A restored backup gets a new
+    // one, so clients notice the relay went back in time.
+    |db| {
+        db.execute_batch("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")?;
+        if !db.prepare("SELECT 1 FROM meta WHERE key = 'epoch'")?.exists([])? {
+            set_new_epoch(db)?;
+        }
+        Ok(())
+    },
 ];
 
 /// The schema version a database written by this relay has.
 pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
+
+/// Give the database a new random epoch (see [`EPOCH_HEADER`]).
+pub fn set_new_epoch(db: &Connection) -> rusqlite::Result<()> {
+    let mut raw = [0u8; 12];
+    getrandom::getrandom(&mut raw)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(std::io::Error::other(e.to_string()).into()))?;
+    let epoch: String = raw.iter().map(|b| format!("{b:02x}")).collect();
+    db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('epoch', ?1)", [epoch])?;
+    Ok(())
+}
 
 fn migrate(db: &Connection) -> rusqlite::Result<()> {
     db.execute_batch("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")?;
@@ -730,6 +771,17 @@ async fn devices(
     Ok(Json(serde_json::json!({ "devices": devices })))
 }
 
+/// Every response says which database it came from. Restoring a backup
+/// gives the relay a new epoch, which tells clients that its history went
+/// back in time and they must send theirs again.
+async fn add_epoch(State(r): State<Shared>, req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    let mut res = next.run(req).await;
+    if let Ok(v) = r.epoch().parse() {
+        res.headers_mut().insert(EPOCH_HEADER, v);
+    }
+    res
+}
+
 pub fn router(relay: Shared) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
@@ -738,6 +790,7 @@ pub fn router(relay: Shared) -> Router {
         .route("/v1/groups/{group}/devices", get(devices))
         .route("/v1/groups/{group}/devices/{device}", put(put_device))
         .layer(axum::extract::DefaultBodyLimit::max(MAX_BLOB + 4096))
+        .layer(axum::middleware::from_fn_with_state(relay.clone(), add_epoch))
         .with_state(relay)
 }
 
@@ -992,6 +1045,17 @@ mod tests {
             .unwrap();
         assert_eq!(r.maintain().unwrap(), Maintenance::default());
         assert_eq!(r.groups().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_epoch_is_stable_across_restarts_and_new_for_new_databases() {
+        let path = temp_db("epoch");
+        let first = Relay::open(&path, Limits::default()).unwrap().epoch().to_string();
+        assert_eq!(first.len(), 24);
+        assert_eq!(Relay::open(&path, Limits::default()).unwrap().epoch(), first);
+        remove_db(&path);
+        assert_ne!(Relay::open(&path, Limits::default()).unwrap().epoch(), first);
+        remove_db(&path);
     }
 
     #[test]

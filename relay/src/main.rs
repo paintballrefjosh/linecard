@@ -8,6 +8,8 @@
 //! linecard-relay group list [--idle [DAYS]]      sizes and last activity; --idle: only quiet groups
 //! linecard-relay group remove <group-id>
 //! linecard-relay vacuum                        give deleted data's disk space back (safe while serving; writes pause briefly)
+//! linecard-relay backup <file or folder>       copy the database while serving (checked after it is made)
+//! linecard-relay restore <backup file>         replace the database with a backup (stop the relay first; the old file is kept)
 //! linecard-relay stats
 //! linecard-relay health                        exit 0 if the local server answers (for container health checks)
 //! ```
@@ -19,6 +21,8 @@
 //!   LINECARD_RELAY_OPEN      "false" = only accounts may start sync groups
 //!   LINECARD_RELAY_MAX_GROUP_BYTES  storage per group, e.g. 256MiB (default; 0 = no limit)
 //!   LINECARD_RELAY_IDLE_DAYS delete groups with no write or heartbeat for this many days (default 0 = never)
+//!   LINECARD_RELAY_BACKUP_DIR  folder for built-in daily backups (default: none)
+//!   LINECARD_RELAY_BACKUP_KEEP how many of them to keep (default 7)
 //!
 //! On SIGTERM or Ctrl+C the server stops accepting connections, gives requests
 //! in flight a few seconds (long-polls are released), and folds the SQLite
@@ -112,6 +116,78 @@ fn when(ms: Option<i64>) -> String {
     }
 }
 
+/// Where built-in daily backups go, and how many to keep (`LINECARD_RELAY_BACKUP_DIR`
+/// and `LINECARD_RELAY_BACKUP_KEEP`, default 7). Off when no folder is set.
+fn backup_settings() -> Option<(PathBuf, usize)> {
+    let dir = std::env::var("LINECARD_RELAY_BACKUP_DIR")
+        .ok()
+        .filter(|d| !d.trim().is_empty())?;
+    let keep = std::env::var("LINECARD_RELAY_BACKUP_KEEP")
+        .ok()
+        .and_then(|k| k.parse().ok())
+        .unwrap_or(7)
+        .max(1);
+    Some((PathBuf::from(dir), keep))
+}
+
+fn db_path() -> PathBuf {
+    PathBuf::from(std::env::var("LINECARD_RELAY_DB").unwrap_or_else(|_| "linecard-relay.db".into()))
+}
+
+/// `backup <path>`: a copy of the database, taken while the relay serves.
+/// `path` may be a folder (the file is named for the time).
+fn backup_command(dest: &str) -> Result<(), String> {
+    let (relay, _) = open_db()?;
+    let mut file = PathBuf::from(dest);
+    if file.is_dir() || dest.ends_with(['/', '\\']) {
+        std::fs::create_dir_all(&file).map_err(|e| format!("can't create {}: {e}", file.display()))?;
+        file = file.join(format!("linecard-relay-{}.db", linecard_relay::stamp(now_ms())));
+    }
+    let info = relay.backup(&file)?;
+    println!(
+        "Backed up to {} ({}, {} groups, {} accounts). Everything in it is encrypted sync data, but it also holds hashes of the groups' tokens and accounts' keys: keep it private.",
+        file.display(),
+        size(info.bytes as i64),
+        info.groups,
+        info.accounts
+    );
+    Ok(())
+}
+
+/// `restore <path>`: replace the database with a backup. The relay must be stopped.
+fn restore_command(from: &str) -> Result<(), String> {
+    let listen = std::env::var("LINECARD_RELAY_ADDR").unwrap_or_else(|_| "0.0.0.0:8443".into());
+    if local_addr(&listen).and_then(probe).is_ok() {
+        return Err(format!(
+            "a relay is answering on {listen}: stop it before restoring (the old database is kept aside either way)"
+        ));
+    }
+    let db = db_path();
+    let (info, aside) = linecard_relay::restore_backup(std::path::Path::new(from), &db)?;
+    println!(
+        "Restored {} groups and {} accounts from {from} into {}.",
+        info.groups,
+        info.accounts,
+        db.display()
+    );
+    match aside {
+        Some(old) => println!(
+            "The database it replaced is kept at {}; delete it when you are sure.",
+            old.display()
+        ),
+        None => println!("There was no database to replace."),
+    }
+    println!("Start the relay again.");
+    Ok(())
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 fn size(bytes: i64) -> String {
     match bytes {
         b if b < 10_000 => format!("{b} B"),
@@ -122,8 +198,15 @@ fn size(bytes: i64) -> String {
 }
 
 fn admin(args: &[String]) -> Result<(), String> {
-    let (relay, _) = open_db()?;
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
+    // These two manage the database file itself, so they come before opening it.
+    match words.as_slice() {
+        ["backup", dest] => return backup_command(dest),
+        ["restore", from] => return restore_command(from),
+        ["backup"] | ["restore"] => return Err("usage: backup <file or folder> | restore <backup file>".into()),
+        _ => {}
+    }
+    let (relay, _) = open_db()?;
     let flag = |name: &str| words.iter().position(|w| *w == name);
     let err = |e: linecard_relay::RelayError| format!("{e:?}");
     match words.as_slice() {
@@ -322,6 +405,15 @@ async fn upkeep(relay: Arc<Relay>) {
                     Err(e) => eprintln!("maintenance failed: {e:?}"),
                 }
             }
+            if daily {
+                if let Some((dir, keep)) = backup_settings() {
+                    match relay.backup_rotating(&dir, keep) {
+                        Ok(Some(file)) => println!("backed up to {}", file.display()),
+                        Ok(None) => {}
+                        Err(e) => eprintln!("backup failed: {e}"),
+                    }
+                }
+            }
             if let Err(e) = relay.checkpoint() {
                 eprintln!("checkpoint failed: {e}");
             }
@@ -380,6 +472,10 @@ async fn main() -> ExitCode {
             "private (accounts only)"
         }
     );
+    match backup_settings() {
+        Some((dir, keep)) => println!("backups: daily into {}, newest {keep} kept", dir.display()),
+        None => println!("backups: not set up (LINECARD_RELAY_BACKUP_DIR)"),
+    }
     let limits = env_limits();
     println!(
         "limits: {} batches and {} per group; idle groups {}",

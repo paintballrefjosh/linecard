@@ -73,6 +73,9 @@ jobs:
           echo "image size: $size bytes"
           [ "$size" -lt 20000000 ]
           [ "$(docker image inspect linecard-relay:ci -f '{{.Config.User}}')" = "65532:65532" ]
+      - name: Backs up while serving
+        run: |
+          docker exec relay linecard-relay backup /data/ci-backup.db
       - name: Stops gracefully
         run: |
           start=$(date +%s)
@@ -81,6 +84,9 @@ jobs:
           code=$(docker inspect -f '{{.State.ExitCode}}' relay)
           echo "stopped in ${took}s, exit code $code"
           [ "$took" -lt 10 ] && [ "$code" = 0 ]
+      - name: Restores a backup into the stopped relay's volume
+        run: |
+          docker run --rm -v relay-data:/data linecard-relay:ci restore /data/ci-backup.db
       - name: Works with a read-only root filesystem and no capabilities
         run: |
           docker run -d --name relay2 --read-only --cap-drop ALL --security-opt no-new-privileges:true \
@@ -97,4 +103,5 @@ jobs:
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1/health && break; sleep 2; done
           curl -fsS http://127.0.0.1/health
           docker compose exec -T relay linecard-relay stats
+          docker compose exec -T relay linecard-relay backup /backups/
           docker compose down -v

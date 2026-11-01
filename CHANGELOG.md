@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Relay backups**: `linecard-relay backup <file or folder>` copies the database while the relay serves and checks the copy; `linecard-relay restore <file>` replaces it (stop the relay first; the old file is kept). `LINECARD_RELAY_BACKUP_DIR` and `LINECARD_RELAY_BACKUP_KEEP` make a daily rotating backup, which the Compose bundle turns on. A restored relay announces a new history id, and Linecard re-sends its changes and re-reads the relay, so a restore does not strand computers that were ahead of it.
+
 - **Relay retention**: groups are capped by size as well as batch count (`LINECARD_RELAY_MAX_GROUP_BYTES`, 256 MiB by default); computers unseen for 90 days leave the device list; `LINECARD_RELAY_IDLE_DAYS` can delete abandoned groups; `linecard-relay vacuum` returns disk space; the database now carries a schema version and upgrades itself. `group list` shows sizes and last activity, and `group list --idle N` shows quiet groups.
 
 - **Relay deployment bundle** (`relay/deploy`): `docker compose up -d` runs the relay behind Caddy with automatic HTTPS, with notes for nginx, Traefik, Cloudflare Tunnel, plain Docker and systemd.
