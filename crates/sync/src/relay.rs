@@ -2,7 +2,10 @@
 //! blobs per group in arrival order; the cursor is the last sequence number
 //! seen.
 
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use futures_util::StreamExt;
 
 use serde::Deserialize;
 
@@ -16,8 +19,38 @@ pub struct RelayTransport {
     /// Access key for a private relay (needed to start a group there).
     account: Option<String>,
     http: reqwest::Client,
+    push: tokio::sync::Mutex<Push>,
 }
 
+type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// The relay's WebSocket, once connected, and when to try again after a failure.
+#[derive(Default)]
+struct Push {
+    socket: Option<Box<Socket>>,
+    retry_at: Option<Instant>,
+}
+
+/// After failing to connect (an old relay, a proxy that drops sockets): fall
+/// back to long-polling for this long.
+const WS_RETRY_CONNECT: Duration = Duration::from_secs(600);
+/// After a connected socket breaks.
+const WS_RETRY_BROKEN: Duration = Duration::from_secs(20);
+/// One wait ends after this long with nothing new, so callers keep checking.
+const WS_WAIT: Duration = Duration::from_secs(55);
+
+fn tls_config() -> Result<Arc<rustls::ClientConfig>, SyncError> {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let verifier =
+        rustls_platform_verifier::Verifier::new(provider.clone()).map_err(|e| SyncError::Relay(e.to_string()))?;
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| SyncError::Relay(e.to_string()))?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(verifier))
+        .with_no_client_auth();
+    Ok(Arc::new(config))
+}
 #[derive(Deserialize)]
 struct WaitReply {
     latest: i64,
@@ -105,6 +138,7 @@ impl RelayTransport {
                 .timeout(Duration::from_secs(20))
                 .build()
                 .map_err(http_err)?,
+            push: Default::default(),
         })
     }
 
@@ -121,9 +155,82 @@ impl RelayTransport {
         }
     }
 
+    /// Wait until the group has something after `cursor`; returns the newest
+    /// sequence number. Uses the relay's WebSocket when it has one (the relay
+    /// says so the moment a batch arrives), and otherwise holds a request
+    /// open for up to ~25 s.
+    pub async fn wait(&self, cursor: i64) -> Result<i64, SyncError> {
+        if let Some(latest) = self.wait_push(cursor).await {
+            return Ok(latest);
+        }
+        self.wait_poll(cursor).await
+    }
+
+    /// `None`: no WebSocket right now (connecting failed, or it just broke).
+    async fn wait_push(&self, cursor: i64) -> Option<i64> {
+        let mut push = self.push.lock().await;
+        if push.retry_at.is_some_and(|t| Instant::now() < t) {
+            return None;
+        }
+        if push.socket.is_none() {
+            match self.connect_push().await {
+                Ok(s) => {
+                    push.socket = Some(Box::new(s));
+                    push.retry_at = None;
+                }
+                Err(_) => {
+                    push.retry_at = Some(Instant::now() + WS_RETRY_CONNECT);
+                    return None;
+                }
+            }
+        }
+        let deadline = Instant::now() + WS_WAIT;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let sock = push.socket.as_mut()?;
+            match tokio::time::timeout(left, sock.next()).await {
+                Err(_) => return Some(cursor), // nothing new; the caller asks again
+                Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Text(t)))) => {
+                    if let Ok(reply) = serde_json::from_str::<WaitReply>(t.as_str()) {
+                        if reply.latest > cursor {
+                            return Some(reply.latest);
+                        }
+                    }
+                }
+                Ok(Some(Ok(_))) => {} // pings, pongs
+                Ok(_) => {
+                    push.socket = None;
+                    push.retry_at = Some(Instant::now() + WS_RETRY_BROKEN);
+                    return None;
+                }
+            }
+        }
+    }
+
+    async fn connect_push(&self) -> Result<Socket, SyncError> {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let url = self.url("ws").replacen("http", "ws", 1); // http -> ws, https -> wss
+        let mut request = url.into_client_request().map_err(|e| SyncError::Relay(e.to_string()))?;
+        request.headers_mut().insert(
+            "authorization",
+            format!("Bearer {}", self.token)
+                .parse()
+                .map_err(|_| SyncError::Relay("bad token".into()))?,
+        );
+        let connector = tokio_tungstenite::Connector::Rustls(tls_config()?);
+        let (socket, _) = tokio::time::timeout(
+            Duration::from_secs(10),
+            tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector)),
+        )
+        .await
+        .map_err(|_| SyncError::Relay("the relay didn't answer the WebSocket in time".into()))?
+        .map_err(|e| SyncError::Relay(e.to_string()))?;
+        Ok(socket)
+    }
+
     /// Wait (up to ~25 s) until the group has something after `cursor`;
     /// returns the newest sequence number.
-    pub async fn wait(&self, cursor: i64) -> Result<i64, SyncError> {
+    async fn wait_poll(&self, cursor: i64) -> Result<i64, SyncError> {
         let resp = self
             .http
             .get(self.url(&format!("ops/wait?after={cursor}&wait=25")))
@@ -269,5 +376,15 @@ impl RelayTransport {
                 })
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_websocket_tls_setup_builds() {
+        // wss:// uses the system's trust store through an explicit crypto provider;
+        // this fails loudly if the provider setup is ever ambiguous.
+        assert!(super::tls_config().is_ok());
     }
 }

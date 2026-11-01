@@ -316,3 +316,53 @@ async fn libraries_converge_across_a_compaction() {
     assert_eq!(a.object("c2").unwrap().get("name").unwrap().to_string(), "renamed");
     let _ = &keys[2];
 }
+
+#[tokio::test]
+async fn waiting_uses_the_websocket_and_keeps_it_between_waits() {
+    let base = start_relay().await;
+    let group = GroupKey::generate();
+    let (ka, kb) = (DeviceKey::generate(), DeviceKey::generate());
+    let a = client(&base, &group, "laptop");
+    let b = Arc::new(client(&base, &group, "desktop"));
+
+    // Nothing there yet: the first wait ends by itself, not because of an error.
+    a.push(&seal(&group, &ka, "laptop", &1)).await.unwrap();
+    let mut cursor = b.wait(0).await.unwrap();
+    assert_eq!(cursor, 1, "the socket reports what is already there at once");
+
+    // Pushes from the other computer wake it within moments, wait after wait.
+    for n in 2..5 {
+        let waiter = tokio::spawn({
+            let b = b.clone();
+            async move { b.wait(cursor).await.unwrap() }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let started = std::time::Instant::now();
+        a.push(&seal(&group, &ka, "laptop", &n)).await.unwrap();
+        cursor = tokio::time::timeout(std::time::Duration::from_secs(3), waiter)
+            .await
+            .expect("woken by the push")
+            .unwrap();
+        assert_eq!(cursor, n);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+    let _ = kb;
+}
+
+#[tokio::test]
+async fn a_relay_without_websockets_is_waited_on_by_long_poll() {
+    use axum::routing::get;
+    // An older relay: only the long-poll exists (and /ws is a 404).
+    let app = axum::Router::new().route(
+        "/v1/groups/{group}/ops/wait",
+        get(|| async { axum::Json(serde_json::json!({ "latest": 7 })) }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let group = GroupKey::generate();
+    let c = client(&base, &group, "laptop");
+    assert_eq!(c.wait(0).await.unwrap(), 7);
+    // And it doesn't try the socket again on every call.
+    assert_eq!(c.wait(0).await.unwrap(), 7);
+}

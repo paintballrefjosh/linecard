@@ -35,7 +35,7 @@ Both settings are needed; with only one, or with unreadable files, the relay ref
 
 The image is small (a static binary on a distroless base): it has no shell, runs as a non-root user (65532), is built for `linux/amd64` and `linux/arm64`, and carries a built-in health check (`linecard-relay health`). Tags are `:X.Y.Z`, `:X.Y` and `:latest`; a published version is never re-tagged. `docker stop` ends it cleanly within a few seconds. It also runs with `--read-only --cap-drop ALL --security-opt no-new-privileges:true`; mount the `/data` volume (a bind mount must be owned by uid 65532). Admin commands work as before: `docker exec linecard-relay linecard-relay stats`.
 
-Changes reach the other computers within about a second: each one keeps a request open on the relay, which answers as soon as something new arrives.
+Changes reach the other computers within about a second. Each computer keeps a WebSocket open to the relay (`/v1/groups/{group}/ws`), and the relay says so the moment something new arrives. If a proxy or an older relay doesn't allow WebSockets, Linecard falls back to holding a request open (the long-poll) and tries the socket again after ten minutes. Caddy, Traefik and Cloudflare Tunnel pass WebSockets through; for nginx, forward the `Upgrade` and `Connection` headers or just leave it on the fallback. A socket uses the same per-address and per-group cap as a held request.
 
 ## Settings
 

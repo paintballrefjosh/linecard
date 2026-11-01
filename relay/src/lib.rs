@@ -45,6 +45,9 @@ pub const MAX_BLOB: usize = 1 << 20;
 /// Most batches one compaction may bring.
 pub const MAX_COMPACT_BLOBS: usize = 64;
 
+/// How often an idle socket is pinged.
+const WS_PING: Duration = Duration::from_secs(30);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct GroupStats {
     pub batches: i64,
@@ -960,6 +963,70 @@ async fn wait(
     Ok(Json(serde_json::json!({ "latest": latest })))
 }
 
+/// Push instead of poll: a WebSocket that says `{"latest": N}` whenever the
+/// group's newest batch changes (and once on connecting). Same token as
+/// everything else; a computer falls back to the long-poll when this isn't
+/// available.
+async fn ws(
+    State(r): State<Shared>,
+    UrlPath(group): UrlPath<String>,
+    headers: HeaderMap,
+    slot: Option<axum::Extension<Arc<crate::guard::Slot>>>,
+    upgrade: axum::extract::ws::WebSocketUpgrade,
+) -> Result<Response> {
+    let token = token(&headers);
+    r.latest(&group, &token)?; // the token is checked before the upgrade
+    let slot = slot.map(|s| s.0);
+    Ok(upgrade.on_upgrade(move |socket| watch(r, group, token, socket, slot)))
+}
+
+async fn watch(
+    r: Shared,
+    group: String,
+    token: String,
+    mut socket: axum::extract::ws::WebSocket,
+    _slot: Option<Arc<crate::guard::Slot>>,
+) {
+    use axum::extract::ws::Message;
+    r.metrics().wait_started();
+    let notify = r.waiter(&group);
+    let mut last = -1;
+    loop {
+        // Register before looking, so a push in between isn't missed.
+        let changed = notify.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        match r.latest(&group, &token) {
+            Ok(n) if n != last => {
+                last = n;
+                if socket
+                    .send(Message::Text(serde_json::json!({ "latest": n }).to_string().into()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            Ok(_) => {}
+            Err(_) => break, // the group is gone or the token no longer fits
+        }
+        tokio::select! {
+            () = &mut changed => {}
+            msg = socket.recv() => match msg {
+                None | Some(Err(_) | Ok(Message::Close(_))) => break,
+                Some(Ok(_)) => {}
+            },
+            // Keeps idle sockets alive through proxies, and finds dead ones.
+            () = tokio::time::sleep(WS_PING) => {
+                if socket.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break;
+                }
+            }
+        }
+    }
+    r.metrics().wait_ended();
+}
+
 async fn put_device(
     State(r): State<Shared>,
     UrlPath((group, device)): UrlPath<(String, String)>,
@@ -1003,6 +1070,7 @@ pub fn router(relay: Shared) -> Router {
         .route("/ready", get(ready))
         .route("/v1/groups/{group}/ops", get(pull).post(push))
         .route("/v1/groups/{group}/ops/wait", get(wait))
+        .route("/v1/groups/{group}/ws", get(ws))
         .route("/v1/groups/{group}/stats", get(stats))
         .route(
             "/v1/groups/{group}/compact",

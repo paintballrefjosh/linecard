@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Relay WebSocket push**: computers keep a WebSocket open to the relay and hear about new batches immediately, instead of holding a request open and re-asking every 25 seconds. A proxy or older relay that doesn't allow WebSockets makes Linecard fall back to the old way automatically.
+
 - **Relay compaction**: a sync group on a relay no longer grows forever. When it holds 500 or more batches, one caught-up computer replaces the old history with a snapshot of the current state (the relay only accepts one that is smaller, and stays unable to read it). Every computer, including ones behind and ones that join later, converges to the same library; the only loss is reverting a change that was compacted before a computer saw it. Needs a relay from this version; with an older relay nothing happens. Design in `docs/sync-protocol.md`.
 
 - **Scripting, more ways in**: `linecard run script.py` (or the name of a script in the scripts folder) runs a script in the running window; **Run on connect** in the Scripts window starts a script whenever a chosen connection logs in; and `session.screen()` returns the text on the terminal screen right now.

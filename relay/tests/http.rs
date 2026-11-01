@@ -248,3 +248,51 @@ async fn a_compaction_may_be_bigger_than_an_ordinary_request() {
         .unwrap();
     assert_eq!(too_big.status(), 413);
 }
+
+#[tokio::test]
+async fn sockets_count_against_the_same_cap_as_long_polls_and_free_it_when_closed() {
+    use futures_util::StreamExt;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let (base, _) = serve(Limits::default()).await;
+    let url = format!("{}/v1/groups/{GROUP}/ws", base.replacen("http", "ws", 1));
+    let connect = || async {
+        let mut req = url.clone().into_client_request().unwrap();
+        req.headers_mut()
+            .insert("authorization", format!("Bearer {TOKEN}").parse().unwrap());
+        tokio_tungstenite::connect_async(req).await
+    };
+    let mut open = Vec::new();
+    for _ in 0..linecard_relay::guard::MAX_HELD {
+        let (mut s, _) = connect().await.expect("within the cap");
+        // Each says where the group stands as soon as it connects.
+        let first = tokio::time::timeout(Duration::from_secs(3), s.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(first.to_text().unwrap().contains("latest"));
+        open.push(s);
+    }
+    let refused = connect().await.expect_err("one too many");
+    assert!(refused.to_string().contains("429"), "{refused}");
+    // Closing one makes room.
+    drop(open.pop());
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(connect().await.is_ok());
+    // A wrong token never gets a socket.
+    let mut bad = url.clone().into_client_request().unwrap();
+    bad.headers_mut()
+        .insert("authorization", "Bearer not-the-right-token-123".parse().unwrap());
+    // (an unclaimed group has no token yet, so claim it first)
+    reqwest::Client::new()
+        .post(format!("{base}/v1/groups/{GROUP}/ops"))
+        .bearer_auth(TOKEN)
+        .json(&serde_json::json!({ "device": "laptop", "blob": "x" }))
+        .send()
+        .await
+        .unwrap();
+    drop(open);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let err = tokio_tungstenite::connect_async(bad).await.expect_err("wrong token");
+    assert!(err.to_string().contains("401"), "{err}");
+}

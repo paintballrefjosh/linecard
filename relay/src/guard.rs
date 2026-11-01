@@ -249,7 +249,7 @@ fn refuse(status: StatusCode, retry_after: u64, why: &str) -> Response {
 }
 
 /// The middleware: limits first, then the request, then a note of wrong tokens.
-pub async fn guard(State(relay): State<Shared>, req: Request, next: Next) -> Response {
+pub async fn guard(State(relay): State<Shared>, mut req: Request, next: Next) -> Response {
     let path = req.uri().path().to_string();
     // Probes and monitoring aren't limited.
     if path == "/health" || path == "/ready" {
@@ -293,7 +293,8 @@ pub async fn guard(State(relay): State<Shared>, req: Request, next: Next) -> Res
     }
 
     let long_poll = path.ends_with("/ops/wait");
-    let _slot = if long_poll {
+    let socket = path.ends_with("/ws");
+    let _slot = if long_poll || socket {
         match g.held.take(&ip_key, group.as_deref().unwrap_or("-"), MAX_HELD) {
             Some(slot) => Some(slot),
             None => {
@@ -307,6 +308,14 @@ pub async fn guard(State(relay): State<Shared>, req: Request, next: Next) -> Res
         }
     } else {
         None
+    };
+    // A socket outlives this call: the handler keeps its slot until the socket closes.
+    let _slot = match (socket, _slot) {
+        (true, Some(slot)) => {
+            req.extensions_mut().insert(Arc::new(slot));
+            None
+        }
+        (_, slot) => slot,
     };
 
     let response = if long_poll {
