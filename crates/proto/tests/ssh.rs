@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use linecard_proto::ssh::SshSession;
+use linecard_proto::ssh::{JumpChain, SshSession};
 use linecard_proto::{
     Credentials, EventSink, ForwardKind, HostKeyDecision, HostKeyStatus, PortForward, PromptReply, Session,
     SessionEvent, SshOptions, TerminalTarget,
@@ -666,6 +666,62 @@ async fn unreachable_target_behind_a_jump_host_says_so() {
         }
         other => panic!("expected a tunnel error, got {other:?}"),
     }
+}
+
+/// What VNC and RDP use to reach a host behind a bastion: log in once, open
+/// TCP streams from the jump host.
+#[tokio::test]
+async fn jump_chain_opens_streams_for_other_protocols() {
+    let jump_port = start_server(Mode::Password).await;
+    let echo = echo_server().await;
+    let opts = options(temp_known_hosts());
+    let mut jump = TerminalTarget::new("127.0.0.1", jump_port);
+    jump.username = Some("admin".into());
+
+    let (tx, mut events) = unbounded_channel();
+    let sink: EventSink = Box::new(move |e| {
+        let _ = tx.send(e);
+    });
+    let (reply_tx, reply_rx) = unbounded_channel();
+    let replies = Arc::new(tokio::sync::Mutex::new(reply_rx));
+    let opening = tokio::spawn(async move { JumpChain::open(&jump, &opts, sink, replies).await });
+
+    let mut next = async || {
+        tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .expect("timed out waiting for a prompt")
+            .expect("events ended")
+    };
+    assert!(matches!(next().await, SessionEvent::HostKey(_)));
+    reply_tx
+        .send(PromptReply::HostKey(HostKeyDecision::AcceptOnce))
+        .unwrap();
+    assert!(matches!(next().await, SessionEvent::Auth(_)));
+    reply_tx
+        .send(PromptReply::Fields {
+            values: vec!["secret".into()],
+            remember: false,
+        })
+        .unwrap();
+    let chain = opening.await.unwrap().expect("jump login");
+
+    // Each connection is its own channel through the one login.
+    for _ in 0..2 {
+        let mut s = chain.connect("127.0.0.1", echo).await.unwrap();
+        s.write_all(b"ping").await.unwrap();
+        let mut buf = [0u8; 4];
+        tokio::time::timeout(Duration::from_secs(10), s.read_exact(&mut buf))
+            .await
+            .expect("no echo through the jump host")
+            .unwrap();
+        assert_eq!(&buf, b"ping");
+    }
+    let closed = free_port();
+    let err = chain.connect("127.0.0.1", closed).await.err().expect("closed port");
+    assert!(
+        err.to_string().starts_with("jump host could not reach 127.0.0.1"),
+        "{err}"
+    );
 }
 
 /// Options with the encrypted user key as the only identity file.

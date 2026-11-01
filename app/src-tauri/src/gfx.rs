@@ -83,21 +83,17 @@ pub async fn open_gfx_session(
             }
         }
     };
-    if target.jump.is_some() {
-        return Err(
-            "VNC and RDP can't go through an SSH jump host yet; set the jump host to None for this connection".into(),
-        );
-    }
     let credentials = state.ssh.credentials.clone();
     let sink: linecard_proto::gfx::GfxSink = Box::new(move |e| forward(&on_event, e));
     let session: Box<dyn GfxSession> = match kind {
-        ConnectionKind::Vnc => {
-            Box::new(linecard_proto::vnc::VncSession::connect(&target, credentials, sink).map_err(err)?)
-        }
+        ConnectionKind::Vnc => Box::new(
+            linecard_proto::vnc::VncSession::connect(&target, credentials, state.ssh.clone(), sink).map_err(err)?,
+        ),
         ConnectionKind::Rdp => {
             let opts = linecard_proto::rdp::RdpOptions {
                 credentials,
                 known_certs: state.data_dir.join("known_rdp_certs"),
+                ssh: state.ssh.clone(),
             };
             Box::new(linecard_proto::rdp::RdpSession::connect(&target, width, height, opts, sink).map_err(err)?)
         }

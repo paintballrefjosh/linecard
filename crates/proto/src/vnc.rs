@@ -13,12 +13,13 @@ use std::time::Duration;
 use des::cipher::generic_array::GenericArray;
 use des::cipher::{BlockEncrypt, KeyInit};
 use flate2::{Decompress, FlushDecompress};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use crate::gfx::{keysym, Buttons, GfxEvent, GfxSession, GfxSink};
-use crate::{AuthPrompt, Credentials, PromptField, PromptReply, TerminalTarget};
+use crate::ssh::{JumpChain, SharedReplies};
+use crate::{AuthPrompt, Credentials, PromptField, PromptReply, SshOptions, TerminalTarget};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -43,6 +44,7 @@ impl VncSession {
     pub fn connect(
         target: &TerminalTarget,
         credentials: Option<Arc<dyn Credentials>>,
+        ssh: SshOptions,
         events: GfxSink,
     ) -> io::Result<Self> {
         let rt = tokio::runtime::Handle::try_current()
@@ -51,13 +53,14 @@ impl VncSession {
         let (reply_tx, reply_rx) = unbounded_channel();
         let target = target.clone();
         let events = Arc::new(Mutex::new(events));
+        let replies: SharedReplies = Arc::new(tokio::sync::Mutex::new(reply_rx));
         rt.spawn(async move {
-            let emit = |e| {
+            let emit: Arc<dyn Fn(GfxEvent) + Send + Sync> = Arc::new(move |e| {
                 if let Ok(mut s) = events.lock() {
                     s(e)
                 }
-            };
-            let reason = match run(&target, credentials, &emit, cmd_rx, reply_rx).await {
+            });
+            let reason = match run(&target, credentials, &ssh, &emit, cmd_rx, replies).await {
                 Ok(()) => None,
                 Err(e) => Some(e.to_string()),
             };
@@ -116,6 +119,19 @@ impl GfxSession for VncSession {
     }
 }
 
+trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
+
+/// Resolves when the tab is closed; other commands are dropped until the
+/// session is up.
+async fn until_closed(cmds: &mut UnboundedReceiver<Cmd>) {
+    while let Some(cmd) = cmds.recv().await {
+        if matches!(cmd, Cmd::Close) {
+            return;
+        }
+    }
+}
+
 fn fail(msg: impl Into<String>) -> io::Error {
     io::Error::other(msg.into())
 }
@@ -138,15 +154,33 @@ pub fn vnc_auth_response(password: &str, challenge: &[u8; 16]) -> [u8; 16] {
 async fn run(
     target: &TerminalTarget,
     credentials: Option<Arc<dyn Credentials>>,
-    emit: &(dyn Fn(GfxEvent) + Sync),
+    ssh: &SshOptions,
+    emit: &Arc<dyn Fn(GfxEvent) + Send + Sync>,
     mut cmds: UnboundedReceiver<Cmd>,
-    mut replies: UnboundedReceiver<PromptReply>,
+    replies: SharedReplies,
 ) -> io::Result<()> {
-    let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect((target.host.as_str(), target.port)))
-        .await
-        .map_err(|_| fail(format!("timed out connecting to {}", target.host)))??;
-    let _ = stream.set_nodelay(true);
-    let (r, mut w) = stream.into_split();
+    // `_chain` keeps the jump-host tunnel alive for the session.
+    let (stream, _chain): (Box<dyn Io>, Option<JumpChain>) = match &target.jump {
+        Some(jump) => {
+            let opening = async {
+                let chain = JumpChain::open(jump, ssh, crate::gfx::prompts_only(emit.clone()), replies.clone()).await?;
+                let tunnel = chain.connect(&target.host, target.port).await?;
+                Ok::<_, io::Error>((Box::new(tunnel) as Box<dyn Io>, Some(chain)))
+            };
+            tokio::select! {
+                r = opening => r?,
+                _ = until_closed(&mut cmds) => return Err(fail("canceled")),
+            }
+        }
+        None => {
+            let tcp = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect((target.host.as_str(), target.port)))
+                .await
+                .map_err(|_| fail(format!("timed out connecting to {}", target.host)))??;
+            let _ = tcp.set_nodelay(true);
+            (Box::new(tcp), None)
+        }
+    };
+    let (r, mut w) = tokio::io::split(stream);
     let mut r = BufReader::new(r);
 
     // Version.
@@ -213,7 +247,7 @@ async fn run(
                     }));
                     loop {
                         tokio::select! {
-                            reply = replies.recv() => match reply {
+                            reply = async { replies.lock().await.recv().await } => match reply {
                                 Some(PromptReply::Fields { values, remember }) => {
                                     let p = values.into_iter().next().unwrap_or_default();
                                     asked = Some((p.clone(), remember));

@@ -6,6 +6,7 @@
 //! maps them: X11 keysyms for VNC, scancodes for RDP.
 
 use std::io;
+use std::sync::Arc;
 
 use crate::{AuthPrompt, HostKeyPrompt, PromptReply};
 
@@ -41,6 +42,16 @@ pub enum GfxEvent {
     Disconnected {
         reason: Option<String>,
     },
+}
+
+/// Event sink for a jump host's login: its host-key and credential prompts
+/// reach the graphical session's UI; terminal output is dropped.
+pub(crate) fn prompts_only(emit: Arc<dyn Fn(GfxEvent) + Send + Sync>) -> crate::EventSink {
+    Box::new(move |e| match e {
+        crate::SessionEvent::Auth(p) => emit(GfxEvent::Auth(p)),
+        crate::SessionEvent::HostKey(p) => emit(GfxEvent::HostKey(p)),
+        _ => {}
+    })
 }
 
 pub type GfxSink = Box<dyn FnMut(GfxEvent) + Send>;

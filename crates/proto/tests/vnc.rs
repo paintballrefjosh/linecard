@@ -201,7 +201,13 @@ async fn password_frames_and_input() {
     let port = server(inputs_tx).await;
     let (sink, mut events) = sink();
     let saved = Arc::new(Saved::default());
-    let mut session = VncSession::connect(&TerminalTarget::new("127.0.0.1", port), Some(saved.clone()), sink).unwrap();
+    let mut session = VncSession::connect(
+        &TerminalTarget::new("127.0.0.1", port),
+        Some(saved.clone()),
+        Default::default(),
+        sink,
+    )
+    .unwrap();
 
     let GfxEvent::Auth(prompt) = next(&mut events).await else {
         panic!("expected a password prompt")
@@ -282,7 +288,8 @@ async fn wrong_password_says_so() {
     let (inputs_tx, _inputs) = unbounded_channel();
     let port = server(inputs_tx).await;
     let (sink, mut events) = sink();
-    let mut session = VncSession::connect(&TerminalTarget::new("127.0.0.1", port), None, sink).unwrap();
+    let mut session =
+        VncSession::connect(&TerminalTarget::new("127.0.0.1", port), None, Default::default(), sink).unwrap();
     assert!(matches!(next(&mut events).await, GfxEvent::Auth(_)));
     session
         .reply(PromptReply::Fields {

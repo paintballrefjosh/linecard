@@ -422,6 +422,53 @@ async fn reach(
     Ok((last, jumps))
 }
 
+/// Prompt answers shared with the session that owns them, so a jump host's
+/// password or host key prompt can be answered through the same channel.
+pub type SharedReplies = Arc<tokio::sync::Mutex<UnboundedReceiver<PromptReply>>>;
+
+/// A logged-in chain of SSH jump hosts that can open TCP connections from its
+/// last hop (direct-tcpip). VNC and RDP use it to reach hosts behind a
+/// bastion. Dropping it closes the tunnels.
+pub struct JumpChain {
+    last: Handle<Client>,
+    _earlier: Vec<Handle<Client>>,
+}
+
+impl JumpChain {
+    /// Log in through `jump` and the hops before it. Host-key and credential
+    /// prompts go to `events` and are answered on `replies`.
+    pub async fn open(
+        jump: &TerminalTarget,
+        opts: &SshOptions,
+        events: EventSink,
+        replies: SharedReplies,
+    ) -> io::Result<Self> {
+        let ui = Ui {
+            events: Arc::new(Mutex::new(events)),
+            replies,
+        };
+        let (last, earlier) = reach(jump, &Arc::new(opts.clone()), &ui, &RemoteForwards::default())
+            .await
+            .map_err(|f| io::Error::other(f.to_string()))?;
+        Ok(JumpChain {
+            last,
+            _earlier: earlier,
+        })
+    }
+
+    /// A TCP connection to `host:port` as seen from the last jump host.
+    pub async fn connect(&self, host: &str, port: u16) -> io::Result<russh::ChannelStream<client::Msg>> {
+        let channel = tokio::time::timeout(
+            CONNECT_TIMEOUT,
+            self.last.channel_open_direct_tcpip(host, port.into(), "127.0.0.1", 0),
+        )
+        .await
+        .map_err(|_| io::Error::other(format!("timed out connecting to {host}")))?
+        .map_err(|e| io::Error::other(format!("jump host could not reach {host}: {e}")))?;
+        Ok(channel.into_stream())
+    }
+}
+
 async fn run(
     target: TerminalTarget,
     opts: Arc<SshOptions>,

@@ -35,8 +35,10 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use crate::gfx::{scancode, Buttons, GfxEvent, GfxSession, GfxSink};
+use crate::ssh::{JumpChain, SharedReplies};
 use crate::{
-    AuthPrompt, Credentials, HostKeyDecision, HostKeyPrompt, HostKeyStatus, PromptField, PromptReply, TerminalTarget,
+    AuthPrompt, Credentials, HostKeyDecision, HostKeyPrompt, HostKeyStatus, PromptField, PromptReply, SshOptions,
+    TerminalTarget,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -48,6 +50,8 @@ pub struct RdpOptions {
     pub credentials: Option<Arc<dyn Credentials>>,
     /// Lines of `host:port SHA256:<base64>`.
     pub known_certs: PathBuf,
+    /// For logging in to SSH jump hosts, when the target has them.
+    pub ssh: SshOptions,
 }
 
 enum Cmd {
@@ -88,7 +92,7 @@ impl RdpSession {
                 });
                 let mut ui = Ui {
                     emit: emit.clone(),
-                    replies: reply_rx,
+                    replies: Arc::new(tokio::sync::Mutex::new(reply_rx)),
                     cmds: cmd_rx,
                 };
                 let reason = match run(&target, width, height, &opts, &mut ui).await {
@@ -228,7 +232,7 @@ impl GfxSession for RdpSession {
 
 struct Ui {
     emit: Arc<dyn Fn(GfxEvent) + Send + Sync>,
-    replies: UnboundedReceiver<PromptReply>,
+    replies: SharedReplies,
     cmds: UnboundedReceiver<Cmd>,
 }
 
@@ -237,11 +241,20 @@ fn canceled() -> io::Error {
 }
 
 impl Ui {
+    /// Resolves when the tab is closed.
+    async fn closed(&mut self) {
+        while let Some(c) = self.cmds.recv().await {
+            if matches!(c, Cmd::Close) {
+                return;
+            }
+        }
+    }
+
     /// Wait for the answer to a prompt; closing the tab cancels.
     async fn answer(&mut self) -> io::Result<PromptReply> {
         loop {
             tokio::select! {
-                r = self.replies.recv() => return r.ok_or_else(canceled),
+                r = async { self.replies.lock().await.recv().await } => return r.ok_or_else(canceled),
                 c = self.cmds.recv() => if matches!(c, Some(Cmd::Close) | None) {
                     return Err(canceled());
                 },
@@ -508,13 +521,23 @@ async fn attempt(
     width: u16,
     height: u16,
     opts: &RdpOptions,
+    chain: Option<&JumpChain>,
     ui: &mut Ui,
 ) -> io::Result<Result<(ConnectionResult, Upgraded), ironrdp_connector::ConnectorError>> {
-    let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect((target.host.as_str(), target.port)))
-        .await
-        .map_err(|_| err(format!("timed out connecting to {}", target.host)))??;
-    let _ = stream.set_nodelay(true);
-    let client_addr = stream.local_addr()?;
+    let (stream, client_addr): (Box<dyn AsyncReadWrite + Unpin + Send + Sync>, _) = match chain {
+        Some(chain) => (
+            Box::new(chain.connect(&target.host, target.port).await?),
+            std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+        ),
+        None => {
+            let tcp = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect((target.host.as_str(), target.port)))
+                .await
+                .map_err(|_| err(format!("timed out connecting to {}", target.host)))??;
+            let _ = tcp.set_nodelay(true);
+            let addr = tcp.local_addr()?;
+            (Box::new(tcp), addr)
+        }
+    };
     let mut framed = ironrdp_tokio::TokioFramed::new(stream);
     let drdynvc = ironrdp_dvc::DrdynvcClient::new().with_dynamic_channel(DisplayControlClient::new(|_| Ok(Vec::new())));
     let user = login.user.clone().unwrap_or_default();
@@ -579,8 +602,21 @@ async fn run(target: &TerminalTarget, width: u16, height: u16, opts: &RdpOptions
         problem: String::new(),
         accepted: None,
     };
+    // Logged in once; each attempt opens a fresh channel through it.
+    let chain = match &target.jump {
+        Some(jump) => {
+            let sink = crate::gfx::prompts_only(ui.emit.clone());
+            let opening = JumpChain::open(jump, &opts.ssh, sink, ui.replies.clone());
+            let chain = tokio::select! {
+                r = opening => r?,
+                _ = ui.closed() => return Err(canceled()),
+            };
+            Some(chain)
+        }
+        None => None,
+    };
     for _ in 0..AUTH_ATTEMPTS {
-        match attempt(target, &mut login, width, height, opts, ui).await? {
+        match attempt(target, &mut login, width, height, opts, chain.as_ref(), ui).await? {
             Ok((result, framed)) => {
                 if login.remember {
                     if let (Some(c), Some(u), Some(p)) = (&opts.credentials, &login.user, &login.password) {
