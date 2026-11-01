@@ -2446,3 +2446,130 @@ button.status-version:hover {
 .sftp-error {
   color: var(--chg-deleted);
 }
+
+/* ---- scripts ---------------------------------------------------------------- */
+.modal-scripts {
+  width: min(640px, calc(100vw - 32px));
+}
+.scripts-python {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--text-quiet);
+}
+.scripts-python.has-problem {
+  color: var(--chg-deleted);
+}
+.scripts-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.scripts-head h3 {
+  flex: 1;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-quiet);
+}
+.scripts-head .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.scripts-new {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.scripts-new input {
+  flex: 1;
+}
+.scripts-empty {
+  font-size: 13px;
+  color: var(--text-quiet);
+}
+.script-list {
+  display: grid;
+  max-height: 22vh;
+  margin: 6px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.script-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 1px 4px 1px 8px;
+  border-radius: var(--radius-s);
+}
+.script-list li:hover,
+.script-list li.is-current {
+  background: var(--bg-hover);
+}
+.script-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.script-when {
+  font-size: 11px;
+  color: var(--text-quiet);
+}
+.script-output {
+  height: 24vh;
+  min-height: 120px;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--bg-side);
+  font: 12px/1.45 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.script-dim {
+  color: var(--text-quiet);
+}
+.script-err {
+  color: var(--chg-deleted);
+}
+.script-ok {
+  color: var(--chg-added);
+}
+.script-ask {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-s);
+}
+.script-ask label {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+.script-ask div {
+  display: flex;
+  gap: 6px;
+}
+.script-ask input {
+  flex: 1;
+}
+.icon-btn.is-running {
+  position: relative;
+}
+.icon-btn.is-running::after {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--chg-added);
+  content: "";
+}

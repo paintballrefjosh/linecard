@@ -14,6 +14,7 @@ import type {
   PortForward,
   SyncConfig,
   TreeNode,
+  ScriptFile,
   Snippet,
   SftpEntry,
 } from "./types";
@@ -214,6 +215,18 @@ export function mockBackend(): Backend {
   const trustedHosts = new Set<string>();
   /** Used when the browser denies clipboard access (e.g. automated previews). */
   let memClipboard = "";
+  const mockScripts: ScriptFile[] = [
+    {
+      name: "collect-versions",
+      path: String.raw`C:\Users\you\AppData\Roaming\Linecard\scripts\collect-versions.py`,
+      modifiedMs: Date.now() - 86_400_000,
+    },
+    {
+      name: "broken-example",
+      path: String.raw`C:\Users\you\AppData\Roaming\Linecard\scripts\broken-example.py`,
+      modifiedMs: Date.now() - 5 * 86_400_000,
+    },
+  ];
   let logging: LoggingSettings = { enabled: false, folder: null, timestamps: false };
   /** login label -> saved-at, standing in for the OS keychain. */
   const savedPasswords = new Map<string, number>();
@@ -473,6 +486,53 @@ export function mockBackend(): Backend {
     async setConnectionPassword(_id, user, password) {
       if (!password) throw new Error("enter a password");
       savedPasswords.set(`${user || "admin"}@lab`, Date.now());
+    },
+    async scriptStatus() {
+      return { version: "3.12.4", problem: null, folder: String.raw`C:\Users\you\AppData\Roaming\Linecard\scripts` };
+    },
+    async listScripts() {
+      return mockScripts.slice();
+    },
+    async newScript(name) {
+      const path = String.raw`C:\Users\you\AppData\Roaming\Linecard\scripts\${name}.py`;
+      if (mockScripts.some((s) => s.path === path)) throw new Error(`there is already a script called ${name}`);
+      mockScripts.unshift({ name, path, modifiedMs: Date.now() });
+      return path;
+    },
+    async openScriptsFolder() {},
+    // A pretend script: prints, asks for a password, then finishes (or fails if the name says so).
+    async runScript(path, onEvent) {
+      let stopped = false;
+      let pending: number | null = null;
+      const say = (text: string, stderr = false) => !stopped && onEvent({ event: "output", stderr, text });
+      const steps: (() => void)[] = [
+        () => say(`Running ${path.split(/[\/]/).pop()}`),
+        () => say("edge1: show version"),
+        () => say("edge1: Linecard demo OS, Version 0.1.0"),
+        () => {
+          pending = 1;
+          onEvent({ event: "ask", id: 1, prompt: "Enable password for edge1", secret: true });
+        },
+      ];
+      const finish = (code: number | null) => !stopped && onEvent({ event: "finished", code, stopped: false });
+      steps.forEach((s, i) => setTimeout(s, 250 * (i + 1)));
+      return {
+        stop() {
+          if (stopped) return;
+          stopped = true;
+          onEvent({ event: "finished", code: null, stopped: true });
+        },
+        answer(_id, value) {
+          if (pending === null) return;
+          pending = null;
+          say(value === null ? "cancelled" : `got ${value.length} characters`);
+          if (path.includes("broken")) {
+            say("Traceback (most recent call last):", true);
+            say("ZeroDivisionError: division by zero", true);
+            finish(1);
+          } else finish(0);
+        },
+      };
     },
     async debugLog() {
       return "2025-01-01 12:00:00 [sync] relay unreachable";
@@ -819,6 +879,7 @@ export function mockBackend(): Backend {
           };
           setTimeout(tick, 300);
         },
+        focus() {},
         cancelTransfer() {
           transferCanceled = true;
         },

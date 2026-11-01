@@ -37,6 +37,8 @@ export type SessionStatus = "connecting" | "connected" | "disconnected";
 interface Props {
   /** The tab's id, for broadcast input. */
   panelId?: string;
+  /** This tab is the one in use. */
+  active?: boolean;
   conn: ConnectionNode;
   theme: Theme;
   onStatus(status: SessionStatus): void;
@@ -46,7 +48,9 @@ interface Props {
 
 const FONT = '"Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, "DejaVu Sans Mono", monospace';
 
-export function TerminalView({ panelId, conn, theme, onStatus, onOutput }: Props) {
+export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput }: Props) {
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const host = useRef<HTMLDivElement>(null);
   const term = useRef<Terminal | null>(null);
   const statusRef = useRef(onStatus);
@@ -210,6 +214,7 @@ export function TerminalView({ panelId, conn, theme, onStatus, onOutput }: Props
           if (ended) return s.close(); // it already dropped
           session = s;
           sessionRef.current = s;
+          if (activeRef.current) s.focus();
           if (pendingReply.current) {
             s.reply(pendingReply.current);
             pendingReply.current = null;
@@ -312,6 +317,11 @@ export function TerminalView({ panelId, conn, theme, onStatus, onOutput }: Props
   useEffect(() => {
     if (term.current) term.current.options.theme = terminalThemes[theme];
   }, [theme]);
+
+  // Tell the backend which terminal is in use (scripts act on it by default).
+  useEffect(() => {
+    if (active) sessionRef.current?.focus();
+  }, [active]);
 
   return (
     <div className="terminal-pane">

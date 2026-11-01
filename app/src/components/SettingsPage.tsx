@@ -106,6 +106,8 @@ export function SettingsPage({ theme, onTheme }: Props) {
 
       <SessionLogging />
 
+      <Scripting />
+
       <SavedPasswords />
 
       <DebugLog />
@@ -1078,6 +1080,48 @@ function Workspaces() {
           </div>
         ))
       )}
+    </Section>
+  );
+}
+
+/** Which Python runs scripts. */
+function Scripting() {
+  const { prefs, update } = usePrefs();
+  const [path, setPath] = useState(prefs.pythonPath);
+  const [found, setFound] = useState<string | null>(null);
+  const check = () =>
+    void getBackend()
+      .then((b) => b.scriptStatus())
+      .then((s) => setFound(s.version ? `Found Python ${s.version}.` : (s.problem ?? "Python was not found.")))
+      .catch((e) => setFound(String(e)));
+  useEffect(check, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const save = () => {
+    if (path.trim() === prefs.pythonPath) return;
+    update({ pythonPath: path.trim() });
+    // The backend reads the saved value; give it a moment to store it.
+    window.setTimeout(check, 300);
+  };
+  return (
+    <Section title="Scripting">
+      <div className="settings-row settings-row-wide">
+        <div className="settings-text">
+          <label htmlFor="set-python">Python</label>
+          <p>
+            Scripts run in your own Python 3.8 or newer. Leave this empty to use the one on your PATH, or enter the full
+            path to <code>python</code>.
+          </p>
+          <input
+            id="set-python"
+            className="settings-input"
+            value={path}
+            placeholder="python3"
+            spellCheck={false}
+            onChange={(e) => setPath(e.target.value)}
+            onBlur={save}
+          />
+          {found && <p role="status">{found}</p>}
+        </div>
+      </div>
     </Section>
   );
 }

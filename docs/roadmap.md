@@ -45,7 +45,7 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 ## Phase 4 — Power tools (v0.9–1.0)
 
 - [ ] Broadcast input, button bar / snippets, SFTP browser
-- [ ] Python scripting (embedded CPython via PyO3)
+- [x] Python scripting (runs the user's own Python as a separate process; see docs/scripting.md)
 - [ ] macOS and Linux hardening; winget and Homebrew
 
 Team sharing follows 1.0.

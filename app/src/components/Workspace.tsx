@@ -55,12 +55,19 @@ function SessionPanel({ api, params }: IDockviewPanelProps<PanelParams>) {
     const sub = api.onDidVisibilityChange((e) => e.isVisible && setActivity(api.id, false));
     return () => sub.dispose();
   }, [api, setActivity]);
+  // Whether this is the tab in use, so scripts know which session is "active".
+  const [active, setActive] = useState(api.isActive);
+  useEffect(() => {
+    const sub = api.onDidActiveChange((e) => setActive(e.isActive));
+    return () => sub.dispose();
+  }, [api]);
   if (params.files) return <SftpView conn={conn} onStatus={(s) => setStatus(api.id, s)} />;
   if (conn.kind === "rdp" || conn.kind === "vnc")
     return <RemoteView conn={conn} onStatus={(s) => setStatus(api.id, s)} />;
   return (
     <TerminalView
       panelId={api.id}
+      active={active}
       conn={conn}
       theme={theme}
       onStatus={(s) => setStatus(api.id, s)}

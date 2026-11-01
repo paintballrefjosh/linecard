@@ -26,6 +26,8 @@ export interface Preferences {
   confirmCloseTab: boolean;
   /** Show the saved-command button bar above the tabs. */
   showButtonBar: boolean;
+  /** Python for scripts (empty: find one on this computer). */
+  pythonPath: string;
   /** Ask once before quitting with sessions open. */
   confirmQuit: boolean;
 }
@@ -40,6 +42,7 @@ export const defaultPrefs: Preferences = {
   confirmCloseTab: true,
   confirmQuit: true,
   showButtonBar: false,
+  pythonPath: "",
 };
 
 export function withDefaults(stored: Partial<Preferences> | null | undefined): Preferences {

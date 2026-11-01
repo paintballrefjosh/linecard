@@ -3540,6 +3540,7 @@ dependencies = [
  "linecard-core-sync",
  "linecard-importers",
  "linecard-proto",
+ "linecard-script",
  "linecard-sync",
  "linecard-vault",
  "serde",
@@ -3630,6 +3631,17 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "linecard-script"
+version = "0.3.2"
+dependencies = [
+ "base64 0.22.1",
+ "getrandom 0.2.17",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

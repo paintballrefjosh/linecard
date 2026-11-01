@@ -12,6 +12,7 @@ mod import;
 mod launch;
 mod library;
 mod logging;
+mod scripting;
 mod secrets;
 mod sftp;
 mod snippets;
@@ -47,6 +48,7 @@ struct AppState {
     /// The profile's data folder (library, LAN sync store).
     data_dir: std::path::PathBuf,
     sync: sync::SyncEngine,
+    scripting: scripting::Scripting,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -905,7 +907,16 @@ async fn open_session(
 
     let ssh = state.ssh.clone();
     let who = format!("{kind:?} {endpoint}");
+    // Scripts read the session's output from this.
+    let tap = Arc::new(linecard_script::Tap::default());
+    let sink_tap = tap.clone();
     let sink: linecard_proto::EventSink = Box::new(move |e| {
+        match &e {
+            linecard_proto::SessionEvent::Data(d) => sink_tap.push(d),
+            linecard_proto::SessionEvent::Connected => sink_tap.set_connected(),
+            linecard_proto::SessionEvent::Disconnected { reason } => sink_tap.end(reason.clone()),
+            _ => {}
+        }
         if let linecard_proto::SessionEvent::Disconnected { reason: Some(r) } = &e {
             debuglog::write("session", &format!("{who}: {r}"));
         }
@@ -937,6 +948,16 @@ async fn open_session(
 
     let id = new_id();
     state.sessions.lock().map_err(err)?.insert(id.clone(), session);
+    state.scripting.register(
+        &id,
+        scripting::Entry {
+            name,
+            kind: scripting::kind_name(kind),
+            endpoint,
+            connection: (!connection_id.starts_with("quick-")).then_some(connection_id),
+            tap,
+        },
+    );
     Ok(id)
 }
 
@@ -967,6 +988,7 @@ fn session_close(state: State<AppState>, session_id: String) -> CmdResult<()> {
     if let Some(mut s) = state.sessions.lock().map_err(err)?.remove(&session_id) {
         let _ = s.close();
     }
+    state.scripting.unregister(&session_id);
     Ok(())
 }
 
@@ -1012,6 +1034,7 @@ pub fn run() {
                 log_dir: default_log_dir(app.handle()),
                 data_dir: data.clone(),
                 sync: sync::SyncEngine::default(),
+                scripting: scripting::Scripting::default(),
             });
             sync::SyncEngine::start(app.handle());
             if let Some(w) = app.get_webview_window("main") {
@@ -1020,6 +1043,14 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            scripting::script_status,
+            scripting::script_list,
+            scripting::script_new,
+            scripting::script_run,
+            scripting::script_stop,
+            scripting::script_answer,
+            scripting::session_focus,
+            scripting::open_scripts_folder,
             get_tree,
             move_node,
             create_folder,

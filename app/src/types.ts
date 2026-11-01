@@ -308,3 +308,24 @@ export interface SftpEntry {
   /** Unix permission bits. */
   mode: number | null;
 }
+
+/** Whether Python scripts can run on this computer. */
+export interface ScriptStatus {
+  /** e.g. "3.11.9"; null when no usable Python was found. */
+  version: string | null;
+  problem: string | null;
+  /** Where the scripts live. */
+  folder: string;
+}
+
+export interface ScriptFile {
+  name: string;
+  path: string;
+  modifiedMs: number;
+}
+
+/** What a running script reports. */
+export type ScriptEvent =
+  | { event: "output"; stderr: boolean; text: string }
+  | { event: "ask"; id: number; prompt: string; secret: boolean }
+  | { event: "finished"; code: number | null; stopped: boolean };

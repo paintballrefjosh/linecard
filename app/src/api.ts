@@ -14,6 +14,9 @@ import type {
   PasswordTarget,
   SavedPassword,
   SftpEntry,
+  ScriptEvent,
+  ScriptFile,
+  ScriptStatus,
   Snippet,
   SessionEvent,
   GfxEvent,
@@ -37,7 +40,16 @@ export interface SessionHandle {
   /** XMODEM/YMODEM on serial lines; progress arrives as transfer events. */
   startTransfer(send: boolean, protocol: TransferProtocol, path: string): Promise<void>;
   cancelTransfer(): void;
+  /** This tab is the one in use now (scripts act on it by default). */
+  focus(): void;
   close(): void;
+}
+
+/** A script that is running. */
+export interface ScriptRun {
+  stop(): void;
+  /** Answer the script's question (null: cancel). */
+  answer(askId: number, value: string | null): void;
 }
 
 /** An SFTP session. Paths on the server are always "/"-separated. */
@@ -142,6 +154,14 @@ export interface Backend {
   listSavedPasswords(): Promise<SavedPassword[]>;
   forgetSavedPassword(key: string): Promise<void>;
   /** Linecard's own error log, as text. */
+  /** Whether Python scripts can run, and where they're kept. */
+  scriptStatus(): Promise<ScriptStatus>;
+  listScripts(): Promise<ScriptFile[]>;
+  /** Create a script from a template; returns its path. */
+  newScript(name: string): Promise<string>;
+  openScriptsFolder(): Promise<void>;
+  /** Run a script. Output, questions and the end arrive on `onEvent`. */
+  runScript(path: string, onEvent: (e: ScriptEvent) => void): Promise<ScriptRun>;
   debugLog(): Promise<string>;
   openDebugLogFolder(): Promise<void>;
   /** Every button-bar snippet (for the manager). */
@@ -262,6 +282,19 @@ async function tauriBackend(): Promise<Backend> {
     setPreferences: (preferences) => invoke("set_preferences", { preferences }),
     listSavedPasswords: () => invoke<SavedPassword[]>("list_saved_passwords"),
     forgetSavedPassword: (key) => invoke("forget_saved_password", { key }),
+    scriptStatus: () => invoke<ScriptStatus>("script_status"),
+    listScripts: () => invoke<ScriptFile[]>("script_list"),
+    newScript: (name) => invoke<string>("script_new", { name }),
+    openScriptsFolder: () => invoke("open_scripts_folder"),
+    async runScript(path, onEvent) {
+      const channel = new Channel<ScriptEvent>();
+      channel.onmessage = onEvent;
+      const runId = await invoke<number>("script_run", { path, onEvent: channel });
+      return {
+        stop: () => void invoke("script_stop", { runId }),
+        answer: (askId, value) => void invoke("script_answer", { runId, askId, value }),
+      };
+    },
     debugLog: () => invoke<string>("debug_log_text"),
     openDebugLogFolder: () => invoke("open_debug_log_folder"),
     listSnippets: () => invoke<Snippet[]>("list_snippets"),
@@ -331,6 +364,7 @@ async function tauriBackend(): Promise<Backend> {
         sendBreak: () => void invoke("session_break", { sessionId }),
         startTransfer: (send, protocol, path) => invoke("session_transfer", { sessionId, send, protocol, path }),
         cancelTransfer: () => void invoke("session_cancel_transfer", { sessionId }),
+        focus: () => void invoke("session_focus", { sessionId }),
         close: () => void invoke("session_close", { sessionId }),
       };
     },

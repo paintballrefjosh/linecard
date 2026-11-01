@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Python scripting**: the **Scripts** button in the toolbar runs Python files that drive your open sessions: `s = lc.active()`, `s.send_line("show version")`, `s.expect("#")`, `lc.open("Lab/spine01")` to open a saved connection and wait for it, `lc.ask(...)` to ask you for a password. Output shows in the window, Stop ends the script. Scripts run in your own Python 3.8+ (path in Settings → Scripting) as a separate process, so they can't crash Linecard, and they never see saved passwords. See `docs/scripting.md`.
+
 - **Relay protection and visibility**: request rate limits per client address and per sync group (`LINECARD_RELAY_RATE`, with `Retry-After`, which Linecard now obeys), a cool-down for addresses that keep sending wrong tokens, caps on held-open requests and a 30 s limit on everything else; `LINECARD_RELAY_TRUST_PROXY` for use behind a proxy; one structured log line per request (`LINECARD_RELAY_LOG`, `LINECARD_RELAY_LOG_FORMAT=json`) with no tokens or full group ids; Prometheus `/metrics` on its own port (`LINECARD_RELAY_METRICS_ADDR`); `/ready`; and `linecard-relay config`, which lists every setting.
 
 - **Relay backups**: `linecard-relay backup <file or folder>` copies the database while the relay serves and checks the copy; `linecard-relay restore <file>` replaces it (stop the relay first; the old file is kept). `LINECARD_RELAY_BACKUP_DIR` and `LINECARD_RELAY_BACKUP_KEEP` make a daily rotating backup, which the Compose bundle turns on. A restored relay announces a new history id, and Linecard re-sends its changes and re-reads the relay, so a restore does not strand computers that were ahead of it.

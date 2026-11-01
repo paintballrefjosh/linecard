@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { DockviewApi } from "dockview";
-import { Download, Laptop, ListTree, Monitor, Moon, Settings as SettingsIcon, SquareTerminal, Sun } from "lucide-react";
+import {
+  Download,
+  FileCode2,
+  Laptop,
+  ListTree,
+  Monitor,
+  Moon,
+  Settings as SettingsIcon,
+  SquareTerminal,
+  Sun,
+} from "lucide-react";
 import { getBackend, isTauri, type Backend } from "./api";
 import { useTheme, type ThemePref } from "./theme";
 import { useUpdater } from "./updater";
@@ -25,6 +35,8 @@ import { ConnectionTree, relativeTime, type TreeActions } from "./components/Con
 import { DevicesPage, versionMismatch } from "./components/DevicesPage";
 import { BroadcastButton } from "./components/BroadcastButton";
 import { ButtonBar } from "./components/ButtonBar";
+import { ScriptsDialog } from "./components/ScriptsDialog";
+import { useScripts } from "./scripts";
 import { LayoutPicker, layoutShortcut } from "./components/LayoutPicker";
 import { SettingsPage } from "./components/SettingsPage";
 import { ConnectionPanel, usePanelLayout } from "./components/ConnectionPanel";
@@ -104,6 +116,12 @@ export default function App() {
   const [layout, setLayout] = useState<LayoutId>("1");
   const [quick, setQuick] = useState("");
   const [quickError, setQuickError] = useState(false);
+  const [scriptsOpen, setScriptsOpen] = useState(false);
+  const script = useScripts();
+  // A script that asks a question needs its answer: bring the window up.
+  useEffect(() => {
+    if (script.ask) setScriptsOpen(true);
+  }, [script.ask]);
   const dock = useRef<DockviewApi | null>(null);
   const [dockApi, setDockApi] = useState<DockviewApi | null>(null);
   const panel = usePanelLayout();
@@ -373,6 +391,14 @@ export default function App() {
                 >
                   <SquareTerminal size={16} />
                 </button>
+                <button
+                  className={`icon-btn ${script.running ? "is-running" : ""}`}
+                  aria-label={script.running ? "Scripts (one is running)" : "Scripts"}
+                  title={script.running ? "Scripts: one is running" : "Scripts: automate sessions with Python"}
+                  onClick={() => setScriptsOpen(true)}
+                >
+                  <FileCode2 size={16} />
+                </button>
                 <BroadcastButton dock={dock} />
                 <LayoutPicker value={layout} onChange={changeLayout} />
               </header>
@@ -453,6 +479,7 @@ export default function App() {
           <PasswordDialog connectionId={passwordFor.id} name={passwordFor.name} onClose={() => setPasswordFor(null)} />
         )}
         {importing && <ImportDialog onClose={() => setImporting(false)} onImported={() => setView("connections")} />}
+        {scriptsOpen && <ScriptsDialog onClose={() => setScriptsOpen(false)} />}
 
         {folderSettings && (
           <FolderSettingsDialog
