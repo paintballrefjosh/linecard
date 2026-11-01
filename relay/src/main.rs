@@ -2,27 +2,20 @@
 //!
 //! ```text
 //! linecard-relay                               serve (also: linecard-relay serve)
+//! linecard-relay config                        the settings in effect (what the environment set, and the defaults)
+//! linecard-relay health                        exit 0 if the local server answers (for container health checks)
 //! linecard-relay account add <name> [--max-groups N]   prints the access key
 //! linecard-relay account list
 //! linecard-relay account remove <name> [--with-groups]
-//! linecard-relay group list [--idle [DAYS]]      sizes and last activity; --idle: only quiet groups
+//! linecard-relay group list [--idle [DAYS]]    sizes and last activity; --idle: only quiet groups
 //! linecard-relay group remove <group-id>
 //! linecard-relay vacuum                        give deleted data's disk space back (safe while serving; writes pause briefly)
 //! linecard-relay backup <file or folder>       copy the database while serving (checked after it is made)
 //! linecard-relay restore <backup file>         replace the database with a backup (stop the relay first; the old file is kept)
 //! linecard-relay stats
-//! linecard-relay health                        exit 0 if the local server answers (for container health checks)
 //! ```
 //!
-//! Environment:
-//!   LINECARD_RELAY_ADDR      listen address (default 0.0.0.0:8443)
-//!   LINECARD_RELAY_DB        SQLite file (default ./linecard-relay.db)
-//!   LINECARD_RELAY_MAX_OPS   batches kept per sync group (default 200000)
-//!   LINECARD_RELAY_OPEN      "false" = only accounts may start sync groups
-//!   LINECARD_RELAY_MAX_GROUP_BYTES  storage per group, e.g. 256MiB (default; 0 = no limit)
-//!   LINECARD_RELAY_IDLE_DAYS delete groups with no write or heartbeat for this many days (default 0 = never)
-//!   LINECARD_RELAY_BACKUP_DIR  folder for built-in daily backups (default: none)
-//!   LINECARD_RELAY_BACKUP_KEEP how many of them to keep (default 7)
+//! Settings are environment variables; `linecard-relay config` lists them all.
 //!
 //! On SIGTERM or Ctrl+C the server stops accepting connections, gives requests
 //! in flight a few seconds (long-polls are released), and folds the SQLite
@@ -38,74 +31,21 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use linecard_relay::{router, Limits, Relay};
-
-/// "256MiB", "1GiB", "500000" or "0"/"off"/"unlimited" (= no limit) as bytes.
-fn parse_size(text: &str) -> Option<i64> {
-    let t = text.trim().to_ascii_lowercase();
-    if matches!(t.as_str(), "off" | "none" | "unlimited") {
-        return Some(0);
-    }
-    let digits = t.chars().take_while(char::is_ascii_digit).count();
-    let n: i64 = t[..digits].parse().ok()?;
-    let unit: i64 = match t[digits..].trim() {
-        "" | "b" => 1,
-        "k" | "kb" => 1000,
-        "kib" => 1 << 10,
-        "m" | "mb" => 1_000_000,
-        "mib" => 1 << 20,
-        "g" | "gb" => 1_000_000_000,
-        "gib" => 1 << 30,
-        _ => return None,
-    };
-    n.checked_mul(unit)
-}
-
-fn env_limits() -> Limits {
-    let default = Limits::default();
-    let number = |name: &str, fallback: i64| match std::env::var(name) {
-        Ok(v) => v.parse().unwrap_or_else(|_| {
-            eprintln!("{name}={v} is not a number; using {fallback}");
-            fallback
-        }),
-        Err(_) => fallback,
-    };
-    Limits {
-        max_ops: number("LINECARD_RELAY_MAX_OPS", default.max_ops),
-        open: !matches!(
-            std::env::var("LINECARD_RELAY_OPEN")
-                .as_deref()
-                .map(str::to_ascii_lowercase)
-                .as_deref(),
-            Ok("false" | "0" | "no")
-        ),
-        max_group_bytes: match std::env::var("LINECARD_RELAY_MAX_GROUP_BYTES") {
-            Ok(v) => parse_size(&v).unwrap_or_else(|| {
-                eprintln!("LINECARD_RELAY_MAX_GROUP_BYTES={v} is not a size (try 256MiB); using the default");
-                default.max_group_bytes
-            }),
-            Err(_) => default.max_group_bytes,
-        },
-        idle_days: number("LINECARD_RELAY_IDLE_DAYS", default.idle_days).max(0),
-    }
-}
+use linecard_relay::config::{Config, LogFormat};
+use linecard_relay::{metrics_router, router, Relay};
 
 fn open_db() -> Result<(Relay, PathBuf), String> {
-    let db = PathBuf::from(std::env::var("LINECARD_RELAY_DB").unwrap_or_else(|_| "linecard-relay.db".into()));
-    let relay = Relay::open(&db, env_limits()).map_err(|e| format!("can't open {}: {e}", db.display()))?;
-    Ok((relay, db))
+    let cfg = Config::from_env();
+    let relay =
+        Relay::open(&cfg.db, cfg.limits.clone()).map_err(|e| format!("can't open {}: {e}", cfg.db.display()))?;
+    Ok((relay, cfg.db))
 }
 
 fn when(ms: Option<i64>) -> String {
     match ms {
         None => "never".into(),
         Some(ms) => {
-            let ago = (std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0)
-                - ms)
-                / 1000;
+            let ago = (now_ms() - ms) / 1000;
             match ago {
                 s if s < 120 => format!("{s}s ago"),
                 s if s < 7200 => format!("{}m ago", s / 60),
@@ -114,24 +54,6 @@ fn when(ms: Option<i64>) -> String {
             }
         }
     }
-}
-
-/// Where built-in daily backups go, and how many to keep (`LINECARD_RELAY_BACKUP_DIR`
-/// and `LINECARD_RELAY_BACKUP_KEEP`, default 7). Off when no folder is set.
-fn backup_settings() -> Option<(PathBuf, usize)> {
-    let dir = std::env::var("LINECARD_RELAY_BACKUP_DIR")
-        .ok()
-        .filter(|d| !d.trim().is_empty())?;
-    let keep = std::env::var("LINECARD_RELAY_BACKUP_KEEP")
-        .ok()
-        .and_then(|k| k.parse().ok())
-        .unwrap_or(7)
-        .max(1);
-    Some((PathBuf::from(dir), keep))
-}
-
-fn db_path() -> PathBuf {
-    PathBuf::from(std::env::var("LINECARD_RELAY_DB").unwrap_or_else(|_| "linecard-relay.db".into()))
 }
 
 /// `backup <path>`: a copy of the database, taken while the relay serves.
@@ -156,19 +78,19 @@ fn backup_command(dest: &str) -> Result<(), String> {
 
 /// `restore <path>`: replace the database with a backup. The relay must be stopped.
 fn restore_command(from: &str) -> Result<(), String> {
-    let listen = std::env::var("LINECARD_RELAY_ADDR").unwrap_or_else(|_| "0.0.0.0:8443".into());
-    if local_addr(&listen).and_then(probe).is_ok() {
+    let cfg = Config::from_env();
+    if local_addr(&cfg.addr.to_string()).and_then(probe).is_ok() {
         return Err(format!(
-            "a relay is answering on {listen}: stop it before restoring (the old database is kept aside either way)"
+            "a relay is answering on {}: stop it before restoring (the old database is kept aside either way)",
+            cfg.addr
         ));
     }
-    let db = db_path();
-    let (info, aside) = linecard_relay::restore_backup(std::path::Path::new(from), &db)?;
+    let (info, aside) = linecard_relay::restore_backup(std::path::Path::new(from), &cfg.db)?;
     println!(
         "Restored {} groups and {} accounts from {from} into {}.",
         info.groups,
         info.accounts,
-        db.display()
+        cfg.db.display()
     );
     match aside {
         Some(old) => println!(
@@ -179,6 +101,25 @@ fn restore_command(from: &str) -> Result<(), String> {
     }
     println!("Start the relay again.");
     Ok(())
+}
+
+/// `config`: every setting, what is in effect, and whether the environment set it.
+fn config_command() {
+    let cfg = Config::from_env();
+    let width = cfg.settings().iter().map(|s| s.name.len()).max().unwrap_or(0);
+    println!("Settings in effect (secrets are shown masked):\n");
+    for s in cfg.settings() {
+        println!(
+            "  {:<width$}  {:<24} {:<9} {}",
+            s.name,
+            s.value,
+            if s.from_env { "(env)" } else { "(default)" },
+            s.note
+        );
+    }
+    for w in &cfg.warnings {
+        println!("\nwarning: {w}");
+    }
 }
 
 fn now_ms() -> i64 {
@@ -199,8 +140,12 @@ fn size(bytes: i64) -> String {
 
 fn admin(args: &[String]) -> Result<(), String> {
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
-    // These two manage the database file itself, so they come before opening it.
+    // These manage the database file itself (or none), so they come before opening it.
     match words.as_slice() {
+        ["config"] => {
+            config_command();
+            return Ok(());
+        }
         ["backup", dest] => return backup_command(dest),
         ["restore", from] => return restore_command(from),
         ["backup"] | ["restore"] => return Err("usage: backup <file or folder> | restore <backup file>".into()),
@@ -253,11 +198,12 @@ fn admin(args: &[String]) -> Result<(), String> {
             let groups = match rest {
                 [] => relay.groups().map_err(err)?,
                 ["--idle", days @ ..] => {
+                    let configured = Config::from_env().limits.idle_days;
                     let days = match days {
                         [d] => d
                             .parse::<i64>()
                             .map_err(|_| "--idle needs a number of days".to_string())?,
-                        [] if env_limits().idle_days > 0 => env_limits().idle_days,
+                        [] if configured > 0 => configured,
                         _ => return Err("give a number of days: group list --idle 30".into()),
                     };
                     relay.idle_groups(days).map_err(err)?
@@ -301,14 +247,31 @@ fn admin(args: &[String]) -> Result<(), String> {
                 groups.len(),
                 size(bytes)
             );
-            if let Some(big) = groups.iter().max_by_key(|g| g.bytes) {
-                println!("largest group: {} ({})", big.id, size(big.bytes));
+            // Storage per account (groups started without one are "(open)").
+            let mut by_owner: std::collections::BTreeMap<String, (i64, usize)> = Default::default();
+            for g in &groups {
+                let e = by_owner
+                    .entry(g.account.clone().unwrap_or_else(|| "(open)".into()))
+                    .or_default();
+                e.0 += g.bytes;
+                e.1 += 1;
+            }
+            for (owner, (b, n)) in &by_owner {
+                println!("  {owner:<24} {:>9} in {n} groups", size(*b));
+            }
+            let mut biggest: Vec<_> = groups.iter().collect();
+            biggest.sort_by_key(|g| std::cmp::Reverse(g.bytes));
+            for g in biggest.iter().take(3) {
+                println!("largest: {} ({}, {} batches)", g.id, size(g.bytes), g.ops);
             }
             if let Some(old) = groups.iter().min_by_key(|g| g.active) {
-                println!("quietest group: {} (last seen {})", old.id, when(Some(old.active)));
+                println!("quietest: {} (last seen {})", old.id, when(Some(old.active)));
+            }
+            if let Some(first) = groups.iter().map(|g| g.created).min() {
+                println!("oldest data: {}", when(Some(first)));
             }
         }
-        _ => return Err("unknown command; see the top of src/main.rs or the README".into()),
+        _ => return Err("unknown command; see the top of src/main.rs or docs/relay.md".into()),
     }
     Ok(())
 }
@@ -325,13 +288,8 @@ fn probe(addr: SocketAddr) -> Result<(), String> {
     let wait = std::time::Duration::from_secs(3);
     let mut s = std::net::TcpStream::connect_timeout(&addr, wait).map_err(|e| format!("can't reach {addr}: {e}"))?;
     s.set_read_timeout(Some(wait)).map_err(|e| e.to_string())?;
-    s.write_all(
-        b"GET /health HTTP/1.0
-Host: localhost
-
-",
-    )
-    .map_err(|e| e.to_string())?;
+    s.write_all(b"GET /health HTTP/1.0\r\nHost: localhost\r\n\r\n")
+        .map_err(|e| e.to_string())?;
     let mut response = String::new();
     let _ = s.read_to_string(&mut response);
     if is_ok(&response) {
@@ -382,13 +340,15 @@ async fn shutdown_signal() {
 }
 
 /// Background care of the database: fold the write-ahead log into the file
-/// every hour, and once a day delete idle groups and stale heartbeats.
-async fn upkeep(relay: Arc<Relay>) {
+/// every hour, and once a day delete idle groups and stale heartbeats and
+/// make the built-in backup.
+async fn upkeep(relay: Arc<Relay>, backup: Option<(PathBuf, usize)>) {
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
     let mut hours = 0u32;
     loop {
         tick.tick().await; // the first tick is immediate: run the daily round at start too
         let relay = relay.clone();
+        let backup = backup.clone();
         let daily = hours.is_multiple_of(24);
         hours = hours.wrapping_add(1);
         let done = tokio::task::spawn_blocking(move || {
@@ -396,31 +356,29 @@ async fn upkeep(relay: Arc<Relay>) {
                 match relay.maintain() {
                     Ok(m) => {
                         for g in &m.expired {
-                            println!("removed idle sync group {g}");
+                            tracing::info!(group = %linecard_relay::guard::short(Some(g)), "removed idle sync group");
                         }
                         if m.devices_removed > 0 {
-                            println!("removed {} stale device records", m.devices_removed);
+                            tracing::info!(count = m.devices_removed, "removed stale device records");
                         }
                     }
-                    Err(e) => eprintln!("maintenance failed: {e:?}"),
+                    Err(e) => tracing::error!("maintenance failed: {e:?}"),
                 }
-            }
-            if daily {
-                if let Some((dir, keep)) = backup_settings() {
+                if let Some((dir, keep)) = backup {
                     match relay.backup_rotating(&dir, keep) {
-                        Ok(Some(file)) => println!("backed up to {}", file.display()),
+                        Ok(Some(file)) => tracing::info!(file = %file.display(), "backed up"),
                         Ok(None) => {}
-                        Err(e) => eprintln!("backup failed: {e}"),
+                        Err(e) => tracing::error!("backup failed: {e}"),
                     }
                 }
             }
             if let Err(e) = relay.checkpoint() {
-                eprintln!("checkpoint failed: {e}");
+                tracing::error!("checkpoint failed: {e}");
             }
         })
         .await;
         if done.is_err() {
-            eprintln!("maintenance task crashed");
+            tracing::error!("maintenance task crashed");
         }
     }
 }
@@ -428,11 +386,21 @@ async fn upkeep(relay: Arc<Relay>) {
 /// How long requests in flight get after a stop signal. Docker kills at 10 s.
 const GRACE: std::time::Duration = std::time::Duration::from_secs(8);
 
+fn init_logging(cfg: &Config) {
+    // hyper's own chatter stays quiet unless something is wrong.
+    let filter = tracing_subscriber::EnvFilter::new(format!("{},hyper=warn", cfg.log_level));
+    let builder = tracing_subscriber::fmt().with_env_filter(filter).with_target(false);
+    match cfg.log_format {
+        LogFormat::Json => builder.json().init(),
+        LogFormat::Text => builder.with_ansi(false).init(),
+    }
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("health") {
-        let listen = std::env::var("LINECARD_RELAY_ADDR").unwrap_or_else(|_| "0.0.0.0:8443".into());
+        let listen = Config::from_env().addr.to_string();
         return match local_addr(&listen).and_then(probe) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
@@ -450,70 +418,78 @@ async fn main() -> ExitCode {
             }
         };
     }
-    let addr: SocketAddr = std::env::var("LINECARD_RELAY_ADDR")
-        .unwrap_or_else(|_| "0.0.0.0:8443".into())
-        .parse()
-        .expect("LINECARD_RELAY_ADDR must be host:port");
-    let (relay, db) = match open_db() {
-        Ok(x) => x,
+
+    let cfg = Config::from_env();
+    init_logging(&cfg);
+    for w in &cfg.warnings {
+        tracing::warn!("{w}");
+    }
+    let relay = match Relay::open(&cfg.db, cfg.limits.clone()) {
+        Ok(r) => Arc::new(r),
         Err(e) => {
-            eprintln!("{e}");
+            tracing::error!("can't open {}: {e}", cfg.db.display());
             return ExitCode::FAILURE;
         }
     };
-    let open = env_limits().open;
-    let listener = tokio::net::TcpListener::bind(addr).await.expect("bind");
-    println!(
-        "linecard-relay listening on {addr}, data in {}, {}",
-        db.display(),
-        if open {
-            "open to any sync phrase"
-        } else {
-            "private (accounts only)"
+    let listener = match tokio::net::TcpListener::bind(cfg.addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("can't listen on {}: {e}", cfg.addr);
+            return ExitCode::FAILURE;
         }
+    };
+    tracing::info!(
+        addr = %cfg.addr,
+        db = %cfg.db.display(),
+        access = if cfg.limits.open { "open to any sync phrase" } else { "private (accounts only)" },
+        "linecard-relay listening"
     );
-    match backup_settings() {
-        Some((dir, keep)) => println!("backups: daily into {}, newest {keep} kept", dir.display()),
-        None => println!("backups: not set up (LINECARD_RELAY_BACKUP_DIR)"),
+    tracing::info!(
+        batches = cfg.limits.max_ops,
+        group_bytes = cfg.limits.max_group_bytes,
+        idle_days = cfg.limits.idle_days,
+        rate = %cfg.limits.rate.map_or("off".to_string(), |r| format!("{}/s burst {}", r.per_sec, r.burst)),
+        trust_proxy = cfg.limits.trust_proxy,
+        backups = %cfg.backup.as_ref().map_or("off".to_string(), |(d, k)| format!("{} (keep {k})", d.display())),
+        "limits"
+    );
+    tokio::spawn(upkeep(relay.clone(), cfg.backup.clone()));
+
+    if let Some(addr) = cfg.metrics_addr {
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(l) => {
+                tracing::info!(%addr, "serving /metrics");
+                let app = metrics_router(relay.clone());
+                tokio::spawn(async move {
+                    let _ = axum::serve(l, app).await;
+                });
+            }
+            Err(e) => tracing::error!("can't serve metrics on {addr}: {e}"),
+        }
     }
-    let limits = env_limits();
-    println!(
-        "limits: {} batches and {} per group; idle groups {}",
-        limits.max_ops,
-        if limits.max_group_bytes > 0 {
-            size(limits.max_group_bytes)
-        } else {
-            "no byte limit".into()
-        },
-        if limits.idle_days > 0 {
-            format!("deleted after {} days", limits.idle_days)
-        } else {
-            "kept".into()
-        }
-    );
-    let relay = Arc::new(relay);
-    tokio::spawn(upkeep(relay.clone()));
+
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
-    let server = axum::serve(listener, router(relay.clone())).with_graceful_shutdown(async {
+    let app = router(relay.clone()).into_make_service_with_connect_info::<SocketAddr>();
+    let server = axum::serve(listener, app).with_graceful_shutdown(async {
         let _ = stop_rx.await;
     });
     let mut server = tokio::spawn(async move { server.await });
     tokio::select! {
         done = &mut server => {
             // The server ended by itself: that is an error.
-            eprintln!("server stopped: {done:?}");
+            tracing::error!("server stopped: {done:?}");
             return ExitCode::FAILURE;
         }
         _ = shutdown_signal() => {}
     }
-    println!("linecard-relay stopping");
+    tracing::info!("linecard-relay stopping");
     let _ = stop_tx.send(());
     if tokio::time::timeout(GRACE, &mut server).await.is_err() {
         // Long-polls and slow clients: stop waiting for them.
         server.abort();
     }
     if let Err(e) = relay.checkpoint() {
-        eprintln!("could not checkpoint the database: {e}");
+        tracing::error!("could not checkpoint the database: {e}");
     }
     ExitCode::SUCCESS
 }
@@ -521,19 +497,7 @@ async fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn sizes_take_units_and_zero_means_unlimited() {
-        assert_eq!(parse_size("256MiB"), Some(256 << 20));
-        assert_eq!(parse_size(" 1 GiB "), Some(1 << 30));
-        assert_eq!(parse_size("500KB"), Some(500_000));
-        assert_eq!(parse_size("1000000"), Some(1_000_000));
-        assert_eq!(parse_size("0"), Some(0));
-        assert_eq!(parse_size("unlimited"), Some(0));
-        assert_eq!(parse_size("lots"), None);
-        assert_eq!(parse_size("12 parsecs"), None);
-        assert_eq!(parse_size(""), None);
-    }
+    use linecard_relay::Limits;
 
     #[test]
     fn reads_the_status_line() {
@@ -556,7 +520,6 @@ mod tests {
         let relay = Arc::new(
             Relay::in_memory(Limits {
                 max_ops: 10,
-                open: true,
                 ..Default::default()
             })
             .unwrap(),
@@ -585,7 +548,6 @@ mod tests {
             &path,
             Limits {
                 max_ops: 10,
-                open: true,
                 ..Default::default()
             },
         )

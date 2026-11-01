@@ -112,6 +112,10 @@ pub struct Limits {
     /// Groups with no write or heartbeat for this many days are deleted by the
     /// daily maintenance (0 = keep forever).
     pub idle_days: i64,
+    /// Requests per second allowed per client address and per group (`None` = no limit).
+    pub rate: Option<Rate>,
+    /// Take the client address from `X-Forwarded-For` (only behind your own proxy).
+    pub trust_proxy: bool,
 }
 
 /// A heartbeat older than this is a computer nobody uses any more.
@@ -124,6 +128,8 @@ impl Default for Limits {
             open: true,
             max_group_bytes: 256 << 20,
             idle_days: 0,
+            rate: None,
+            trust_proxy: false,
         }
     }
 }
@@ -166,6 +172,8 @@ pub struct Relay {
     path: Option<PathBuf>,
     /// Identifies this database's history; replaced when a backup is restored.
     epoch: String,
+    guard: Guard,
+    metrics: Metrics,
     db: Mutex<Connection>,
     limits: Limits,
     /// Wakes waiters on a group when something is pushed to it.
@@ -186,7 +194,7 @@ fn hash(token: &str) -> String {
         .collect()
 }
 
-fn valid_group(g: &str) -> bool {
+pub(crate) fn valid_group(g: &str) -> bool {
     g.len() == 32 && g.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
@@ -223,10 +231,53 @@ impl Relay {
         Ok(Relay {
             path: None,
             epoch,
+            guard: Guard::new(limits.rate, limits.trust_proxy),
+            metrics: Metrics::default(),
             db: Mutex::new(db),
             limits,
             waiters: Mutex::new(HashMap::new()),
         })
+    }
+
+    pub(crate) fn guard(&self) -> &Guard {
+        &self.guard
+    }
+
+    pub fn metrics(&self) -> &Metrics {
+        &self.metrics
+    }
+
+    /// What the database holds (cheap lookups, not scans of the data), for metrics.
+    pub fn stored(&self) -> Result<Stored> {
+        let db = self.db()?;
+        let one = |sql: &str| -> rusqlite::Result<i64> { db.query_row(sql, [], |r| r.get(0)) };
+        Ok(Stored {
+            groups: one("SELECT COUNT(*) FROM groups")?,
+            accounts: one("SELECT COUNT(*) FROM accounts")?,
+            // Batches are numbered 1..n within a group, so the newest number is the count.
+            batches: one("SELECT COALESCE(SUM((SELECT MAX(seq) FROM ops WHERE group_id = g.id)), 0) FROM groups g")?,
+            bytes: one("SELECT COALESCE(SUM(bytes), 0) FROM groups")?,
+            devices: one("SELECT COUNT(*) FROM devices")?,
+            db_bytes: self
+                .path
+                .as_ref()
+                .and_then(|p| std::fs::metadata(p).ok())
+                .map_or(0, |m| m.len()),
+        })
+    }
+
+    /// Ready to serve: the database answers and its schema is the one this
+    /// relay expects.
+    pub fn ready(&self) -> std::result::Result<(), String> {
+        let db = self.db().map_err(|_| "database lock poisoned".to_string())?;
+        let version: i64 = db
+            .query_row("SELECT COALESCE(MAX(version), 0) FROM schema_version", [], |r| r.get(0))
+            .map_err(|e| format!("database not answering: {e}"))?;
+        if version == SCHEMA_VERSION {
+            Ok(())
+        } else {
+            Err(format!("schema version {version}, expected {SCHEMA_VERSION}"))
+        }
     }
 
     /// Which database history this is (changes when a backup is restored).
@@ -566,9 +617,14 @@ impl Relay {
 }
 
 mod backup;
+pub mod config;
+pub mod guard;
+pub mod observe;
 pub use backup::{
     check as check_backup, list_backups, prune as prune_backups, restore as restore_backup, stamp, BackupInfo,
 };
+pub use guard::{Guard, Rate};
+pub use observe::{Metrics, Stored};
 
 // ---- schema versions ---------------------------------------------------------
 
@@ -712,7 +768,7 @@ struct DeviceBody {
     blob: String,
 }
 
-type Shared = Arc<Relay>;
+pub(crate) type Shared = Arc<Relay>;
 
 async fn push(
     State(r): State<Shared>,
@@ -782,16 +838,41 @@ async fn add_epoch(State(r): State<Shared>, req: axum::extract::Request, next: a
     res
 }
 
+async fn ready(State(r): State<Shared>) -> Response {
+    match r.ready() {
+        Ok(()) => "ready".into_response(),
+        Err(why) => (StatusCode::SERVICE_UNAVAILABLE, why).into_response(),
+    }
+}
+
 pub fn router(relay: Shared) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
+        .route("/ready", get(ready))
         .route("/v1/groups/{group}/ops", get(pull).post(push))
         .route("/v1/groups/{group}/ops/wait", get(wait))
         .route("/v1/groups/{group}/devices", get(devices))
         .route("/v1/groups/{group}/devices/{device}", put(put_device))
         .layer(axum::extract::DefaultBodyLimit::max(MAX_BLOB + 4096))
         .layer(axum::middleware::from_fn_with_state(relay.clone(), add_epoch))
+        .layer(axum::middleware::from_fn_with_state(relay.clone(), guard::guard))
+        .layer(axum::middleware::from_fn_with_state(relay.clone(), observe::observe))
         .with_state(relay)
+}
+
+/// `/metrics` (Prometheus), meant for a separate listener that isn't public.
+pub fn metrics_router(relay: Shared) -> Router {
+    async fn metrics(State(r): State<Shared>) -> Response {
+        match r.stored() {
+            Ok(stored) => (
+                [("content-type", "text/plain; version=0.0.4")],
+                r.metrics().render(&stored),
+            )
+                .into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:?}")).into_response(),
+        }
+    }
+    Router::new().route("/metrics", get(metrics)).with_state(relay)
 }
 
 #[cfg(test)]

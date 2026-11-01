@@ -21,3 +21,8 @@ serde_json = { workspace = true }
 rusqlite = { workspace = true, features = ["backup"] }
 sha2 = "0.10"
 getrandom = "0.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "json", "ansi", "std"] }
+
+[dev-dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["json"] }

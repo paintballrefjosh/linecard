@@ -39,6 +39,9 @@ pub enum SyncError {
     Storage(String),
     #[error("relay: {0}")]
     Relay(String),
+    /// The relay asked this computer to slow down (HTTP 429); try again after this many seconds.
+    #[error("the relay is limiting requests; trying again in {0} s")]
+    RateLimited(u64),
 }
 
 impl From<std::io::Error> for SyncError {

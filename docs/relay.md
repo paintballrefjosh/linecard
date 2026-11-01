@@ -34,6 +34,34 @@ Changes reach the other computers within about a second: each one keeps a reques
 | `LINECARD_RELAY_OPEN` | `true` | `false` makes the relay private (accounts only) |
 | `LINECARD_RELAY_MAX_GROUP_BYTES` | `256MiB` | Storage per sync group (`1GiB`, `500MB`, `0` = no limit); writes beyond it fail with 507 |
 | `LINECARD_RELAY_IDLE_DAYS` | `0` (never) | Delete groups with no change and no computer reporting in for this many days |
+| `LINECARD_RELAY_RATE` | `20/s, burst 100` | Requests allowed per client address and per sync group (`off` = none) |
+| `LINECARD_RELAY_TRUST_PROXY` | `false` | Read the client address from `X-Forwarded-For` (only behind your own proxy) |
+| `LINECARD_RELAY_LOG` | `info` | Log level |
+| `LINECARD_RELAY_LOG_FORMAT` | `text` | `text` or `json` |
+| `LINECARD_RELAY_METRICS_ADDR` | off | Serve Prometheus `/metrics` here, apart from the public port |
+| `LINECARD_RELAY_BACKUP_DIR` | off | Folder for daily backups |
+| `LINECARD_RELAY_BACKUP_KEEP` | `7` | How many daily backups to keep |
+
+## Limits and abuse protection
+
+A relay on the internet gets scanned and guessed at. It protects itself, and none of this needs the data (everything it stores is ciphertext):
+
+- **Request rate.** Each client address, and each sync group, may make `LINECARD_RELAY_RATE` requests (default `20/s, burst 100`; `off` for none). Past it the relay answers `429` with a `Retry-After` header, and Linecard waits that long before trying again. `/health` and `/ready` are never limited.
+- **Wrong tokens.** A group's token is 256 bits derived from its phrase, so guessing one is hopeless; the relay still doesn't let an address try. After 20 wrong tokens within five minutes, that address gets `429` for five minutes (and the relay logs it, with the group id shortened).
+- **Waiting requests.** Each computer holds one long request open to hear about changes quickly. At most 32 may be held per address and per group; further ones get `429`.
+- **Time.** Every request but that wait is cut off after 30 seconds. Blobs are limited to 1 MiB.
+
+**Behind a proxy** (Caddy, Traefik, nginx, a tunnel), every request arrives from the proxy's address, so the relay can't tell clients apart and its limits would apply to everyone together. Set `LINECARD_RELAY_TRUST_PROXY=true` so it reads the client address from the last `X-Forwarded-For` entry, which the proxy adds. Do that only when nothing but your proxy can reach the relay (the Compose bundle is set up this way). Without a proxy leave it `false`: anyone can write that header.
+
+## Logs and metrics
+
+The relay logs one line per request: method, route (with `{group}` in place of the id), status, time in milliseconds, the client address, and the first eight characters of the group id. It never logs tokens, access keys or blobs. Set `LINECARD_RELAY_LOG` (`info` by default) and `LINECARD_RELAY_LOG_FORMAT=json` for a log collector. Starting, stopping, limits, daily cleanup and backups are logged too.
+
+Two probes for orchestrators: `/health` (the process answers) and `/ready` (the database answers and its schema is the expected one).
+
+For Prometheus, set `LINECARD_RELAY_METRICS_ADDR` (for example `127.0.0.1:9100`, or `0.0.0.0:9100` inside a container) and scrape `/metrics` there. It's a separate port on purpose: keep it off the public internet. You get request counts and latency by route and status, requests turned away by each limit, waiting requests, and what's stored (groups, accounts, batches, bytes, devices, database size). No label contains a group id.
+
+`linecard-relay config` prints every setting, the value in effect, whether the environment set it, and what it does; wrong values are reported with the default that replaced them.
 
 ## Private relays and accounts
 
@@ -91,7 +119,8 @@ linecard-relay account remove <name> [--with-groups]
 linecard-relay group list [--idle [DAYS]]          id, owner, batches, size, devices, last write and last seen; --idle: only quiet groups
 linecard-relay vacuum                                 give deleted data's disk space back
 linecard-relay group remove <group-id>
-linecard-relay stats
+linecard-relay config                                 every setting: value in effect, set or default, what it does
+linecard-relay stats                                  totals, storage per account, largest and quietest groups
 ```
 
 Removing an account stops it from starting new groups; `--with-groups` also deletes the data of the groups it started.

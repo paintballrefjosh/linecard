@@ -554,6 +554,12 @@ impl SyncEngine {
                 if state.sync.generation.load(Ordering::SeqCst) != generation {
                     break;
                 }
+                // A relay that says "slow down" is obeyed: wait as long as it asks,
+                // on top of the usual pause.
+                let retry_after = match &result {
+                    Err(SyncError::RateLimited(n)) => Some((*n).min(600)),
+                    _ => None,
+                };
                 let status = match result {
                     Ok(Some(notice)) => {
                         let message = closed_text(&notice);
@@ -575,6 +581,9 @@ impl SyncEngine {
                     Err(e) => SyncStateDto::Error { message: e.to_string() },
                 };
                 state.sync.set_status(&app, status);
+                if let Some(secs) = retry_after {
+                    tokio::time::sleep(Duration::from_secs(secs)).await;
+                }
                 tokio::select! {
                     _ = transport.idle(&app, cfg.interval()) => {}
                     _ = state.sync.wake.notified() => {}

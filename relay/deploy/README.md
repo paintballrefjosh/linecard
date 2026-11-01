@@ -76,6 +76,8 @@ services:
 
 Whatever the proxy is, it must **not time out idle responses before about 30 seconds**: devices keep a request open for up to 25 s waiting for changes. Request bodies are up to 1 MiB.
 
+Also set `LINECARD_RELAY_TRUST_PROXY=true` on the relay, so its limits apply to each client rather than to your proxy as a whole, and make sure your proxy adds the client address it saw to `X-Forwarded-For` (all the common ones do; the nginx line below sets it outright). The relay uses the last entry, which is the proxy's, so a header forged by a client can't pass for another address. Only turn this on when nothing but your proxy can reach the relay.
+
 nginx:
 
 ```nginx
@@ -83,6 +85,7 @@ location / {
     proxy_pass http://127.0.0.1:8443;
     proxy_read_timeout 60s;
     proxy_buffering off;
+    proxy_set_header X-Forwarded-For $remote_addr;   # the relay trusts this (see below)
     client_max_body_size 1100k;
 }
 ```

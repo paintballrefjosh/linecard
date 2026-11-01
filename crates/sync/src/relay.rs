@@ -59,6 +59,16 @@ async fn check(resp: reqwest::Response) -> Result<reqwest::Response, SyncError> 
     if resp.status().is_success() {
         return Ok(resp);
     }
+    if resp.status().as_u16() == 429 {
+        // Obey the relay: it says when there will be room again.
+        let secs = resp
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(30);
+        return Err(SyncError::RateLimited(secs.clamp(1, 600)));
+    }
     let status = resp.status();
     let body: serde_json::Value = resp.json().await.unwrap_or_default();
     let msg = body["error"].as_str().unwrap_or("").to_string();

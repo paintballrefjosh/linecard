@@ -65,6 +65,8 @@ jobs:
       - name: Answers over HTTP and takes admin commands
         run: |
           curl -fsS http://127.0.0.1:8443/health
+          curl -fsS http://127.0.0.1:8443/ready
+          docker exec relay linecard-relay config
           docker exec relay linecard-relay account add ci
           docker exec relay linecard-relay stats
       - name: Image is small, runs as non-root

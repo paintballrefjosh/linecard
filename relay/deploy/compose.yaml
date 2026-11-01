@@ -25,6 +25,14 @@ services:
       # A backup of the database every day, the newest few kept (see README: copy them off this server).
       LINECARD_RELAY_BACKUP_DIR: ${LINECARD_RELAY_BACKUP_DIR:-/backups}
       LINECARD_RELAY_BACKUP_KEEP: ${LINECARD_RELAY_BACKUP_KEEP:-7}
+      # Limits per client address and per sync group; "off" turns them off.
+      LINECARD_RELAY_RATE: ${LINECARD_RELAY_RATE:-20/s, burst 100}
+      # The relay is reachable only through Caddy, which sets X-Forwarded-For to the real client address.
+      LINECARD_RELAY_TRUST_PROXY: "true"
+      LINECARD_RELAY_LOG: ${LINECARD_RELAY_LOG:-info}
+      LINECARD_RELAY_LOG_FORMAT: ${LINECARD_RELAY_LOG_FORMAT:-text}
+      # Prometheus metrics, on a port that is not published (scrape it from another container on the backend network):
+      # LINECARD_RELAY_METRICS_ADDR: 0.0.0.0:9100
     volumes:
       - relay-data:/data
       - relay-backups:/backups

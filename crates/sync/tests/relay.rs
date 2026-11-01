@@ -150,3 +150,23 @@ async fn the_relay_reports_which_history_it_is_serving() {
     let resp = reqwest::get(format!("{one}/health")).await.unwrap();
     assert_eq!(resp.headers()["x-linecard-epoch"], first.as_str());
 }
+
+#[tokio::test]
+async fn a_relay_that_says_slow_down_is_obeyed() {
+    let base = start_relay_with(Limits {
+        rate: Some(linecard_relay::Rate {
+            per_sec: 0.2,
+            burst: 2.0,
+        }),
+        ..Default::default()
+    })
+    .await;
+    let group = GroupKey::generate();
+    let a = client(&base, &group, "laptop");
+    a.pull(0).await.unwrap();
+    a.pull(0).await.unwrap();
+    match a.pull(0).await.unwrap_err() {
+        linecard_sync::SyncError::RateLimited(secs) => assert!((1..=5).contains(&secs), "{secs}"),
+        other => panic!("expected the relay's rate limit, got {other:?}"),
+    }
+}
