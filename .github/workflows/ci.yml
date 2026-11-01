@@ -4,9 +4,12 @@ on:
   push:
     branches: [master]
   pull_request:
+  schedule:
+    - cron: "17 5 * * 1"
 
 jobs:
   rust:
+    if: github.event_name != 'schedule'
     strategy:
       fail-fast: false
       matrix:
@@ -37,9 +40,24 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
+  # Known vulnerabilities, licenses and sources in the dependencies. The
+  # weekly run (see `schedule` above) catches advisories published after the last push.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: UI dependencies
+        working-directory: app
+        run: npm audit --omit=dev --audit-level=moderate
+
   # The relay image builds, starts healthy, takes admin commands, and stops
   # on SIGTERM well inside Docker's 10 s limit.
   relay-image:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
