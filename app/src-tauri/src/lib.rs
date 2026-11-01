@@ -4,6 +4,7 @@
 //! next); SSH and Telnet sessions are real; Serial is next (see
 //! docs/roadmap.md).
 
+mod debuglog;
 mod dto;
 mod gfx;
 mod highlight;
@@ -555,6 +556,33 @@ fn set_connection_password(
     Ok(())
 }
 
+// ---- debug log -----------------------------------------------------------------
+
+/// The debug log's text, for "Copy debug log".
+#[tauri::command]
+fn debug_log_text() -> String {
+    debuglog::read()
+}
+
+/// Show the debug log's folder in the file manager.
+#[tauri::command]
+fn open_debug_log_folder() -> CmdResult<()> {
+    let path = debuglog::path().ok_or("no debug log yet")?;
+    if !path.exists() {
+        std::fs::write(&path, "").map_err(err)?;
+    }
+    tauri_plugin_opener::reveal_item_in_dir(path).map_err(err)
+}
+
+/// Errors the UI notices itself (update checks), recorded with the rest.
+#[tauri::command]
+fn log_debug(area: String, message: String) {
+    debuglog::write(
+        &area.chars().take(16).collect::<String>(),
+        &message.chars().take(500).collect::<String>(),
+    );
+}
+
 // ---- devices & sync ----------------------------------------------------------
 
 #[tauri::command]
@@ -872,7 +900,11 @@ async fn open_session(
     }
 
     let ssh = state.ssh.clone();
+    let who = format!("{kind:?} {endpoint}");
     let sink: linecard_proto::EventSink = Box::new(move |e| {
+        if let linecard_proto::SessionEvent::Disconnected { reason: Some(r) } = &e {
+            debuglog::write("session", &format!("{who}: {r}"));
+        }
         if let Some(l) = &mut log {
             match &e {
                 linecard_proto::SessionEvent::Data(d) => l.write(d),
@@ -960,6 +992,7 @@ pub fn run() {
                 Some(dir) => std::path::PathBuf::from(dir),
                 None => app.path().app_data_dir()?,
             };
+            debuglog::init(&data, &app.package_info().version.to_string());
             let mut lib = Library::open(&data.join("library.db"), seed_starter)
                 .map_err(|e| format!("could not open the connection library: {e}"))?;
             highlight::migrate(&mut lib, PREFERENCES_KEY)?;
@@ -1003,6 +1036,9 @@ pub fn run() {
             import_apply,
             set_logging,
             forget_saved_password,
+            debug_log_text,
+            open_debug_log_folder,
+            log_debug,
             password_target,
             set_connection_password,
             get_devices,

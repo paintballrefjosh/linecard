@@ -108,6 +108,8 @@ export function SettingsPage({ theme, onTheme }: Props) {
 
       <SavedPasswords />
 
+      <DebugLog />
+
       <Workspaces />
     </div>
   );
@@ -1153,5 +1155,47 @@ function Segmented<T extends string>({
         </button>
       ))}
     </div>
+  );
+}
+
+/** Linecard's own log of sync, remote-session and update errors, for bug
+ *  reports. Holds no terminal output or passwords. */
+function DebugLog() {
+  const [note, setNote] = useState<string | null>(null);
+  const run = (f: (b: Awaited<ReturnType<typeof getBackend>>) => Promise<string>) =>
+    void getBackend()
+      .then(f)
+      .then(setNote)
+      .catch((e) => setNote(String(e)));
+  return (
+    <Section title="Debug log">
+      <div className="settings-row">
+        <div className="settings-text">
+          <span>Attach this to a bug report</span>
+          <p>
+            Records sync, RDP/VNC/SSH and update errors, with the connection's address. It never contains terminal
+            output, passwords or keys.
+          </p>
+          {note && <p role="status">{note}</p>}
+        </div>
+        <div className="settings-control">
+          <button
+            className="btn"
+            onClick={() =>
+              run(async (b) => {
+                const text = await b.debugLog();
+                await b.clipboardWrite(text);
+                return text ? "Copied to the clipboard." : "Nothing has been logged yet.";
+              })
+            }
+          >
+            Copy log
+          </button>
+          <button className="btn" onClick={() => run(async (b) => (await b.openDebugLogFolder(), ""))}>
+            Show folder
+          </button>
+        </div>
+      </div>
+    </Section>
   );
 }

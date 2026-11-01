@@ -31,7 +31,7 @@ fn send_json(ch: &Channel<InvokeResponseBody>, v: &impl Serialize) {
     }
 }
 
-fn forward(ch: &Channel<InvokeResponseBody>, e: GfxEvent) {
+fn forward(ch: &Channel<InvokeResponseBody>, who: &str, e: GfxEvent) {
     match e {
         GfxEvent::Frame {
             x,
@@ -51,7 +51,12 @@ fn forward(ch: &Channel<InvokeResponseBody>, e: GfxEvent) {
         GfxEvent::Resized { width, height } => send_json(ch, &GfxEventDto::Resized { width, height }),
         GfxEvent::Bell => send_json(ch, &GfxEventDto::Bell),
         GfxEvent::Clipboard(text) => send_json(ch, &GfxEventDto::Clipboard { text }),
-        GfxEvent::Disconnected { reason } => send_json(ch, &GfxEventDto::Disconnected { reason }),
+        GfxEvent::Disconnected { reason } => {
+            if let Some(r) = &reason {
+                crate::debuglog::write("remote", &format!("{who}: {r}"));
+            }
+            send_json(ch, &GfxEventDto::Disconnected { reason })
+        }
         GfxEvent::Auth(p) => send_json(ch, &SessionEventDto::from(SessionEvent::Auth(p))),
         GfxEvent::HostKey(p) => send_json(ch, &SessionEventDto::from(SessionEvent::HostKey(p))),
     }
@@ -84,7 +89,8 @@ pub async fn open_gfx_session(
         }
     };
     let credentials = state.ssh.credentials.clone();
-    let sink: linecard_proto::gfx::GfxSink = Box::new(move |e| forward(&on_event, e));
+    let who = format!("{kind:?} {endpoint}");
+    let sink: linecard_proto::gfx::GfxSink = Box::new(move |e| forward(&on_event, &who, e));
     let session: Box<dyn GfxSession> = match kind {
         ConnectionKind::Vnc => Box::new(
             linecard_proto::vnc::VncSession::connect(&target, credentials, state.ssh.clone(), sink).map_err(err)?,

@@ -303,6 +303,13 @@ impl SyncEngine {
     }
 
     fn set_status(&self, app: &AppHandle, s: SyncStateDto) {
+        match &s {
+            SyncStateDto::Error { message } => crate::debuglog::write("sync", message),
+            SyncStateDto::Offline { pending } => {
+                crate::debuglog::write("sync", &format!("offline, {pending} changes waiting"))
+            }
+            _ => {}
+        }
         if let Ok(mut cur) = self.status.lock() {
             if *cur != s {
                 *cur = s;

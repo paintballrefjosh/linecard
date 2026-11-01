@@ -122,6 +122,11 @@ export interface Backend {
   setPreferences(p: Preferences): Promise<void>;
   listSavedPasswords(): Promise<SavedPassword[]>;
   forgetSavedPassword(key: string): Promise<void>;
+  /** Linecard's own error log, as text. */
+  debugLog(): Promise<string>;
+  openDebugLogFolder(): Promise<void>;
+  /** Add a line to the debug log. */
+  logDebug(area: string, message: string): void;
   /** Which user name (if any) a connection's saved password is keyed by. */
   passwordTarget(connectionId: string): Promise<PasswordTarget>;
   /** Save a password for a connection without logging in first. */
@@ -225,6 +230,9 @@ async function tauriBackend(): Promise<Backend> {
     setPreferences: (preferences) => invoke("set_preferences", { preferences }),
     listSavedPasswords: () => invoke<SavedPassword[]>("list_saved_passwords"),
     forgetSavedPassword: (key) => invoke("forget_saved_password", { key }),
+    debugLog: () => invoke<string>("debug_log_text"),
+    openDebugLogFolder: () => invoke("open_debug_log_folder"),
+    logDebug: (area, message) => void invoke("log_debug", { area, message }).catch(() => {}),
     passwordTarget: (connectionId) => invoke<PasswordTarget>("password_target", { connectionId }),
     setConnectionPassword: (connectionId, user, password) =>
       invoke("set_connection_password", { connectionId, user, password }),

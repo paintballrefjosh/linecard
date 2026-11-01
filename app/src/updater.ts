@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { isTauri } from "./api";
+import { getBackend, isTauri } from "./api";
 
 export interface UpdateInfo {
   version: string;
@@ -45,6 +45,7 @@ export function useUpdater(): UpdateInfo | null {
         });
       } catch (err) {
         console.warn("update check failed", err);
+        void getBackend().then((b) => b.logDebug("update", `update check failed: ${String(err)}`));
       }
     };
 

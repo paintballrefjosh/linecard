@@ -468,6 +468,11 @@ export function mockBackend(): Backend {
       if (!password) throw new Error("enter a password");
       savedPasswords.set(`${user || "admin"}@lab`, Date.now());
     },
+    async debugLog() {
+      return "2025-01-01 12:00:00 [sync] relay unreachable";
+    },
+    async openDebugLogFolder() {},
+    logDebug() {},
     async forgetSavedPassword(key) {
       savedPasswords.delete(key.replace(/^ssh:/, ""));
     },
