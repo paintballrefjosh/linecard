@@ -89,6 +89,9 @@ impl LanTransport {
         let limits = Limits {
             max_ops: 5_000_000,
             open: true,
+            // The LAN store lives on the user's own disk: no byte quota, no expiry.
+            max_group_bytes: 0,
+            idle_days: 0,
         };
         let store = Arc::new(
             match store {

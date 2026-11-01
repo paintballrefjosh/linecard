@@ -11,6 +11,7 @@ async fn start_relay() -> String {
     start_relay_with(Limits {
         max_ops: 10_000,
         open: true,
+        ..Default::default()
     })
     .await
 }
@@ -100,6 +101,7 @@ async fn private_relays_take_an_access_key() {
         Relay::in_memory(Limits {
             max_ops: 100,
             open: false,
+            ..Default::default()
         })
         .unwrap(),
     );
