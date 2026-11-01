@@ -3,11 +3,12 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::{Duration, UNIX_EPOCH};
 
-use linecard_proto::sftp::{join, EntryKind, SftpClient};
+use linecard_proto::sftp::{join, EntryKind, SftpClient, Transfer};
 use linecard_proto::{EventSink, HostKeyDecision, PromptReply, SessionEvent, SshOptions, TerminalTarget};
 use russh::keys::PrivateKey;
 use russh::server::{self, Auth, Msg};
@@ -28,6 +29,9 @@ E//3rrKtYDAZBm2ZnQh6AAAAEmxpbmVjYXJkLXRlc3QtaG9zdAECAw==
 ";
 
 // ---- test server -----------------------------------------------------------------
+
+/// (path, mode) of every setstat the test server received.
+static CHMODS: Mutex<Vec<(String, u32)>> = Mutex::new(Vec::new());
 
 /// What an open SFTP handle refers to.
 enum Open {
@@ -215,6 +219,18 @@ impl russh_sftp::server::Handler for Files {
         Ok(ok(id))
     }
 
+    async fn setstat(&mut self, id: u32, path: String, attrs: FileAttributes) -> Result<Status, StatusCode> {
+        if !self.real(&path).exists() {
+            return Err(StatusCode::NoSuchFile);
+        }
+        // The files live on the test machine's own filesystem, whose permission
+        // model varies; record what was asked instead.
+        if let Some(mode) = attrs.permissions {
+            CHMODS.lock().unwrap().push((path, mode));
+        }
+        Ok(ok(id))
+    }
+
     async fn rename(&mut self, id: u32, from: String, to: String) -> Result<Status, StatusCode> {
         std::fs::rename(self.real(&from), self.real(&to)).map_err(io)?;
         Ok(ok(id))
@@ -379,14 +395,16 @@ async fn browse_download_upload_rename_and_delete() {
     // Download a file, reporting progress up to its size.
     let out = temp_dir("out");
     let mut seen = 0;
-    sftp.download("/readme.md", &out.join("readme.md"), &mut |n| seen = n)
+    sftp.download("/readme.md", &out.join("readme.md"), plain(), &mut |n| seen = n)
         .await
         .unwrap();
     assert_eq!(seen, 100_000);
     assert_eq!(std::fs::read(out.join("readme.md")).unwrap().len(), 100_000);
 
     // Download a folder: its tree comes along.
-    sftp.download("/docs", &out.join("docs"), &mut silent()).await.unwrap();
+    sftp.download("/docs", &out.join("docs"), plain(), &mut silent())
+        .await
+        .unwrap();
     assert_eq!(
         std::fs::read_to_string(out.join("docs/notes.txt")).unwrap(),
         "remote notes"
@@ -397,11 +415,13 @@ async fn browse_download_upload_rename_and_delete() {
     std::fs::create_dir_all(local.join("conf/sub")).unwrap();
     std::fs::write(local.join("conf/a.cfg"), "a").unwrap();
     std::fs::write(local.join("conf/sub/b.cfg"), "bb").unwrap();
-    sftp.upload(&local.join("conf"), "/conf", &mut silent()).await.unwrap();
+    sftp.upload(&local.join("conf"), "/conf", plain(), &mut silent())
+        .await
+        .unwrap();
     assert_eq!(std::fs::read_to_string(root.join("conf/sub/b.cfg")).unwrap(), "bb");
     std::fs::write(local.join("one.txt"), "new contents").unwrap();
     std::fs::write(root.join("one.txt"), "old contents that are longer").unwrap();
-    sftp.upload(&local.join("one.txt"), "/one.txt", &mut silent())
+    sftp.upload(&local.join("one.txt"), "/one.txt", plain(), &mut silent())
         .await
         .unwrap();
     assert_eq!(std::fs::read_to_string(root.join("one.txt")).unwrap(), "new contents");
@@ -428,4 +448,154 @@ async fn a_wrong_password_fails_to_connect() {
     let port = start_server(root).await;
     let err = connect(port, "wrong").await.err().expect("login should fail");
     assert!(!err.to_string().is_empty());
+}
+
+// ---- cancel, resume, permissions ---------------------------------------------
+
+static NEVER: AtomicBool = AtomicBool::new(false);
+
+/// A transfer that is never canceled and refuses to resume.
+fn plain() -> Transfer<'static> {
+    Transfer {
+        resume: false,
+        cancel: &NEVER,
+    }
+}
+
+fn resuming() -> Transfer<'static> {
+    Transfer {
+        resume: true,
+        cancel: &NEVER,
+    }
+}
+
+/// `n` bytes that differ from place to place, so a wrong offset shows.
+fn pattern(n: usize) -> Vec<u8> {
+    (0..n).map(|i| (i % 251) as u8).collect()
+}
+
+#[tokio::test]
+async fn a_canceled_download_stops_and_can_be_resumed() {
+    let root = temp_dir("root");
+    let data = pattern(300_000);
+    std::fs::write(root.join("big.bin"), &data).unwrap();
+    let port = start_server(root).await;
+    let sftp = connect(port, "secret").await.expect("login");
+    let out = temp_dir("out");
+    let dest = out.join("big.bin");
+
+    let cancel = AtomicBool::new(false);
+    let opts = Transfer {
+        resume: false,
+        cancel: &cancel,
+    };
+    let err = sftp
+        .download("/big.bin", &dest, opts, &mut |n| {
+            if n >= 64 * 1024 {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::Interrupted);
+    let partial = std::fs::metadata(&dest).unwrap().len() as usize;
+    assert!(partial >= 64 * 1024 && partial < data.len(), "kept {partial} bytes");
+
+    // Resuming picks up where it stopped, and progress counts the part already there.
+    let mut last = 0;
+    sftp.download("/big.bin", &dest, resuming(), &mut |n| last = n)
+        .await
+        .unwrap();
+    assert_eq!(last as usize, data.len());
+    assert_eq!(std::fs::read(&dest).unwrap(), data);
+
+    // A complete file is left alone, and a longer (unrelated) one is started over.
+    sftp.download("/big.bin", &dest, resuming(), &mut |n| last = n)
+        .await
+        .unwrap();
+    assert_eq!(last as usize, data.len());
+    std::fs::write(&dest, vec![9u8; 400_000]).unwrap();
+    sftp.download("/big.bin", &dest, resuming(), &mut silent())
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(&dest).unwrap(), data);
+    sftp.close().await;
+}
+
+#[tokio::test]
+async fn a_canceled_upload_stops_and_can_be_resumed() {
+    let root = temp_dir("root");
+    let local = temp_dir("local");
+    let data = pattern(300_000);
+    std::fs::write(local.join("big.bin"), &data).unwrap();
+    let port = start_server(root.clone()).await;
+    let sftp = connect(port, "secret").await.expect("login");
+
+    let cancel = AtomicBool::new(false);
+    let opts = Transfer {
+        resume: false,
+        cancel: &cancel,
+    };
+    let err = sftp
+        .upload(&local.join("big.bin"), "/big.bin", opts, &mut |n| {
+            if n >= 64 * 1024 {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::Interrupted);
+    let partial = std::fs::metadata(root.join("big.bin")).unwrap().len() as usize;
+    assert!(partial >= 64 * 1024 && partial < data.len(), "kept {partial} bytes");
+
+    let mut last = 0;
+    sftp.upload(&local.join("big.bin"), "/big.bin", resuming(), &mut |n| last = n)
+        .await
+        .unwrap();
+    assert_eq!(last as usize, data.len());
+    assert_eq!(std::fs::read(root.join("big.bin")).unwrap(), data);
+
+    // Without resume an upload still replaces what is there.
+    std::fs::write(root.join("big.bin"), vec![1u8; 10]).unwrap();
+    sftp.upload(&local.join("big.bin"), "/big.bin", plain(), &mut silent())
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(root.join("big.bin")).unwrap(), data);
+    sftp.close().await;
+}
+
+#[tokio::test]
+async fn permissions_can_be_set_on_one_item_or_a_whole_folder() {
+    let root = temp_dir("root");
+    std::fs::create_dir_all(root.join("site/sub")).unwrap();
+    std::fs::write(root.join("site/a.txt"), "a").unwrap();
+    std::fs::write(root.join("site/sub/b.txt"), "b").unwrap();
+    let port = start_server(root).await;
+    let sftp = connect(port, "secret").await.expect("login");
+
+    sftp.chmod("/site/a.txt", 0o600, false).await.unwrap();
+    sftp.chmod("/site", 0o755, true).await.unwrap();
+    let mut seen: Vec<_> = CHMODS
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(p, _)| p.starts_with("/site"))
+        .cloned()
+        .collect();
+    seen.sort();
+    assert_eq!(
+        seen,
+        [
+            ("/site".to_string(), 0o755),
+            ("/site/a.txt".to_string(), 0o600),
+            ("/site/a.txt".to_string(), 0o755),
+            ("/site/sub".to_string(), 0o755),
+            ("/site/sub/b.txt".to_string(), 0o755),
+        ]
+    );
+    // Only the permission bits are sent, whatever else the caller passed.
+    sftp.chmod("/site/a.txt", 0o100644, false).await.unwrap();
+    assert!(CHMODS.lock().unwrap().contains(&("/site/a.txt".to_string(), 0o644)));
+    assert!(sftp.chmod("/nope", 0o644, false).await.is_err());
+    sftp.close().await;
 }

@@ -2590,3 +2590,26 @@ button.status-version:hover {
   flex: none;
   border-radius: var(--radius-s);
 }
+
+.sftp-status-btn {
+  height: 22px;
+  margin-left: 10px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.perm-grid {
+  margin-bottom: 10px;
+  border-collapse: collapse;
+}
+.perm-grid th,
+.perm-grid td {
+  padding: 3px 12px 3px 0;
+  font-weight: 400;
+  text-align: left;
+}
+.perm-rec {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 12px;
+}

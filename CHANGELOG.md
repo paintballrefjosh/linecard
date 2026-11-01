@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **SFTP**: a Cancel button for transfers, **Resume** after a cancel or failure (continues the files already partly copied), and a Permissions button (read/write/execute grid or octal number, optionally for everything inside a folder).
+
 - **Sync phrase QR code**: Settings → Sync → Show phrase → **QR code**, to scan the phrase into a phone's password manager.
 
 - **Relay: key rotation, direct HTTPS, signed images**: `linecard-relay account rotate <name>` replaces an account's access key (the old one stops working; the account's groups keep syncing). `LINECARD_RELAY_TLS_CERT_FILE` and `LINECARD_RELAY_TLS_KEY_FILE` make the relay serve HTTPS itself, with no proxy, and pick up renewed certificates without a restart. Released relay images are now signed with cosign (keyless); verification steps are in `docs/relay.md`.

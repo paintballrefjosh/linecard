@@ -1050,6 +1050,8 @@ pub fn run() {
             scripting::script_stop,
             scripting::script_answer,
             scripting::session_focus,
+            sftp::sftp_cancel,
+            sftp::sftp_chmod,
             scripting::open_scripts_folder,
             get_tree,
             move_node,

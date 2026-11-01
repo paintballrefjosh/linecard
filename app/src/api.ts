@@ -62,9 +62,13 @@ export interface SftpHandle {
   /** Delete files and folders (folders with all their contents). */
   remove(paths: string[]): Promise<void>;
   /** Copy remote files or folders into a local folder. `onProgress` gets bytes so far. */
-  download(remote: string[], destFolder: string, onProgress: (bytes: number) => void): Promise<void>;
+  download(remote: string[], destFolder: string, resume: boolean, onProgress: (bytes: number) => void): Promise<void>;
   /** Copy local files or folders into a remote folder. */
-  upload(local: string[], remoteDir: string, onProgress: (bytes: number) => void): Promise<void>;
+  upload(local: string[], remoteDir: string, resume: boolean, onProgress: (bytes: number) => void): Promise<void>;
+  /** Stop the transfer in progress (it fails with "canceled"; what was copied stays, so it can be resumed). */
+  cancel(): void;
+  /** Set permission bits (e.g. 0o644); `recursive` also covers everything inside a folder. */
+  chmod(path: string, mode: number, recursive: boolean): Promise<void>;
   reply(r: PromptReply): void;
   close(): void;
 }
@@ -416,10 +420,12 @@ async function tauriBackend(): Promise<Backend> {
         mkdir: (path) => invoke("sftp_mkdir", { sessionId, path }),
         rename: (from, to) => invoke("sftp_rename", { sessionId, from, to }),
         remove: (paths) => invoke("sftp_remove", { sessionId, paths }),
-        download: (remote, dest, onProgress) =>
-          invoke("sftp_download", { sessionId, remote, dest, onProgress: progress(onProgress) }),
-        upload: (local, dir, onProgress) =>
-          invoke("sftp_upload", { sessionId, local, dir, onProgress: progress(onProgress) }),
+        download: (remote, dest, resume, onProgress) =>
+          invoke("sftp_download", { sessionId, remote, dest, resume, onProgress: progress(onProgress) }),
+        upload: (local, dir, resume, onProgress) =>
+          invoke("sftp_upload", { sessionId, local, dir, resume, onProgress: progress(onProgress) }),
+        cancel: () => void invoke("sftp_cancel", { sessionId }).catch(() => {}),
+        chmod: (path, mode, recursive) => invoke("sftp_chmod", { sessionId, path, mode, recursive }),
         reply: (reply) => void invoke("sftp_reply", { sessionId, reply }).catch(() => {}),
         close: () => void invoke("sftp_close", { sessionId }).catch(() => {}),
       };

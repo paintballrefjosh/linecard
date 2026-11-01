@@ -5,12 +5,13 @@ use std::future::Future;
 use std::io;
 use std::path::Path;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::UNIX_EPOCH;
 
 use russh::client::Handle;
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::{FileType, OpenFlags};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::ssh::{login, Client, SharedReplies};
 use crate::{EventSink, SshOptions, TerminalTarget};
@@ -38,6 +39,25 @@ pub struct SftpEntry {
 
 /// Bytes moved so far in one transfer.
 pub type Progress<'a> = &'a mut (dyn FnMut(u64) + Send);
+
+/// How a transfer behaves.
+#[derive(Clone, Copy)]
+pub struct Transfer<'a> {
+    /// Continue files that already exist at the destination.
+    pub resume: bool,
+    /// Set to stop the transfer at the next chunk; what was copied stays.
+    pub cancel: &'a AtomicBool,
+}
+
+impl Transfer<'_> {
+    fn check(&self) -> io::Result<()> {
+        if self.cancel.load(Ordering::Relaxed) {
+            Err(io::Error::new(io::ErrorKind::Interrupted, "canceled"))
+        } else {
+            Ok(())
+        }
+    }
+}
 
 fn fail(e: impl std::fmt::Display) -> io::Error {
     io::Error::other(e.to_string())
@@ -157,59 +177,102 @@ impl SftpClient {
         })
     }
 
-    /// Copy a remote file or folder to `local` (a path that doesn't exist yet).
-    pub async fn download(&self, remote: &str, local: &Path, progress: Progress<'_>) -> io::Result<()> {
+    /// Copy a remote file or folder to `local`. With `resume`, files that
+    /// already exist locally are continued (or skipped when complete) rather
+    /// than refused; this assumes they are the start of the same file.
+    pub async fn download(
+        &self,
+        remote: &str,
+        local: &Path,
+        opts: Transfer<'_>,
+        progress: Progress<'_>,
+    ) -> io::Result<()> {
         let mut done = 0;
-        self.download_into(remote, local, &mut done, progress).await
+        self.download_into(remote, local, opts, &mut done, progress).await
     }
 
     fn download_into<'a>(
         &'a self,
         remote: &'a str,
         local: &'a Path,
+        opts: Transfer<'a>,
         done: &'a mut u64,
         progress: Progress<'a>,
     ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
         Box::pin(async move {
+            opts.check()?;
             if self.is_dir(remote).await? {
                 tokio::fs::create_dir_all(local).await?;
                 for e in self.list(remote).await? {
                     let (r, l) = (join(remote, &e.name), local.join(&e.name));
-                    self.download_into(&r, &l, done, progress).await?;
+                    self.download_into(&r, &l, opts, done, progress).await?;
                 }
                 return Ok(());
             }
-            let mut src = self.sftp.open(remote).await.map_err(fail)?;
-            let mut dst = tokio::fs::File::create(local).await?;
-            let mut buf = vec![0u8; CHUNK];
-            loop {
-                let n = src.read(&mut buf).await?;
-                if n == 0 {
-                    break;
-                }
-                dst.write_all(&buf[..n]).await?;
-                *done += n as u64;
+            let size = self.sftp.metadata(remote).await.map_err(fail)?.len();
+            let have = match tokio::fs::metadata(local).await {
+                Ok(m) if opts.resume && m.is_file() && m.len() <= size => m.len(),
+                _ => 0,
+            };
+            if have > 0 && have == size {
+                *done += size;
                 progress(*done);
+                return Ok(());
             }
-            dst.flush().await
+            let mut src = self.sftp.open(remote).await.map_err(fail)?;
+            let mut dst = if have > 0 {
+                src.seek(io::SeekFrom::Start(have)).await?;
+                tokio::fs::OpenOptions::new().append(true).open(local).await?
+            } else {
+                tokio::fs::File::create(local).await?
+            };
+            *done += have;
+            let mut buf = vec![0u8; CHUNK];
+            let copied: io::Result<()> = async {
+                loop {
+                    opts.check()?;
+                    let n = src.read(&mut buf).await?;
+                    if n == 0 {
+                        return Ok(());
+                    }
+                    dst.write_all(&buf[..n]).await?;
+                    *done += n as u64;
+                    progress(*done);
+                }
+            }
+            .await;
+            // Close the file even when canceled or failed, so what was copied is really there.
+            let closed = dst.flush().await;
+            copied.and(closed)
         })
     }
 
-    /// Copy a local file or folder to the remote path `remote`.
-    pub async fn upload(&self, local: &Path, remote: &str, progress: Progress<'_>) -> io::Result<()> {
+    /// Copy a local file or folder to the remote path `remote`. Existing
+    /// remote files are replaced, or with `resume` continued (or skipped
+    /// when complete).
+    pub async fn upload(
+        &self,
+        local: &Path,
+        remote: &str,
+        opts: Transfer<'_>,
+        progress: Progress<'_>,
+    ) -> io::Result<()> {
         let mut done = 0;
-        self.upload_from(local, remote, &mut done, progress).await
+        self.upload_from(local, remote, opts, &mut done, progress).await
     }
 
     fn upload_from<'a>(
         &'a self,
         local: &'a Path,
         remote: &'a str,
+        opts: Transfer<'a>,
         done: &'a mut u64,
         progress: Progress<'a>,
     ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
         Box::pin(async move {
-            if tokio::fs::metadata(local).await?.is_dir() {
+            opts.check()?;
+            let meta = tokio::fs::metadata(local).await?;
+            if meta.is_dir() {
                 // An existing folder is fine: its files merge into it.
                 if !self.sftp.try_exists(remote).await.map_err(fail)? {
                     self.mkdir(remote).await?;
@@ -217,28 +280,87 @@ impl SftpClient {
                 let mut rd = tokio::fs::read_dir(local).await?;
                 while let Some(e) = rd.next_entry().await? {
                     let name = e.file_name().to_string_lossy().into_owned();
-                    self.upload_from(&e.path(), &join(remote, &name), done, progress)
+                    self.upload_from(&e.path(), &join(remote, &name), opts, done, progress)
                         .await?;
                 }
                 return Ok(());
             }
-            let mut src = tokio::fs::File::open(local).await?;
-            let mut dst = self
-                .sftp
-                .open_with_flags(remote, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
-                .await
-                .map_err(fail)?;
-            let mut buf = vec![0u8; CHUNK];
-            loop {
-                let n = src.read(&mut buf).await?;
-                if n == 0 {
-                    break;
+            let have = if opts.resume && self.sftp.try_exists(remote).await.map_err(fail)? {
+                let n = self.sftp.metadata(remote).await.map_err(fail)?.len();
+                if n <= meta.len() {
+                    n
+                } else {
+                    0
                 }
-                dst.write_all(&buf[..n]).await?;
-                *done += n as u64;
+            } else {
+                0
+            };
+            if have > 0 && have == meta.len() {
+                *done += have;
                 progress(*done);
+                return Ok(());
             }
-            dst.shutdown().await
+            let mut src = tokio::fs::File::open(local).await?;
+            let mut dst = if have > 0 {
+                src.seek(io::SeekFrom::Start(have)).await?;
+                let mut f = self
+                    .sftp
+                    .open_with_flags(remote, OpenFlags::WRITE)
+                    .await
+                    .map_err(fail)?;
+                f.seek(io::SeekFrom::Start(have)).await?;
+                f
+            } else {
+                self.sftp
+                    .open_with_flags(remote, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+                    .await
+                    .map_err(fail)?
+            };
+            *done += have;
+            let mut buf = vec![0u8; CHUNK];
+            let copied: io::Result<()> = async {
+                loop {
+                    opts.check()?;
+                    let n = src.read(&mut buf).await?;
+                    if n == 0 {
+                        return Ok(());
+                    }
+                    dst.write_all(&buf[..n]).await?;
+                    *done += n as u64;
+                    progress(*done);
+                }
+            }
+            .await;
+            // Close the file even when canceled or failed, so what was copied is really there.
+            let closed = dst.shutdown().await;
+            copied.and(closed)
+        })
+    }
+
+    /// Set permission bits (e.g. `0o644`) on a file or folder, and with
+    /// `recursive` on everything inside a folder too (links are left alone).
+    pub fn chmod<'a>(
+        &'a self,
+        path: &'a str,
+        mode: u32,
+        recursive: bool,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            let meta = self.sftp.symlink_metadata(path).await.map_err(fail)?;
+            if meta.is_symlink() {
+                return Ok(());
+            }
+            let attrs = russh_sftp::protocol::FileAttributes {
+                permissions: Some(mode & 0o7777),
+                ..Default::default()
+            };
+            self.sftp.set_metadata(path, attrs).await.map_err(fail)?;
+            if recursive && meta.is_dir() {
+                for e in self.list(path).await? {
+                    self.chmod(&join(path, &e.name), mode, true).await?;
+                }
+            }
+            Ok(())
         })
     }
 

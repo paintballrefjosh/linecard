@@ -2,11 +2,12 @@
 //! and password prompts as a terminal.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use linecard_core_model::ConnectionKind;
-use linecard_proto::sftp::{join, EntryKind, SftpClient};
+use linecard_proto::sftp::{join, EntryKind, SftpClient, Transfer};
 use linecard_proto::{PromptReply, SessionEvent, TerminalTarget};
 use serde::Serialize;
 use tauri::ipc::Channel;
@@ -20,6 +21,8 @@ use crate::{err, network_target, parse_endpoint, AppState, CmdResult};
 pub struct Slot {
     replies: UnboundedSender<PromptReply>,
     client: Option<Arc<SftpClient>>,
+    /// Set by `sftp_cancel`; the running transfer stops at its next chunk.
+    cancel: Arc<AtomicBool>,
 }
 
 #[derive(Serialize)]
@@ -74,6 +77,7 @@ pub async fn sftp_open(
         Slot {
             replies: reply_tx,
             client: None,
+            cancel: Arc::new(AtomicBool::new(false)),
         },
     );
     let sink: linecard_proto::EventSink = Box::new(move |e| match e {
@@ -163,6 +167,40 @@ pub async fn sftp_remove(state: State<'_, AppState>, session_id: String, paths: 
     Ok(())
 }
 
+/// The tab's client and a cleared cancel flag, for a new transfer.
+fn for_transfer(state: &AppState, id: &str) -> CmdResult<(Arc<SftpClient>, Arc<AtomicBool>)> {
+    let all = state.sftp.lock().map_err(err)?;
+    let slot = all.get(id).ok_or("the SFTP session is closed")?;
+    let c = slot.client.clone().ok_or("the SFTP session is closed")?;
+    slot.cancel.store(false, Ordering::Relaxed);
+    Ok((c, slot.cancel.clone()))
+}
+
+/// Stop the transfer in progress; what was copied so far stays, and the
+/// transfer can be resumed.
+#[tauri::command]
+pub fn sftp_cancel(state: State<AppState>, session_id: String) -> CmdResult<()> {
+    if let Some(slot) = state.sftp.lock().map_err(err)?.get(&session_id) {
+        slot.cancel.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+/// Set permission bits on a file or folder (and what is inside it).
+#[tauri::command]
+pub async fn sftp_chmod(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+    mode: u32,
+    recursive: bool,
+) -> CmdResult<()> {
+    client(&state, &session_id)?
+        .chmod(&path, mode, recursive)
+        .await
+        .map_err(|e| format!("{path}: {e}"))
+}
+
 /// A progress callback that reports at most every 100 ms.
 fn throttled(ch: Channel<u64>) -> impl FnMut(u64) + Send {
     let mut last = Instant::now() - Duration::from_secs(1);
@@ -181,9 +219,10 @@ pub async fn sftp_download(
     session_id: String,
     remote: Vec<String>,
     dest: String,
+    resume: bool,
     on_progress: Channel<u64>,
 ) -> CmdResult<()> {
-    let c = client(&state, &session_id)?;
+    let (c, cancel) = for_transfer(&state, &session_id)?;
     let mut total = 0u64;
     for r in remote {
         let name = r
@@ -193,15 +232,23 @@ pub async fn sftp_download(
             .unwrap_or("download")
             .to_string();
         let local = PathBuf::from(&dest).join(&name);
-        if local.exists() {
+        if local.exists() && !resume {
             return Err(format!("{} already exists here", local.display()));
         }
         let before = total;
         let mut report = throttled(on_progress.clone());
-        c.download(&r, &local, &mut |n| {
-            total = before + n;
-            report(total)
-        })
+        c.download(
+            &r,
+            &local,
+            Transfer {
+                resume,
+                cancel: &cancel,
+            },
+            &mut |n| {
+                total = before + n;
+                report(total)
+            },
+        )
         .await
         .map_err(|e| format!("{name}: {e}"))?;
     }
@@ -216,9 +263,10 @@ pub async fn sftp_upload(
     session_id: String,
     local: Vec<String>,
     dir: String,
+    resume: bool,
     on_progress: Channel<u64>,
 ) -> CmdResult<()> {
-    let c = client(&state, &session_id)?;
+    let (c, cancel) = for_transfer(&state, &session_id)?;
     let mut total = 0u64;
     for l in local {
         let path = PathBuf::from(&l);
@@ -228,10 +276,18 @@ pub async fn sftp_upload(
             .ok_or_else(|| format!("{l} has no name"))?;
         let before = total;
         let mut report = throttled(on_progress.clone());
-        c.upload(&path, &join(&dir, &name), &mut |n| {
-            total = before + n;
-            report(total)
-        })
+        c.upload(
+            &path,
+            &join(&dir, &name),
+            Transfer {
+                resume,
+                cancel: &cancel,
+            },
+            &mut |n| {
+                total = before + n;
+                report(total)
+            },
+        )
         .await
         .map_err(|e| format!("{name}: {e}"))?;
     }

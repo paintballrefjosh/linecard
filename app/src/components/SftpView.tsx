@@ -6,6 +6,7 @@ import {
   Folder,
   FolderPlus,
   Link2,
+  Lock,
   Pencil,
   RefreshCw,
   Trash2,
@@ -52,7 +53,9 @@ export function SftpView({ conn, onStatus }: Props) {
   const anchor = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
-  const [asking, setAsking] = useState<"mkdir" | "rename" | "delete" | null>(null);
+  const [asking, setAsking] = useState<"mkdir" | "rename" | "delete" | "chmod" | null>(null);
+  /** Repeats the transfer that stopped short, continuing what was copied. */
+  const [retry, setRetry] = useState<(() => void) | null>(null);
   const statusRef = useRef(onStatus);
   statusRef.current = onStatus;
 
@@ -118,15 +121,18 @@ export function SftpView({ conn, onStatus }: Props) {
   const byName = (name: string) => entries.find((e) => e.name === name);
   const picked = selected.map(byName).filter((e): e is SftpEntry => !!e);
 
+  /** Run one operation; null if it worked, else what went wrong. */
   const run = async (label: string, f: (h: SftpHandle, progress: (n: number) => void) => Promise<void>) => {
     const h = handle.current;
-    if (!h) return;
+    if (!h) return "not connected";
     setBusy({ label, bytes: 0 });
     setError(null);
     try {
       await f(h, (bytes) => setBusy({ label, bytes }));
+      return null;
     } catch (e) {
       setError(String(e));
+      return String(e);
     } finally {
       setBusy(null);
     }
@@ -137,17 +143,30 @@ export function SftpView({ conn, onStatus }: Props) {
     if (e.kind === "dir" || e.kind === "link") void show(join(path, e.name));
   };
 
+  /** A transfer that can be canceled; when it stops short, "Resume" repeats it
+   *  continuing the files already partly copied. */
+  const transfer = async (
+    label: string,
+    f: (h: SftpHandle, resume: boolean, progress: (n: number) => void) => Promise<void>,
+    resume = false,
+  ): Promise<void> => {
+    setRetry(null);
+    const failure = await run(label, (h, p) => f(h, resume, p));
+    if (failure === null) return refresh();
+    setRetry(() => () => void transfer(label, f, true));
+    // Show what was copied, then say why it stopped (a refresh clears messages).
+    await show(path);
+    setError(failure);
+  };
+
   const download = async () => {
     if (!picked.length) return;
     const b = await getBackend();
     const dest = await b.pickFolder("Save to folder");
     if (!dest) return;
-    await run(`Downloading ${picked.length === 1 ? picked[0].name : `${picked.length} items`}`, (h, p) =>
-      h.download(
-        picked.map((e) => join(path, e.name)),
-        dest,
-        p,
-      ),
+    const remote = picked.map((e) => join(path, e.name));
+    await transfer(`Downloading ${picked.length === 1 ? picked[0].name : `${picked.length} items`}`, (h, resume, p) =>
+      h.download(remote, dest, resume, p),
     );
   };
   const upload = async (folder: boolean) => {
@@ -156,10 +175,11 @@ export function SftpView({ conn, onStatus }: Props) {
       ? await b.pickFolder("Folder to upload").then((f) => (f ? [f] : []))
       : await b.pickFiles("Files to upload");
     if (!local.length) return;
-    await run(`Uploading ${local.length === 1 ? (local[0].split(/[\\/]/).pop() ?? "") : `${local.length} items`}`, (h, p) =>
-      h.upload(local, path, p),
+    const to = path;
+    await transfer(
+      `Uploading ${local.length === 1 ? (local[0].split(/[\\/]/).pop() ?? "") : `${local.length} items`}`,
+      (h, resume, p) => h.upload(local, to, resume, p),
     );
-    refresh();
   };
 
   const select = (name: string, e: MouseEvent) => {
@@ -246,6 +266,15 @@ export function SftpView({ conn, onStatus }: Props) {
         </button>
         <button
           className="icon-btn"
+          onClick={() => setAsking("chmod")}
+          disabled={!picked.length || !!busy}
+          aria-label="Permissions"
+          title="Permissions"
+        >
+          <Lock size={14} />
+        </button>
+        <button
+          className="icon-btn"
           onClick={() => setAsking("delete")}
           disabled={!picked.length}
           aria-label="Delete"
@@ -287,9 +316,19 @@ export function SftpView({ conn, onStatus }: Props) {
         {busy ? (
           <>
             {busy.label}… {formatBytes(busy.bytes)}
+            <button className="btn sftp-status-btn" onClick={() => handle.current?.cancel()}>
+              Cancel
+            </button>
           </>
         ) : error ? (
-          <span className="sftp-error">{error}</span>
+          <>
+            <span className="sftp-error">{error}</span>
+            {retry && (
+              <button className="btn sftp-status-btn" onClick={retry} title="Continue the files already partly copied">
+                Resume
+              </button>
+            )}
+          </>
         ) : (
           `${entries.length} ${entries.length === 1 ? "item" : "items"}${picked.length ? ` · ${picked.length} selected` : ""}`
         )}
@@ -313,6 +352,17 @@ export function SftpView({ conn, onStatus }: Props) {
           initial={picked[0].name}
           onClose={() => setAsking(null)}
           onDone={(name) => run("Renaming", (h) => h.rename(join(path, picked[0].name), join(path, name))).then(refresh)}
+        />
+      )}
+      {asking === "chmod" && picked.length > 0 && (
+        <PermissionsDialog
+          items={picked}
+          onClose={() => setAsking(null)}
+          onDone={(mode, recursive) =>
+            run("Changing permissions", async (h) => {
+              for (const e of picked) await h.chmod(join(path, e.name), mode, recursive);
+            }).then(refresh)
+          }
         />
       )}
       {asking === "delete" && (
@@ -375,6 +425,114 @@ function NameDialog({
       <div className="form-grid">
         <label htmlFor="sftp-name">{label}</label>
         <input id="sftp-name" value={name} onChange={(e) => setName(e.target.value)} data-autofocus spellCheck={false} />
+      </div>
+    </Modal>
+  );
+}
+
+const BITS = [
+  ["Owner", 6],
+  ["Group", 3],
+  ["Others", 0],
+] as const;
+const KINDS = [
+  ["Read", 4],
+  ["Write", 2],
+  ["Execute", 1],
+] as const;
+
+/** Change permissions: a grid of read/write/execute boxes and the same thing as an octal number. */
+function PermissionsDialog({
+  items,
+  onClose,
+  onDone,
+}: {
+  items: SftpEntry[];
+  onClose(): void;
+  onDone(mode: number, recursive: boolean): void;
+}) {
+  const first = items[0];
+  const [mode, setMode] = useState((first.mode ?? 0o644) & 0o7777);
+  const [text, setText] = useState((((first.mode ?? 0o644) & 0o7777).toString(8)).padStart(3, "0"));
+  const [recursive, setRecursive] = useState(false);
+  const hasDir = items.some((e) => e.kind === "dir");
+  const set = (m: number) => {
+    setMode(m);
+    setText(m.toString(8).padStart(3, "0"));
+  };
+  const valid = /^[0-7]{3,4}$/.test(text);
+  return (
+    <Modal
+      title={items.length === 1 ? `Permissions of ${first.name}` : `Permissions of ${items.length} items`}
+      className="modal-confirm"
+      onClose={onClose}
+      onSubmit={() => {
+        if (!valid) return;
+        onDone(parseInt(text, 8), recursive);
+        onClose();
+      }}
+      actions={
+        <>
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-primary" disabled={!valid}>
+            Apply
+          </button>
+        </>
+      }
+    >
+      <table className="perm-grid">
+        <thead>
+          <tr>
+            <th />
+            {KINDS.map(([k]) => (
+              <th key={k}>{k}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {BITS.map(([who, shift]) => (
+            <tr key={who}>
+              <th scope="row">{who}</th>
+              {KINDS.map(([k, bit]) => (
+                <td key={k}>
+                  <input
+                    type="checkbox"
+                    aria-label={`${who} ${k.toLowerCase()}`}
+                    checked={!!(mode & (bit << shift))}
+                    onChange={(e) => set(e.target.checked ? mode | (bit << shift) : mode & ~(bit << shift))}
+                  />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="form-grid">
+        <label htmlFor="perm-octal">Number</label>
+        <input
+          id="perm-octal"
+          value={text}
+          inputMode="numeric"
+          maxLength={4}
+          spellCheck={false}
+          aria-invalid={!valid}
+          data-autofocus
+          onChange={(e) => {
+            setText(e.target.value);
+            if (/^[0-7]{3,4}$/.test(e.target.value)) setMode(parseInt(e.target.value, 8));
+          }}
+        />
+        {hasDir && (
+          <>
+            <label htmlFor="perm-rec">Inside folders</label>
+            <label className="perm-rec">
+              <input id="perm-rec" type="checkbox" checked={recursive} onChange={(e) => setRecursive(e.target.checked)} />
+              Apply to everything inside too (files get the same bits, including execute)
+            </label>
+          </>
+        )}
       </div>
     </Modal>
   );

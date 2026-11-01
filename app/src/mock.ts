@@ -710,6 +710,7 @@ export function mockBackend(): Backend {
       return ["C:\temp\firmware.bin"];
     },
     openSftp(_conn, _onEvent) {
+      let mockCancel = false;
       const files = new Map<string, SftpEntry[]>([
         ["/", [
           { name: "home", kind: "dir", size: 0, modified: 1_700_000_000, mode: 0o755 },
@@ -757,17 +758,35 @@ export function mockBackend(): Backend {
             files.set(dir, (files.get(dir) ?? []).filter((x) => x.name !== p.slice(i + 1)));
           }
         },
-        async download(_remote, _dest, onProgress) {
-          for (let n = 0; n <= 100; n += 25) {
+        // A pretend transfer: slow enough to cancel, and a canceled one fails like the real one.
+        async download(_remote, _dest, resume, onProgress) {
+          for (let n = resume ? 50 : 0; n <= 100; n += 10) {
             onProgress(n * 1000);
-            await new Promise((r) => setTimeout(r, 120));
+            if (mockCancel) {
+              mockCancel = false;
+              throw new Error("report.pdf: canceled");
+            }
+            await new Promise((r) => setTimeout(r, 200));
           }
         },
-        async upload(_local, _dir, onProgress) {
-          for (let n = 0; n <= 100; n += 25) {
+        async upload(_local, _dir, resume, onProgress) {
+          for (let n = resume ? 50 : 0; n <= 100; n += 10) {
             onProgress(n * 1000);
-            await new Promise((r) => setTimeout(r, 120));
+            if (mockCancel) {
+              mockCancel = false;
+              throw new Error("report.pdf: canceled");
+            }
+            await new Promise((r) => setTimeout(r, 200));
           }
+        },
+        cancel() {
+          mockCancel = true;
+        },
+        async chmod(path, mode, recursive) {
+          const i = path.lastIndexOf("/");
+          const e = files.get(path.slice(0, i) || "/")?.find((x) => x.name === path.slice(i + 1));
+          if (e) e.mode = mode;
+          void recursive;
         },
         reply() {},
         close() {},
