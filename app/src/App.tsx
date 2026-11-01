@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { DockviewApi } from "dockview";
-import { Download, Laptop, ListTree, Monitor, Moon, Settings as SettingsIcon, Sun } from "lucide-react";
+import { Download, Laptop, ListTree, Monitor, Moon, Settings as SettingsIcon, SquareTerminal, Sun } from "lucide-react";
 import { getBackend, isTauri, type Backend } from "./api";
 import { useTheme, type ThemePref } from "./theme";
 import { useUpdater } from "./updater";
@@ -24,6 +24,7 @@ import { PasswordDialog } from "./components/PasswordDialog";
 import { ConnectionTree, relativeTime, type TreeActions } from "./components/ConnectionTree";
 import { DevicesPage, versionMismatch } from "./components/DevicesPage";
 import { BroadcastButton } from "./components/BroadcastButton";
+import { ButtonBar } from "./components/ButtonBar";
 import { LayoutPicker, layoutShortcut } from "./components/LayoutPicker";
 import { SettingsPage } from "./components/SettingsPage";
 import { ConnectionPanel, usePanelLayout } from "./components/ConnectionPanel";
@@ -104,6 +105,7 @@ export default function App() {
   const [quick, setQuick] = useState("");
   const [quickError, setQuickError] = useState(false);
   const dock = useRef<DockviewApi | null>(null);
+  const [dockApi, setDockApi] = useState<DockviewApi | null>(null);
   const panel = usePanelLayout();
   /** Auto-hidden connections pane: showing right now. */
   const [peek, setPeek] = useState(false);
@@ -350,9 +352,20 @@ export default function App() {
                   />
                 </form>
                 <WorkspaceMenu dock={dock} findConnection={(id) => findConnection(tree, id)} />
+                <button
+                  className={`icon-btn ${prefs.showButtonBar ? "is-toggled" : ""}`}
+                  aria-pressed={prefs.showButtonBar}
+                  aria-label="Button bar"
+                  title="Button bar: saved commands, one click to send"
+                  onClick={() => prefsValue.update({ showButtonBar: !prefs.showButtonBar })}
+                >
+                  <SquareTerminal size={16} />
+                </button>
                 <BroadcastButton dock={dock} />
                 <LayoutPicker value={layout} onChange={changeLayout} />
               </header>
+
+              {prefs.showButtonBar && <ButtonBar dock={dockApi} tree={tree} />}
 
               <div className="content">
                 <div className="workspace-wrap" hidden={view !== "connections"}>
@@ -361,6 +374,7 @@ export default function App() {
                     onOpenCount={setOpenCount}
                     onReady={(api) => {
                       dock.current = api;
+                      setDockApi(api);
                       const waiting = pendingLaunch.current;
                       pendingLaunch.current = null;
                       if (waiting) window.setTimeout(() => launch.current(waiting), 0);

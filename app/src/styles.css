@@ -2287,3 +2287,70 @@ button.status-version:hover {
   font-size: 11px;
   pointer-events: none;
 }
+
+/* ---- button bar ----------------------------------------------------------- */
+.button-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 4px 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-side);
+}
+.button-bar-btn {
+  height: 24px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+.button-bar-empty {
+  font-size: 12px;
+  color: var(--text-quiet);
+}
+.button-bar-spacer {
+  flex: 1;
+}
+.snippet-list {
+  display: grid;
+  gap: 4px;
+  max-height: 50vh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.snippet-list li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.snippet-main {
+  display: grid;
+  flex: 1;
+  gap: 1px;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.snippet-main:hover {
+  background: var(--bg-hover);
+}
+.snippet-main span {
+  font-size: 11px;
+  color: var(--text-quiet);
+}
+.snippet-main code {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.icon-btn.is-toggled {
+  background: var(--bg-select);
+  color: var(--text);
+}

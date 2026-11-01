@@ -14,6 +14,7 @@ import type {
   PortForward,
   SyncConfig,
   TreeNode,
+  Snippet,
 } from "./types";
 import { defaultRules, type HighlightProfile } from "./highlight";
 
@@ -215,6 +216,10 @@ export function mockBackend(): Backend {
   let logging: LoggingSettings = { enabled: false, folder: null, timestamps: false };
   /** login label -> saved-at, standing in for the OS keychain. */
   const savedPasswords = new Map<string, number>();
+  let snippets: Snippet[] = [
+    { id: "s-1", name: "Show version", text: "show version", folder: null, order: 1, enter: true },
+    { id: "s-2", name: "Interfaces", text: "show ip interface brief", folder: null, order: 2, enter: true },
+  ];
 
   // Fields the tree nodes don't carry, as the Rust side stores them.
   const extra = new Map<
@@ -472,6 +477,30 @@ export function mockBackend(): Backend {
       return "2025-01-01 12:00:00 [sync] relay unreachable";
     },
     async openDebugLogFolder() {},
+    async listSnippets() {
+      return [...snippets].sort((a, b) => a.order - b.order);
+    },
+    async snippetsFor() {
+      return snippets.filter((s) => s.folder === null).sort((a, b) => a.order - b.order);
+    },
+    async saveSnippet(s) {
+      if (!s.name.trim()) throw "Name the button";
+      if (!s.text) throw "Enter the text to send";
+      const id = s.id || newId();
+      const old = snippets.find((x) => x.id === id);
+      const saved = { ...s, id, name: s.name.trim(), order: old?.order ?? snippets.length + 1 };
+      snippets = [...snippets.filter((x) => x.id !== id), saved];
+      emit();
+      return id;
+    },
+    async deleteSnippet(id) {
+      snippets = snippets.filter((s) => s.id !== id);
+      emit();
+    },
+    async reorderSnippets(ids) {
+      snippets = snippets.map((s) => ({ ...s, order: ids.indexOf(s.id) >= 0 ? ids.indexOf(s.id) : s.order }));
+      emit();
+    },
     logDebug() {},
     async forgetSavedPassword(key) {
       savedPasswords.delete(key.replace(/^ssh:/, ""));

@@ -60,3 +60,9 @@ export const broadcast = {
 export function useBroadcast() {
   return useSyncExternalStore(broadcast.subscribe, () => snapshot);
 }
+
+/** Send text to one terminal's session, or to its whole broadcast group
+ *  when it belongs to one (a snippet behaves like typing). */
+export function sendInput(id: string, data: string) {
+  if (!broadcast.send(id, data)) senders.get(id)?.(data);
+}

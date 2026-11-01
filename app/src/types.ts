@@ -285,3 +285,15 @@ export interface PasswordTarget {
   /** A password is already saved. */
   saved: boolean;
 }
+
+/** A button-bar command. */
+export interface Snippet {
+  id: string;
+  name: string;
+  text: string;
+  /** The folder it belongs to; null = every connection. */
+  folder: string | null;
+  order: number;
+  /** Press Enter after the text. */
+  enter: boolean;
+}

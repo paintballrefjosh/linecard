@@ -71,6 +71,8 @@ pub struct Tree {
     pub global: Settings,
     /// Keyword-highlight profiles by id.
     pub highlight_profiles: BTreeMap<ObjectId, crate::HighlightProfile>,
+    /// Button-bar commands by id.
+    pub snippets: BTreeMap<ObjectId, crate::Snippet>,
     /// Synced vault (opt-in): its salt and check value, if set up.
     pub vault: Option<crate::VaultMeta>,
     /// Saved passwords that sync, encrypted, by object id.

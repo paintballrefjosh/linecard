@@ -13,6 +13,7 @@ mod launch;
 mod library;
 mod logging;
 mod secrets;
+mod snippets;
 mod sync;
 mod system;
 
@@ -1064,6 +1065,11 @@ pub fn run() {
             launch::set_cli_path,
             highlight::get_highlight,
             highlight::effective_highlight,
+            snippets::list_snippets,
+            snippets::snippets_for,
+            snippets::save_snippet,
+            snippets::delete_snippet,
+            snippets::reorder_snippets,
             highlight::save_highlight_profile,
             highlight::delete_highlight_profile,
             highlight::set_default_highlight,

@@ -13,6 +13,7 @@ mod highlight;
 mod kind;
 mod secret;
 mod settings;
+mod snippet;
 mod tree;
 
 pub use forward::{ForwardKind, PortForward};
@@ -20,6 +21,7 @@ pub use highlight::{HighlightProfile, HighlightRule};
 pub use kind::{ConnectionKind, Endpoint, FlowControl, Parity, SerialSettings};
 pub use secret::{SyncedSecret, VaultMeta};
 pub use settings::{Resolved, Settings, Source};
+pub use snippet::Snippet;
 pub use tree::{Connection, Folder, Tree, TreeError};
 
 /// Stable identifier for any synced object (UUIDv7 string in practice).

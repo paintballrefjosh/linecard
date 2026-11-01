@@ -13,6 +13,7 @@ import type {
   PromptReply,
   PasswordTarget,
   SavedPassword,
+  Snippet,
   SessionEvent,
   GfxEvent,
   SyncConfig,
@@ -125,6 +126,14 @@ export interface Backend {
   /** Linecard's own error log, as text. */
   debugLog(): Promise<string>;
   openDebugLogFolder(): Promise<void>;
+  /** Every button-bar snippet (for the manager). */
+  listSnippets(): Promise<Snippet[]>;
+  /** The snippets for a connection's button bar (null: app-wide ones only). */
+  snippetsFor(connectionId: string | null): Promise<Snippet[]>;
+  /** Create (empty id) or replace a snippet; returns its id. */
+  saveSnippet(s: Snippet): Promise<string>;
+  deleteSnippet(id: string): Promise<void>;
+  reorderSnippets(ids: string[]): Promise<void>;
   /** Add a line to the debug log. */
   logDebug(area: string, message: string): void;
   /** Which user name (if any) a connection's saved password is keyed by. */
@@ -232,6 +241,11 @@ async function tauriBackend(): Promise<Backend> {
     forgetSavedPassword: (key) => invoke("forget_saved_password", { key }),
     debugLog: () => invoke<string>("debug_log_text"),
     openDebugLogFolder: () => invoke("open_debug_log_folder"),
+    listSnippets: () => invoke<Snippet[]>("list_snippets"),
+    snippetsFor: (connectionId) => invoke<Snippet[]>("snippets_for", { connectionId }),
+    saveSnippet: (snippet) => invoke<string>("save_snippet", { snippet }),
+    deleteSnippet: (id) => invoke("delete_snippet", { id }),
+    reorderSnippets: (ids) => invoke("reorder_snippets", { ids }),
     logDebug: (area, message) => void invoke("log_debug", { area, message }).catch(() => {}),
     passwordTarget: (connectionId) => invoke<PasswordTarget>("password_target", { connectionId }),
     setConnectionPassword: (connectionId, user, password) =>

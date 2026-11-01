@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Button bar**: save commands you type often and send each with one click. Turn the bar on with the terminal button in the toolbar, then use the pencil to add, reorder or remove buttons. A button can show for every connection or only for one folder (and what is inside it). Buttons sync to your other computers, and while broadcasting they go to every session in the group.
+
 - **Broadcast input**: the radio button in the toolbar sends what you type to every open terminal tab at once. A red banner and a red count show it is on; the radio icon on each tab includes or leaves it. Tabs opened later join only if you include them. Remote screens (RDP/VNC) never take part.
 
 - **Settings → Debug log**: Linecard keeps a small log of sync, SSH/Telnet/RDP/VNC and update errors (no terminal output, passwords or keys). Copy it or show its folder to attach to a bug report.

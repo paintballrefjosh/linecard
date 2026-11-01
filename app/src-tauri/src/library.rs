@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use linecard_core_model::{
-    Connection, ConnectionKind, Endpoint, Folder, HighlightProfile, Settings, SyncedSecret, Tree, VaultMeta,
+    Connection, ConnectionKind, Endpoint, Folder, HighlightProfile, Settings, Snippet, SyncedSecret, Tree, VaultMeta,
 };
 use linecard_core_store::Store;
 use linecard_core_sync::{ChangeTracker, Hlc, ObjectState, Op, Replica, Value};
@@ -32,6 +32,7 @@ const KIND_FOLDER: &str = "folder";
 const KIND_CONNECTION: &str = "connection";
 const KIND_SETTINGS: &str = "settings";
 const KIND_HIGHLIGHT: &str = "highlight_profile";
+const KIND_SNIPPET: &str = "snippet";
 const KIND_VAULT: &str = "vault";
 const KIND_SECRET: &str = "secret";
 /// Object id of the synced vault's salt and check value.
@@ -138,6 +139,7 @@ impl Library {
                 t.remove_connection(&id).map_err(err)?;
             }
             t.highlight_profiles.clear();
+            t.snippets.clear();
             Ok(())
         })?;
         Ok(self.last_own_op())
@@ -321,6 +323,16 @@ fn highlight_fields(h: &HighlightProfile) -> Fields {
     m
 }
 
+fn snippet_fields(s: &Snippet) -> Fields {
+    let mut m = Fields::new();
+    m.insert("name".into(), Value::Str(s.name.clone()));
+    m.insert("text".into(), Value::Str(s.text.clone()));
+    m.insert("folder".into(), opt_str(&s.folder));
+    m.insert("order".into(), Value::Float(s.order));
+    m.insert("enter".into(), Value::Bool(s.enter));
+    m
+}
+
 fn kind_name(k: ConnectionKind) -> &'static str {
     match k {
         ConnectionKind::Ssh => "ssh",
@@ -345,6 +357,9 @@ fn snapshot(t: &Tree) -> BTreeMap<String, (&'static str, Fields)> {
     }
     for h in t.highlight_profiles.values() {
         out.insert(h.id.clone(), (KIND_HIGHLIGHT, highlight_fields(h)));
+    }
+    for s in t.snippets.values() {
+        out.insert(s.id.clone(), (KIND_SNIPPET, snippet_fields(s)));
     }
     if let Some(v) = &t.vault {
         let mut m = Fields::new();
@@ -441,6 +456,22 @@ pub fn project(replica: &Replica) -> Tree {
                 rules: get_json(o, "rules").unwrap_or_default(),
             };
             (id.to_string(), profile)
+        })
+        .collect();
+
+    tree.snippets = live
+        .iter()
+        .filter(|(_, o)| o.kind == KIND_SNIPPET)
+        .map(|(id, o)| {
+            let snippet = Snippet {
+                id: id.to_string(),
+                name: get_str(o, "name").unwrap_or_default(),
+                text: get_str(o, "text").unwrap_or_default(),
+                folder: get_str(o, "folder"),
+                order: get_f64(o, "order"),
+                enter: matches!(o.get("enter"), Some(Value::Bool(true))),
+            };
+            (id.to_string(), snippet)
         })
         .collect();
 
@@ -613,6 +644,49 @@ mod tests {
         assert_eq!(r.source_of("username"), Some(&Source::Folder("dc".into())));
         assert_eq!(r.settings.keepalive_secs, Some(30));
         assert!(lib.changes().is_empty(), "own history is not highlighted");
+    }
+
+    #[test]
+    fn snippets_survive_a_restart_and_removal() {
+        let path = temp_db();
+        {
+            let mut lib = Library::open(&path, sample).unwrap();
+            lib.edit(|t| {
+                t.snippets.insert(
+                    "s1".into(),
+                    Snippet {
+                        id: "s1".into(),
+                        name: "Show run".into(),
+                        text: "show run
+"
+                        .into(),
+                        folder: Some("dc".into()),
+                        order: 2.0,
+                        enter: true,
+                    },
+                );
+                Ok(())
+            })
+            .unwrap();
+        }
+        let mut lib = Library::open(&path, |_| {}).unwrap();
+        let s = &lib.tree().snippets["s1"];
+        assert_eq!(
+            (s.name.as_str(), s.text.as_str(), s.folder.as_deref()),
+            (
+                "Show run",
+                "show run
+",
+                Some("dc")
+            )
+        );
+        assert!(s.enter && s.order == 2.0);
+        lib.edit(|t| {
+            t.snippets.remove("s1");
+            Ok(())
+        })
+        .unwrap();
+        assert!(Library::open(&path, |_| {}).unwrap().tree().snippets.is_empty());
     }
 
     #[test]

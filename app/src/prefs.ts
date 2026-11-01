@@ -24,6 +24,8 @@ export interface Preferences {
   closedFolders: string[];
   /** Ask before closing a tab whose session is open. */
   confirmCloseTab: boolean;
+  /** Show the saved-command button bar above the tabs. */
+  showButtonBar: boolean;
   /** Ask once before quitting with sessions open. */
   confirmQuit: boolean;
 }
@@ -37,6 +39,7 @@ export const defaultPrefs: Preferences = {
   closedFolders: [],
   confirmCloseTab: true,
   confirmQuit: true,
+  showButtonBar: false,
 };
 
 export function withDefaults(stored: Partial<Preferences> | null | undefined): Preferences {
