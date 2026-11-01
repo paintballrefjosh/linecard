@@ -48,3 +48,17 @@ Clients push their unsent ops, pull everything after their cursor, and repeat ev
 ## Versioning
 
 `SYNC_PROTOCOL_VERSION` is published in each device's heartbeat. Clients must preserve fields they don't understand. A device below the group's minimum version stops pushing until updated; every client flags mismatches on the Devices page.
+
+## Compaction (relay only, draft)
+
+A long-lived relay group keeps every batch ever pushed. Because merging is last-writer-wins per field, most of that history is dead weight: only the op that currently wins each field matters. A device that is fully caught up can replace the old batches with a **snapshot**:
+
+1. **Build.** The device walks its replica and, for each object, groups the fields by the op that currently wins them. Each group becomes one op: the original op (same id, action and author) restricted to the fields it won (`changes` and `prev` filtered). Tombstones (`_deleted`) are fields like any other, so deletes stay deleted. Ops that won nothing are dropped.
+2. **Send.** `POST /v1/groups/{group}/compact` with `{device, up_to, blobs}`: `up_to` is the relay sequence number the device has pulled through (and applied), `blobs` are sealed batches of at most 400 snapshot ops each. The relay, in one transaction, appends the blobs at the tail and deletes every batch with `seq <= up_to`. It refuses the request if `up_to` is beyond the newest batch, or if the blobs are not smaller than what they replace.
+3. **Catch up.** Batches after `up_to` are untouched. A device whose cursor is behind `up_to` pulls the snapshot like any other batch; ops it has already seen are skipped by id, and the rest merge field by field, so it converges to the same state. A new device sees the snapshot plus anything newer.
+
+Why this is safe: merging is commutative and idempotent, so a snapshot carrying every field's winner is equivalent to the history it replaces. The one rule is that the compacting device must have applied everything up to `up_to` before it builds the snapshot; otherwise a field's winner could be lost. Ops a device has not pushed yet are not on the relay and are unaffected.
+
+What it costs: the `prev` values of superseded ops are gone, so a change that was compacted before another device saw it can no longer be reverted there (the revert would write nothing). Cursors stay valid because sequence numbers only grow. The relay's restore epoch is unchanged.
+
+Policy (app): after a round in which the device has pulled to the head, if the group holds at least 500 batches and nobody compacted in the last hour, the device with the lowest id among those seen in the past week does it. Folder, GitHub and network transports are not compacted.

@@ -200,3 +200,51 @@ async fn metrics_count_requests_by_route_and_show_what_is_stored() {
     // The public port doesn't serve metrics.
     assert_eq!(get(&base, "/metrics", "", None).await.status(), 404);
 }
+
+#[tokio::test]
+async fn a_compaction_may_be_bigger_than_an_ordinary_request() {
+    let (base, _) = serve(Limits::default()).await;
+    let path = format!("/v1/groups/{GROUP}/ops");
+    let c = reqwest::Client::new();
+    // Ten batches of about 300 KiB each.
+    for _ in 0..10 {
+        let r = c
+            .post(format!("{base}{path}"))
+            .bearer_auth(TOKEN)
+            .json(&serde_json::json!({ "device": "laptop", "blob": "a".repeat(300_000) }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200);
+    }
+    // A snapshot of three ~900 KB batches: over the 1 MiB request limit as a whole.
+    let blobs: Vec<String> = (0..3).map(|_| "s".repeat(900_000)).collect();
+    let r = c
+        .post(format!("{base}/v1/groups/{GROUP}/compact"))
+        .bearer_auth(TOKEN)
+        .json(&serde_json::json!({ "device": "laptop", "up_to": 10, "blobs": blobs }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let stats: serde_json::Value = c
+        .get(format!("{base}/v1/groups/{GROUP}/stats"))
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(stats["batches"], 3);
+    assert_eq!(stats["head"], 13);
+    // Ordinary pushes still obey the 1 MiB limit.
+    let too_big = c
+        .post(format!("{base}{path}"))
+        .bearer_auth(TOKEN)
+        .json(&serde_json::json!({ "device": "laptop", "blob": "a".repeat(2_000_000) }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(too_big.status(), 413);
+}

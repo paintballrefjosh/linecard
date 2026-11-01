@@ -55,6 +55,14 @@ fn http_err(e: reqwest::Error) -> SyncError {
     }
 }
 
+/// What the relay stores for a group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+pub struct RelayStats {
+    pub batches: i64,
+    pub bytes: i64,
+    pub head: i64,
+}
+
 async fn check(resp: reqwest::Response) -> Result<reqwest::Response, SyncError> {
     if resp.status().is_success() {
         return Ok(resp);
@@ -191,6 +199,42 @@ impl RelayTransport {
                 return Ok((out, after));
             }
         }
+    }
+
+    /// How big the group is on the relay: batches, bytes and the newest
+    /// sequence number (`head`). `None` from a relay without compaction.
+    pub async fn stats(&self) -> Result<Option<RelayStats>, SyncError> {
+        let resp = self
+            .http
+            .get(self.url("stats"))
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .map_err(http_err)?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        Ok(Some(check(resp).await?.json().await.map_err(http_err)?))
+    }
+
+    /// Replace every batch up to `up_to` with `snapshot` (sealed batches that
+    /// rebuild the same state). Only call this after applying everything
+    /// through `up_to`; see docs/sync-protocol.md. Returns the batches removed.
+    pub async fn compact(&self, up_to: i64, snapshot: &[Sealed]) -> Result<i64, SyncError> {
+        let blobs = snapshot
+            .iter()
+            .map(|s| serde_json::to_string(s).map_err(|e| SyncError::Storage(e.to_string())))
+            .collect::<Result<Vec<_>, _>>()?;
+        let resp = self
+            .writing(self.http.post(self.url("compact")))
+            .bearer_auth(&self.token)
+            .json(&serde_json::json!({ "device": self.device, "up_to": up_to, "blobs": blobs }))
+            .timeout(Duration::from_secs(120))
+            .send()
+            .await
+            .map_err(http_err)?;
+        let reply: serde_json::Value = check(resp).await?.json().await.map_err(http_err)?;
+        Ok(reply["removed"].as_i64().unwrap_or(0))
     }
 
     pub async fn put_device(&self, sealed: &Sealed) -> Result<(), SyncError> {

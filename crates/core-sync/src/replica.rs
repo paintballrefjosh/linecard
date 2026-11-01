@@ -94,6 +94,47 @@ impl Replica {
         v
     }
 
+    /// The smallest set of ops that rebuilds the current state: for each
+    /// object, one op per original op that still wins at least one field
+    /// (same id, action and author), carrying only the fields it won. Ops
+    /// that won nothing are left out. Oldest first.
+    ///
+    /// Applying this to an empty replica gives the same objects and field
+    /// stamps as applying the whole log, in any order.
+    pub fn snapshot(&self) -> Vec<Op> {
+        let mut ops = Vec::new();
+        for (object, state) in &self.objects {
+            let mut by_op: BTreeMap<&Hlc, Vec<&String>> = BTreeMap::new();
+            for (field, (_, stamp)) in &state.fields {
+                by_op.entry(stamp).or_default().push(field);
+            }
+            for (stamp, fields) in by_op {
+                let original = self.op(stamp);
+                let changes = fields
+                    .iter()
+                    .map(|f| ((*f).clone(), state.fields[*f].0.clone()))
+                    .collect();
+                ops.push(Op {
+                    id: stamp.clone(),
+                    object: object.clone(),
+                    object_kind: state.kind.clone(),
+                    action: original.map_or(Action::Update, |o| o.action.clone()),
+                    changes,
+                    prev: original
+                        .map(|o| {
+                            o.prev
+                                .iter()
+                                .filter(|(f, _)| fields.contains(f))
+                                .map(|(f, v)| (f.clone(), v.clone()))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                });
+            }
+        }
+        ops.sort_by(|a, b| a.id.cmp(&b.id));
+        ops
+    }
     /// Ops this replica has that `since` hasn't (by id), for pushing.
     pub fn ops_after(&self, since: Option<&Hlc>) -> Vec<&Op> {
         self.log.iter().filter(|o| since.is_none_or(|s| &o.id > s)).collect()
@@ -247,6 +288,80 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn a_snapshot_rebuilds_the_same_state_in_far_fewer_ops() {
+        let mut a = Replica::new("A");
+        let mut b = Replica::new("B");
+        let create = a.create(
+            "c1",
+            "connection",
+            fields(&[("host", "10.0.0.1"), ("name", "sw1")]),
+            100,
+        );
+        b.apply_remote(create, 100);
+        // Many edits of the same fields from both devices, then a delete of another object.
+        for i in 0..50 {
+            let op = a
+                .update("c1", fields(&[("host", &format!("10.0.0.{i}"))]), 200 + i)
+                .unwrap();
+            b.apply_remote(op, 200 + i);
+            let op = b.update("c1", fields(&[("name", &format!("sw{i}"))]), 300 + i).unwrap();
+            a.apply_remote(op, 300 + i);
+        }
+        let gone = a.create("c2", "connection", fields(&[("name", "old")]), 400);
+        b.apply_remote(gone, 400);
+        let del = b.delete("c2", 500).unwrap();
+        a.apply_remote(del, 500);
+
+        let snap = a.snapshot();
+        assert!(snap.len() < 6, "{} ops for 103 in the log", snap.len());
+        assert_eq!(a.log().len(), 103);
+
+        // A fresh replica built from the snapshot, in any order, matches.
+        let state = |r: &Replica| -> Vec<(String, Vec<(String, String, String)>)> {
+            r.all_objects()
+                .map(|(id, o)| {
+                    (
+                        id.clone(),
+                        o.fields
+                            .iter()
+                            .map(|(k, (v, stamp))| (k.clone(), v.to_string(), format!("{stamp:?}")))
+                            .collect(),
+                    )
+                })
+                .collect()
+        };
+        let mut forward = Replica::new("C");
+        snap.iter().cloned().for_each(|op| {
+            forward.apply_remote(op, 1000);
+        });
+        let mut backward = Replica::new("D");
+        snap.iter().rev().cloned().for_each(|op| {
+            backward.apply_remote(op, 1000);
+        });
+        assert_eq!(state(&forward), state(&a));
+        assert_eq!(state(&backward), state(&a));
+        assert!(forward.object("c2").unwrap().is_deleted());
+
+        // A replica that already has the full history takes the snapshot as a no-op.
+        let before = state(&b);
+        let fresh: usize = snap
+            .iter()
+            .cloned()
+            .filter(|op| b.apply_remote(op.clone(), 2000))
+            .count();
+        assert_eq!(fresh, 0);
+        assert_eq!(state(&b), before);
+        // One that is partway through the history ends up in the same place.
+        let mut partial = Replica::new("E");
+        a.log().iter().take(20).cloned().for_each(|op| {
+            partial.apply_remote(op, 1000);
+        });
+        snap.iter().cloned().for_each(|op| {
+            partial.apply_remote(op, 1000);
+        });
+        assert_eq!(state(&partial), state(&a));
+    }
     #[test]
     fn concurrent_edits_converge_in_any_order() {
         let mut a = Replica::new("A");

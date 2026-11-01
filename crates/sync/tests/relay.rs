@@ -170,3 +170,43 @@ async fn a_relay_that_says_slow_down_is_obeyed() {
         other => panic!("expected the relay's rate limit, got {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn compaction_replaces_old_batches_for_every_computer() {
+    let base = start_relay().await;
+    let group = GroupKey::generate();
+    let (ka, kb) = (DeviceKey::generate(), DeviceKey::generate());
+    let a = client(&base, &group, "laptop");
+    let b = client(&base, &group, "desktop");
+
+    for i in 0..6 {
+        a.push(&seal(
+            &group,
+            &ka,
+            "laptop",
+            &format!("old batch number {i} with some padding"),
+        ))
+        .await
+        .unwrap();
+    }
+    let stats = a.stats().await.unwrap().expect("this relay can say");
+    assert_eq!((stats.batches, stats.head), (6, 6));
+
+    // The desktop is partway through (cursor 2) when the laptop compacts through 6.
+    let (_, behind) = b.pull(0).await.map(|(g, _)| (g, 2)).unwrap();
+    let removed = a.compact(6, &[seal(&group, &ka, "laptop", &"SNAPSHOT")]).await.unwrap();
+    assert_eq!(removed, 6);
+    b.push(&seal(&group, &kb, "desktop", &"after")).await.unwrap();
+
+    let (got, cursor) = b.pull(behind).await.unwrap();
+    let texts: Vec<String> = got.iter().map(|r| open(&group, &r.sealed).unwrap()).collect();
+    assert_eq!(texts, ["SNAPSHOT", "after"]);
+    assert_eq!(cursor, 8);
+    let stats = a.stats().await.unwrap().unwrap();
+    assert_eq!((stats.batches, stats.head), (2, 8));
+
+    // A snapshot that isn't smaller, or reaches past the end, is refused.
+    let big = seal(&group, &ka, "laptop", &"x".repeat(2000));
+    assert!(a.compact(7, &[big]).await.is_err());
+    assert!(a.compact(99, &[seal(&group, &ka, "laptop", &"s")]).await.is_err());
+}

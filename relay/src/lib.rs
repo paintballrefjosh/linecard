@@ -29,7 +29,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, put};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,26 @@ pub const EPOCH_HEADER: &str = "x-linecard-epoch";
 
 /// Largest single blob (one sealed batch or heartbeat).
 pub const MAX_BLOB: usize = 1 << 20;
+
+/// Most batches one compaction may bring.
+pub const MAX_COMPACT_BLOBS: usize = 64;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct GroupStats {
+    pub batches: i64,
+    pub bytes: i64,
+    pub head: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Compaction {
+    /// The newest sequence number afterward.
+    pub head: i64,
+    /// Batches deleted.
+    pub removed: i64,
+    /// Bytes saved.
+    pub freed: i64,
+}
 /// Batches returned per pull; clients ask again while `more` is true.
 const PAGE: i64 = 500;
 /// Longest a wait request is held open.
@@ -418,6 +438,84 @@ impl Relay {
         let more = ops.len() as i64 > PAGE;
         ops.truncate(PAGE as usize);
         Ok((ops, more))
+    }
+
+    /// The group's size: batches stored, their bytes, and the newest sequence number.
+    pub fn group_stats(&self, group: &str, token: &str) -> Result<GroupStats> {
+        let db = self.db()?;
+        self.authorize(&db, group, token, None, false)?;
+        Ok(db.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(LENGTH(blob)), 0), COALESCE(MAX(seq), 0) FROM ops WHERE group_id = ?1",
+            [group],
+            |r| {
+                Ok(GroupStats {
+                    batches: r.get(0)?,
+                    bytes: r.get(1)?,
+                    head: r.get(2)?,
+                })
+            },
+        )?)
+    }
+
+    /// Replace every batch up to and including `up_to` with `blobs` (sealed
+    /// snapshot batches built by a computer that has applied them all; see
+    /// docs/sync-protocol.md). The blobs go in at the end, so a computer whose
+    /// cursor is behind `up_to` picks them up as its next batches. Refused if
+    /// `up_to` is past the newest batch or the snapshot isn't smaller.
+    pub fn compact(&self, group: &str, token: &str, device: &str, up_to: i64, blobs: &[String]) -> Result<Compaction> {
+        if !valid_device(device) {
+            return Err(RelayError::BadRequest("bad device id"));
+        }
+        if blobs.is_empty() || blobs.len() > MAX_COMPACT_BLOBS || blobs.iter().any(|b| b.len() > MAX_BLOB) {
+            return Err(RelayError::BadRequest("a snapshot is 1 to 64 batches of at most 1 MiB"));
+        }
+        let added: i64 = blobs.iter().map(|b| b.len() as i64).sum();
+        let result = {
+            let mut db = self.db()?;
+            self.authorize(&db, group, token, None, false)?;
+            let tx = db.transaction()?;
+            let head: i64 = tx.query_row(
+                "SELECT COALESCE(MAX(seq), 0) FROM ops WHERE group_id = ?1",
+                [group],
+                |r| r.get(0),
+            )?;
+            if up_to < 1 || up_to > head {
+                return Err(RelayError::BadRequest("up_to is not a batch this group has"));
+            }
+            let (removed, freed): (i64, i64) = tx.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(LENGTH(blob)), 0) FROM ops WHERE group_id = ?1 AND seq <= ?2",
+                params![group, up_to],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            if added >= freed {
+                return Err(RelayError::BadRequest(
+                    "the snapshot is not smaller than what it replaces",
+                ));
+            }
+            let at = now_ms();
+            for (i, blob) in blobs.iter().enumerate() {
+                tx.execute(
+                    "INSERT INTO ops (group_id, seq, device, blob, at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![group, head + 1 + i as i64, device, blob, at],
+                )?;
+            }
+            tx.execute(
+                "DELETE FROM ops WHERE group_id = ?1 AND seq <= ?2",
+                params![group, up_to],
+            )?;
+            tx.execute(
+                "UPDATE groups SET bytes = bytes - ?2 + ?3, updated = ?4 WHERE id = ?1",
+                params![group, freed, added, at],
+            )?;
+            tx.commit()?;
+            Compaction {
+                head: head + blobs.len() as i64,
+                removed,
+                freed: freed - added,
+            }
+        };
+        self.waiter(group).notify_waiters();
+        Ok(result)
     }
 
     /// The group's newest sequence number.
@@ -810,6 +908,36 @@ async fn push(
     Ok(Json(serde_json::json!({ "seq": seq })))
 }
 
+#[derive(Deserialize)]
+struct CompactBody {
+    device: String,
+    up_to: i64,
+    blobs: Vec<String>,
+}
+
+async fn compact(
+    State(r): State<Shared>,
+    UrlPath(group): UrlPath<String>,
+    headers: HeaderMap,
+    Json(b): Json<CompactBody>,
+) -> Result<Json<Compaction>> {
+    Ok(Json(r.compact(
+        &group,
+        &token(&headers),
+        &b.device,
+        b.up_to,
+        &b.blobs,
+    )?))
+}
+
+async fn stats(
+    State(r): State<Shared>,
+    UrlPath(group): UrlPath<String>,
+    headers: HeaderMap,
+) -> Result<Json<GroupStats>> {
+    Ok(Json(r.group_stats(&group, &token(&headers))?))
+}
+
 async fn pull(
     State(r): State<Shared>,
     UrlPath(group): UrlPath<String>,
@@ -875,6 +1003,13 @@ pub fn router(relay: Shared) -> Router {
         .route("/ready", get(ready))
         .route("/v1/groups/{group}/ops", get(pull).post(push))
         .route("/v1/groups/{group}/ops/wait", get(wait))
+        .route("/v1/groups/{group}/stats", get(stats))
+        .route(
+            "/v1/groups/{group}/compact",
+            post(compact).layer(axum::extract::DefaultBodyLimit::max(
+                MAX_COMPACT_BLOBS * (MAX_BLOB + 4) + 4096,
+            )),
+        )
         .route("/v1/groups/{group}/devices", get(devices))
         .route("/v1/groups/{group}/devices/{device}", put(put_device))
         .layer(axum::extract::DefaultBodyLimit::max(MAX_BLOB + 4096))
@@ -1203,6 +1338,70 @@ mod tests {
         assert!(r.accounts().unwrap().is_empty());
     }
 
+    #[test]
+    fn compaction_replaces_a_prefix_and_keeps_cursors_working() {
+        let r = open_relay(100);
+        for i in 0..10 {
+            r.push(
+                G,
+                T,
+                None,
+                "d",
+                &format!("batch-{i:02}-with-some-padding-to-make-it-bigger"),
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            r.group_stats(G, T).unwrap(),
+            GroupStats {
+                batches: 10,
+                bytes: r.group_stats(G, T).unwrap().bytes,
+                head: 10
+            }
+        );
+        // A computer that is caught up to batch 8 compacts through 8.
+        let snap = vec!["snapshot".to_string()];
+        let done = r.compact(G, T, "laptop", 8, &snap).unwrap();
+        assert_eq!((done.removed, done.head), (8, 11));
+        assert!(done.freed > 0);
+
+        let (all, _) = r.pull(G, T, 0).unwrap();
+        let seqs: Vec<_> = all.iter().map(|o| (o.seq, o.blob.as_str())).collect();
+        assert_eq!(seqs[0].0, 9, "batches after up_to are kept");
+        assert_eq!(seqs.last().unwrap(), &(11, "snapshot"));
+        assert_eq!(seqs.len(), 3);
+        // A computer at cursor 5 (behind up_to) gets batch 9, 10 and the snapshot; one at 10 gets only the snapshot.
+        assert_eq!(r.pull(G, T, 10).unwrap().0.len(), 1);
+        // New pushes continue after the snapshot, and the byte count stays honest.
+        assert_eq!(r.push(G, T, None, "d", "later").unwrap(), 12);
+        let s = r.group_stats(G, T).unwrap();
+        let sum: i64 = r.pull(G, T, 0).unwrap().0.iter().map(|o| o.blob.len() as i64).sum();
+        assert_eq!((s.batches, s.bytes), (4, sum));
+    }
+
+    #[test]
+    fn compaction_refuses_what_would_lose_data_or_grow_it() {
+        let r = open_relay(100);
+        for i in 0..4 {
+            r.push(G, T, None, "d", &format!("batch-number-{i}")).unwrap();
+        }
+        let snap = vec!["s".to_string()];
+        // Beyond the newest batch, zero, or an empty snapshot.
+        assert!(matches!(r.compact(G, T, "d", 5, &snap), Err(RelayError::BadRequest(_))));
+        assert!(matches!(r.compact(G, T, "d", 0, &snap), Err(RelayError::BadRequest(_))));
+        assert!(matches!(r.compact(G, T, "d", 2, &[]), Err(RelayError::BadRequest(_))));
+        // Not smaller than what it replaces.
+        let big = vec!["x".repeat(500)];
+        assert!(matches!(r.compact(G, T, "d", 2, &big), Err(RelayError::BadRequest(_))));
+        // Wrong token, unknown group.
+        assert_eq!(
+            r.compact(G, "some-other-token-123456", "d", 2, &snap),
+            Err(RelayError::Unauthorized)
+        );
+        assert!(r.compact("fedcba9876543210fedcba9876543210", T, "d", 1, &snap).is_err());
+        // Nothing changed through all that.
+        assert_eq!(r.group_stats(G, T).unwrap().batches, 4);
+    }
     #[test]
     fn rotating_an_account_key_replaces_it_and_leaves_groups_alone() {
         let r = Relay::in_memory(Limits {
