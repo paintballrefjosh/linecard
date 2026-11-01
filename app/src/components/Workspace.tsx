@@ -76,7 +76,7 @@ function SessionPanel({ api, params }: IDockviewPanelProps<PanelParams>) {
   );
 }
 
-function SessionTab({ api, params }: IDockviewPanelHeaderProps<PanelParams>) {
+function SessionTab({ api, containerApi, params }: IDockviewPanelHeaderProps<PanelParams>) {
   const { status, activity, askClose } = useContext(SharedCtx);
   const conn = params.conn;
   const s = status[api.id] ?? "connecting";
@@ -88,6 +88,15 @@ function SessionTab({ api, params }: IDockviewPanelHeaderProps<PanelParams>) {
       className={`session-tab ${active ? "has-activity" : ""}`}
       style={conn.tabColor ? ({ "--tab-color": conn.tabColor } as CSSProperties) : undefined}
       title={`${api.title} · ${conn.endpoint}${active ? " · new output" : ""}`}
+      // Clicking a tab leaves focus on the tab; the keyboard belongs to the session.
+      onClick={() =>
+        requestAnimationFrame(() =>
+          containerApi
+            .getPanel(api.id)
+            ?.view.content.element.querySelector<HTMLElement>("textarea.xterm-helper-textarea, canvas")
+            ?.focus(),
+        )
+      }
       // Middle-click closes, as in browsers (mousedown would start autoscroll).
       onMouseDown={(e) => e.button === 1 && e.preventDefault()}
       onAuxClick={(e) => {

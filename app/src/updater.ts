@@ -10,9 +10,11 @@ export interface UpdateInfo {
   restart(): Promise<void>;
 }
 
-const SIX_HOURS = 6 * 60 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
+/** Coming back to the window checks again if the last check was this long ago. */
+const STALE = 15 * 60 * 1000;
 
-/** Checks GitHub Releases on launch and every six hours. Only checks:
+/** Checks GitHub Releases on launch, hourly, and when you come back to the window after a while. Only checks:
  *  nothing is downloaded or installed until the user says so. */
 export function useUpdater(): UpdateInfo | null {
   const [info, setInfo] = useState<UpdateInfo | null>(null);
@@ -21,7 +23,9 @@ export function useUpdater(): UpdateInfo | null {
     if (!isTauri) return;
     let canceled = false;
 
+    let last = 0;
     const run = async () => {
+      last = Date.now();
       try {
         const { check } = await import("@tauri-apps/plugin-updater");
         const { relaunch } = await import("@tauri-apps/plugin-process");
@@ -49,11 +53,20 @@ export function useUpdater(): UpdateInfo | null {
       }
     };
 
+    // Timers pause while the computer sleeps or the window is hidden, so a
+    // long-running session also checks when it is looked at again.
+    const recheck = () => {
+      if (document.visibilityState === "visible" && Date.now() - last > STALE) void run();
+    };
     run();
-    const timer = window.setInterval(run, SIX_HOURS);
+    const timer = window.setInterval(run, HOUR);
+    window.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", recheck);
     return () => {
       canceled = true;
       window.clearInterval(timer);
+      window.removeEventListener("focus", recheck);
+      document.removeEventListener("visibilitychange", recheck);
     };
   }, []);
 

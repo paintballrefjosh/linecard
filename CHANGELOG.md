@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Multi-select**: Ctrl/Shift-click connections, then press Enter or right-click → **Open N in tabs** to open them all, or **Edit N connections…** to edit them one after another.
+
+- **Fixes**: after saving a connection it is selected and focused in the tree, so Enter opens it; clicking a tab puts the keyboard in the session instead of on the tab; the update notice now appears in a running app (checked hourly and when you return to the window) instead of only after a restart.
+
+- **Security checks**: CodeQL, OpenSSF Scorecard, dependency review on pull requests, weekly Dependabot updates, and a `SECURITY.md` policy; badges in the README.
+
 - **Relay WebSocket push**: computers keep a WebSocket open to the relay and hear about new batches immediately, instead of holding a request open and re-asking every 25 seconds. A proxy or older relay that doesn't allow WebSockets makes Linecard fall back to the old way automatically.
 
 - **Relay compaction**: a sync group on a relay no longer grows forever. When it holds 500 or more batches, one caught-up computer replaces the old history with a snapshot of the current state (the relay only accepts one that is smaller, and stays unable to read it). Every computer, including ones behind and ones that join later, converges to the same library; the only loss is reverting a change that was compacted before a computer saw it. Needs a relay from this version; with an older relay nothing happens. Design in `docs/sync-protocol.md`.

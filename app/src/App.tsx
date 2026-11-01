@@ -129,6 +129,11 @@ export default function App() {
   /** Auto-hidden connections pane: showing right now. */
   const [peek, setPeek] = useState(false);
   const [editing, setEditing] = useState<ConnectionDraft | null>(null);
+  /** Connections still to edit after this one, when several were picked. */
+  const [editQueue, setEditQueue] = useState<string[]>([]);
+  const saved = useRef<string | null>(null);
+  /** Asks the tree to select and focus a connection (after saving it). */
+  const [focusRequest, setFocusRequest] = useState<{ id: string; n: number } | null>(null);
   const [passwordFor, setPasswordFor] = useState<{ id: string; name: string } | null>(null);
   const [prefs, setPrefs] = useState<Preferences>(defaultPrefs);
   const [importing, setImporting] = useState(false);
@@ -185,7 +190,11 @@ export default function App() {
     () =>
       backend && {
         newConnection: (folderId) => setEditing(blankDraft(folderId)),
-        editConnection: (id) => void backend.getConnection(id).then(setEditing),
+        editConnection: (ids) => {
+          if (ids.length === 0) return;
+          setEditQueue(ids.slice(1));
+          void backend.getConnection(ids[0]).then(setEditing);
+        },
         setPassword: (id, name) => setPasswordFor({ id, name }),
         openFiles: (id) =>
           void backend.getTree().then((t) => {
@@ -476,6 +485,7 @@ export default function App() {
               tree={tree}
               actions={treeActions}
               onOpen={open}
+              focusRequest={focusRequest}
               onAck={(id) => backend.ackChange(id)}
               onAckAll={() => backend.ackAll()}
               onRevert={(op) => backend.revert(op)}
@@ -506,8 +516,22 @@ export default function App() {
           <ConnectionEditor
             initial={editing}
             location={folderPath(tree, editing.folderId)}
-            onSave={async (d) => void (await backend.saveConnection(d))}
-            onClose={() => setEditing(null)}
+            key={editing.id ?? "new"}
+            onSave={async (d) => {
+              saved.current = await backend.saveConnection(d);
+            }}
+            onClose={() => {
+              const id = saved.current;
+              saved.current = null;
+              const [next, ...rest] = id ? editQueue : [];
+              setEditQueue(rest);
+              if (next) void backend.getConnection(next).then(setEditing);
+              else {
+                setEditing(null);
+                setEditQueue([]);
+                if (id) setFocusRequest({ id, n: Date.now() });
+              }
+            }}
             jumpHosts={sshConnections(tree)}
           />
         )}

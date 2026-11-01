@@ -1,6 +1,10 @@
 # <img src="docs/logo.svg" alt="" width="40" align="absmiddle"> Linecard
 
 [![CI](https://github.com/paintballrefjosh/linecard/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/paintballrefjosh/linecard/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/paintballrefjosh/linecard/actions/workflows/codeql.yml/badge.svg?branch=master)](https://github.com/paintballrefjosh/linecard/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/paintballrefjosh/linecard/badge)](https://scorecard.dev/viewer/?uri=github.com/paintballrefjosh/linecard)
+[![Latest release](https://img.shields.io/github/v/release/paintballrefjosh/linecard)](https://github.com/paintballrefjosh/linecard/releases/latest)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
 A terminal and remote-desktop client in the spirit of SecureCRT and PuTTY — SSH, Telnet, Serial, RDP and VNC — whose connection tree syncs across your computers with end-to-end encryption. Remote changes show up highlighted (green added, amber edited, red deleted) and any one of them can be reverted.
 
@@ -10,7 +14,7 @@ Windows first; macOS and Linux build from the same code.
 
 Download `Linecard_<version>_x64-setup.exe` from [Releases](https://github.com/paintballrefjosh/linecard/releases) and run it. It installs for your user only (no admin prompt) and fetches Microsoft's WebView2 runtime if your PC doesn't already have it. Later versions are offered from inside the app.
 
-No release has been published yet. Until the first one is, the only way to run Linecard is to [build it from source](#building-from-source).
+Builds for macOS (dmg) and Linux (AppImage, deb) are on the same page, unsigned for now: on Windows, SmartScreen warns on the first install ("More info → Run anyway"); on macOS, right-click → Open the first time. To run the very latest code instead, [build it from source](#building-from-source).
 
 You don't need Rust, Node.js or anything else in the next section to use Linecard.
 
@@ -93,6 +97,10 @@ docs/              Roadmap, sync protocol, releasing
 ## Maintainer setup
 
 Releases are built by GitHub Actions from a version tag; the one-time update-signing key setup and the release steps are in [docs/releasing.md](docs/releasing.md).
+
+## Security
+
+Report vulnerabilities privately; see [SECURITY.md](SECURITY.md). Every change runs clippy, the tests on Windows, Linux and macOS, `cargo-deny`, `npm audit` and CodeQL; the OpenSSF Scorecard and Dependabot run weekly. Update files and relay images are signed.
 
 ## License
 

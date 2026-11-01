@@ -38,7 +38,8 @@ import { ChangeGlyph, KindIcon, Undo2, changeLabel } from "./icons";
 /** Tree edits; the App owns the connection editor dialog. */
 export interface TreeActions {
   newConnection(folderId: string | null): void;
-  editConnection(id: string): void;
+  /** Edit one or several connections (one editor after another). */
+  editConnection(ids: string[]): void;
   /** Save a password for a connection without logging in first. */
   setPassword(id: string, name: string): void;
   /** Open an SFTP file browser on an SSH connection. */
@@ -55,6 +56,8 @@ interface Props {
   tree: TreeNode[];
   actions: TreeActions;
   onOpen(conn: ConnectionNode): void;
+  /** Select and focus this connection (e.g. after saving it). */
+  focusRequest?: { id: string; n: number } | null;
   onAck(id: string): void;
   onAckAll(): void;
   onRevert(opId: string): void;
@@ -224,6 +227,7 @@ export function ConnectionTree({
   tree,
   actions,
   onOpen,
+  focusRequest,
   onAck,
   onAckAll,
   onRevert,
@@ -261,6 +265,31 @@ export function ConnectionTree({
     node.select();
     node.edit();
   }, [tree]);
+
+  // Select and focus a connection on request, so Enter opens it.
+  const handledFocus = useRef(0);
+  useEffect(() => {
+    if (!focusRequest || focusRequest.n === handledFocus.current) return;
+    const t = treeApi.current;
+    const node = t?.get(focusRequest.id);
+    if (!t || !node) return; // not in the tree yet: try again when it changes
+    handledFocus.current = focusRequest.n;
+    node.openParents();
+    t.select(focusRequest.id);
+    t.scrollTo(focusRequest.id);
+    // The editor dialog hands focus back to what had it when it closes; go after that.
+    window.setTimeout(() => {
+      t.focus(focusRequest.id);
+      boxRef.current?.querySelector<HTMLElement>('[role="tree"]')?.focus({ preventScroll: true });
+    }, 60);
+  }, [focusRequest, tree, boxRef]);
+
+  /** Connections in the selection, when the row clicked is part of it. */
+  const selectedConnections = (n: NodeApi<TreeNode> | null | undefined): ConnectionNode[] => {
+    const t = treeApi.current;
+    if (!t || !n?.isSelected) return [];
+    return t.selectedNodes.flatMap((s) => (s.data.type === "connection" ? [s.data] : []));
+  };
 
   /** Where a dragged item would land, shown on that folder (or the whole
    *  tree for the top level). */
@@ -332,6 +361,21 @@ export function ConnectionTree({
       ];
     }
     const d = n.data;
+    const picked = selectedConnections(n);
+    if (picked.length > 1)
+      return [
+        {
+          label: `Open ${picked.length} in tabs`,
+          icon: <Play size={15} />,
+          shortcut: "Enter",
+          onSelect: () => picked.forEach(onOpen),
+        },
+        {
+          label: `Edit ${picked.length} connections…`,
+          icon: <Pencil size={15} />,
+          onSelect: () => actions.editConnection(picked.map((c) => c.id)),
+        },
+      ];
     const rename: MenuItem = {
       label: "Rename",
       icon: <TextCursorInput size={15} />,
@@ -359,7 +403,7 @@ export function ConnectionTree({
       ];
     return [
       { label: "Connect", icon: <Play size={15} />, shortcut: "Enter", onSelect: () => onOpen(d) },
-      { label: "Edit…", icon: <Pencil size={15} />, onSelect: () => actions.editConnection(d.id) },
+      { label: "Edit…", icon: <Pencil size={15} />, onSelect: () => actions.editConnection([d.id]) },
       ...(d.kind === "ssh"
         ? [{ label: "Open file browser (SFTP)", icon: <FolderOpen size={15} />, onSelect: () => actions.openFiles(d.id) }]
         : []),
@@ -381,7 +425,9 @@ export function ConnectionTree({
     const n = t?.focusedNode;
     if (!t || !n || t.isEditing || (e.target as Element).closest("input")) return;
     if (e.key === "Enter") {
-      if (n.data.type === "connection") onOpen(n.data);
+      const picked = selectedConnections(n);
+      if (picked.length > 1) picked.forEach(onOpen);
+      else if (n.data.type === "connection") onOpen(n.data);
       else n.toggle();
     } else if (e.key === "F2") n.edit();
     else if (e.key === "Delete") setConfirmDelete(n.data);
