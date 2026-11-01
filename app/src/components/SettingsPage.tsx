@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Copy, X } from "lucide-react";
+import { Copy, QrCode as QrCodeIcon, X } from "lucide-react";
 import { getBackend } from "../api";
 import {
   colorFor,
@@ -16,6 +16,7 @@ import { usePrefs } from "../prefs";
 import type { LoggingSettings, PasswordSync, SavedPassword, SyncConfig, SyncState, SyncTransport } from "../types";
 import { ConfirmDialog, Modal } from "./Dialog";
 import { relativeTime } from "./ConnectionTree";
+import { QrCode } from "./QrCode";
 
 interface Props {
   theme: ThemePref;
@@ -475,6 +476,7 @@ export function RotateDialog({
 
 export function PhraseWords({ phrase, onHide }: { phrase: string; onHide(): void }) {
   const [copied, setCopied] = useState(false);
+  const [qr, setQr] = useState(false);
   return (
     <div className="sync-phrase">
       <ol>
@@ -482,6 +484,15 @@ export function PhraseWords({ phrase, onHide }: { phrase: string; onHide(): void
           <li key={i}>{w}</li>
         ))}
       </ol>
+      {qr && (
+        <div className="qr-box">
+          <QrCode text={phrase} label="The sync phrase as a QR code" />
+          <p>
+            Scan it into your phone's password manager to keep a copy. It is the whole phrase: anyone who sees this
+            code can read and change your connections.
+          </p>
+        </div>
+      )}
       <div className="hl-actions">
         <button
           className="btn"
@@ -492,6 +503,9 @@ export function PhraseWords({ phrase, onHide }: { phrase: string; onHide(): void
           }
         >
           <Copy size={13} /> {copied ? "Copied" : "Copy"}
+        </button>
+        <button className="btn" aria-pressed={qr} onClick={() => setQr((v) => !v)}>
+          <QrCodeIcon size={13} /> {qr ? "Hide QR code" : "QR code"}
         </button>
         <button className="btn" onClick={onHide}>
           Hide

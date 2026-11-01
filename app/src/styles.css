@@ -2573,3 +2573,20 @@ button.status-version:hover {
   background: var(--chg-added);
   content: "";
 }
+
+.qr-box {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 8px 0;
+}
+.qr-box p {
+  max-width: 28ch;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-quiet);
+}
+.qr-code {
+  flex: none;
+  border-radius: var(--radius-s);
+}
