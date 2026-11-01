@@ -225,7 +225,10 @@ pub fn client_ip(req: &Request, trust_proxy: bool) -> Option<IpAddr> {
             return forwarded;
         }
     }
-    req.extensions().get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip())
+    let ext = req.extensions();
+    ext.get::<ConnectInfo<SocketAddr>>()
+        .map(|c| c.0.ip())
+        .or_else(|| ext.get::<ConnectInfo<crate::tls::Peer>>().map(|c| c.0 .0.ip()))
 }
 
 /// The group id in `/v1/groups/{group}/…`, if there is a plausible one.

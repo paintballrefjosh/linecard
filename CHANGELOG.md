@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Relay: key rotation, direct HTTPS, signed images**: `linecard-relay account rotate <name>` replaces an account's access key (the old one stops working; the account's groups keep syncing). `LINECARD_RELAY_TLS_CERT_FILE` and `LINECARD_RELAY_TLS_KEY_FILE` make the relay serve HTTPS itself, with no proxy, and pick up renewed certificates without a restart. Released relay images are now signed with cosign (keyless); verification steps are in `docs/relay.md`.
+
 - **Dependency audit in CI**: every push and a weekly run check Rust dependencies for known vulnerabilities, licenses and sources (`cargo-deny`, policy in `deny.toml`) and the UI's for npm advisories. Six findings in upstream crates (IronRDP, Tauri's GTK stack) with no fix available are listed in `deny.toml` with reasons; `npm audit` is clean.
 
 - **Python scripting**: the **Scripts** button in the toolbar runs Python files that drive your open sessions: `s = lc.active()`, `s.send_line("show version")`, `s.expect("#")`, `lc.open("Lab/spine01")` to open a saved connection and wait for it, `lc.ask(...)` to ask you for a password. Output shows in the window, Stop ends the script. Scripts run in your own Python 3.8+ (path in Settings → Scripting) as a separate process, so they can't crash Linecard, and they never see saved passwords. See `docs/scripting.md`.

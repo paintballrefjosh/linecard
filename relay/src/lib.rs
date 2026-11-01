@@ -187,6 +187,16 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// A fresh account access key: `lcr_` and 48 hex digits.
+fn new_key() -> Result<String> {
+    let mut raw = [0u8; 24];
+    getrandom::getrandom(&mut raw).map_err(|e| RelayError::Internal(e.to_string()))?;
+    Ok(format!(
+        "lcr_{}",
+        raw.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    ))
+}
+
 fn hash(token: &str) -> String {
     Sha256::digest(token.as_bytes())
         .iter()
@@ -477,9 +487,7 @@ impl Relay {
         if name.trim().is_empty() {
             return Err(RelayError::BadRequest("name the account"));
         }
-        let mut raw = [0u8; 24];
-        getrandom::getrandom(&mut raw).map_err(|e| RelayError::Internal(e.to_string()))?;
-        let key = format!("lcr_{}", raw.iter().map(|b| format!("{b:02x}")).collect::<String>());
+        let key = new_key()?;
         let db = self.db()?;
         let n = db.execute(
             "INSERT OR IGNORE INTO accounts (name, key_hash, created, max_groups) VALUES (?1, ?2, ?3, ?4)",
@@ -487,6 +495,21 @@ impl Relay {
         )?;
         if n == 0 {
             return Err(RelayError::BadRequest("an account with that name exists"));
+        }
+        Ok(key)
+    }
+
+    /// Replace an account's access key; returns the new one (shown once). The
+    /// old key stops working at once. Groups the account started are
+    /// unaffected: they are reached with their own tokens, not the key.
+    pub fn rotate_account(&self, name: &str) -> Result<String> {
+        let key = new_key()?;
+        let n = self.db()?.execute(
+            "UPDATE accounts SET key_hash = ?1 WHERE name = ?2",
+            params![hash(&key), name],
+        )?;
+        if n == 0 {
+            return Err(RelayError::BadRequest("no such account"));
         }
         Ok(key)
     }
@@ -620,6 +643,7 @@ mod backup;
 pub mod config;
 pub mod guard;
 pub mod observe;
+pub mod tls;
 pub use backup::{
     check as check_backup, list_backups, prune as prune_backups, restore as restore_backup, stamp, BackupInfo,
 };
@@ -1179,6 +1203,27 @@ mod tests {
         assert!(r.accounts().unwrap().is_empty());
     }
 
+    #[test]
+    fn rotating_an_account_key_replaces_it_and_leaves_groups_alone() {
+        let r = Relay::in_memory(Limits {
+            max_ops: 100,
+            open: false,
+            ..Default::default()
+        })
+        .unwrap();
+        let old = r.add_account("alice", None).unwrap();
+        r.push(G, T, Some(&old), "laptop", "x").unwrap();
+        let new = r.rotate_account("alice").unwrap();
+        assert_ne!(old, new);
+        assert!(new.starts_with("lcr_"));
+        let g2 = "fedcba9876543210fedcba9876543210";
+        assert_eq!(r.push(g2, T, Some(&old), "d", "x"), Err(RelayError::NeedsAccount));
+        r.push(g2, T, Some(&new), "d", "x").unwrap();
+        // The first group still syncs with its token and still belongs to alice.
+        r.push(G, T, None, "desktop", "y").unwrap();
+        assert_eq!(r.accounts().unwrap()[0].groups, 2);
+        assert!(r.rotate_account("nobody").is_err());
+    }
     #[tokio::test]
     async fn waiters_wake_when_something_arrives() {
         let r = Arc::new(open_relay(100));

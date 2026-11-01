@@ -34,6 +34,11 @@ pub struct Config {
     pub log_format: LogFormat,
     /// Where `/metrics` is served (a separate listener); `None` = off.
     pub metrics_addr: Option<SocketAddr>,
+    /// Certificate chain and private key files: serve HTTPS directly.
+    pub tls: Option<(PathBuf, PathBuf)>,
+    /// Only one of the two TLS files was named. Serving plain HTTP then would
+    /// be a surprise, so the server refuses to start.
+    pub tls_incomplete: bool,
     /// Things in the environment that were wrong and were replaced by defaults.
     pub warnings: Vec<String>,
     shown: Vec<Setting>,
@@ -160,6 +165,12 @@ impl Config {
             "folder for daily backups (empty = none)",
         );
         let keep_text = get("LINECARD_RELAY_BACKUP_KEEP", "7", "daily backups kept");
+        let tls_cert_text = get(
+            "LINECARD_RELAY_TLS_CERT_FILE",
+            "",
+            "PEM certificate chain: serve HTTPS directly (with TLS_KEY_FILE)",
+        );
+        let tls_key_text = get("LINECARD_RELAY_TLS_KEY_FILE", "", "PEM private key for the certificate");
 
         let mut warn = |msg: String| warnings.push(msg);
 
@@ -225,6 +236,9 @@ impl Config {
             ));
             7
         });
+        let (cert, key) = (tls_cert_text.trim(), tls_key_text.trim());
+        let tls = (!cert.is_empty() && !key.is_empty()).then(|| (PathBuf::from(cert), PathBuf::from(key)));
+        let tls_incomplete = cert.is_empty() != key.is_empty();
         let backup = (!backup_dir_text.trim().is_empty()).then(|| (PathBuf::from(backup_dir_text.trim()), keep));
 
         let limits = Limits {
@@ -261,6 +275,8 @@ impl Config {
                 "LINECARD_RELAY_METRICS_ADDR" => metrics_addr.map_or("off".into(), |a| a.to_string()),
                 "LINECARD_RELAY_BACKUP_DIR" => backup.as_ref().map_or("off".into(), |(d, _)| d.display().to_string()),
                 "LINECARD_RELAY_BACKUP_KEEP" => keep.to_string(),
+                "LINECARD_RELAY_TLS_CERT_FILE" => tls.as_ref().map_or("off".into(), |(c, _)| c.display().to_string()),
+                "LINECARD_RELAY_TLS_KEY_FILE" => tls.as_ref().map_or("off".into(), |(_, k)| k.display().to_string()),
                 _ => String::new(),
             }
         };
@@ -276,6 +292,8 @@ impl Config {
             log_level,
             log_format,
             metrics_addr,
+            tls,
+            tls_incomplete,
             warnings,
             shown,
         }
@@ -289,7 +307,8 @@ impl Config {
 
 /// Settings whose names say they hold a secret are never printed in full.
 fn mask(name: &str, value: String) -> String {
-    let secret = ["KEY", "TOKEN", "SECRET", "PASSWORD"].iter().any(|w| name.contains(w));
+    // `..._FILE` settings name a file, not a secret.
+    let secret = !name.ends_with("_FILE") && ["KEY", "TOKEN", "SECRET", "PASSWORD"].iter().any(|w| name.contains(w));
     if secret && !value.is_empty() {
         "********".into()
     } else {

@@ -20,6 +20,19 @@ docker run -d --name linecard-relay -p 8443:8443 -v linecard-relay:/data ghcr.io
 
 Put that behind HTTPS (Caddy, Traefik, nginx, a Cloudflare Tunnel; the deploy README has examples), then in Linecard choose **Settings → Sync → Relay** and enter its address, e.g. `https://relay.example.com`.
 
+### HTTPS without a proxy
+
+If you'd rather not run a proxy, the relay can serve HTTPS itself. Give it a certificate chain and its private key as PEM files (certbot's `fullchain.pem` and `privkey.pem`, for example):
+
+```bash
+docker run -d --name linecard-relay -p 443:8443 -v linecard-relay:/data \
+  -v /etc/letsencrypt/live/relay.example.com:/tls:ro \
+  -e LINECARD_RELAY_TLS_CERT_FILE=/tls/fullchain.pem -e LINECARD_RELAY_TLS_KEY_FILE=/tls/privkey.pem \
+  ghcr.io/paintballrefjosh/linecard-relay
+```
+
+Both settings are needed; with only one, or with unreadable files, the relay refuses to start rather than serve plain HTTP. When the files are renewed it notices within a minute and uses the new certificate (a broken file is ignored, with a warning, and the old certificate stays in use). The relay speaks HTTP/1.1 over TLS 1.2 and 1.3. It doesn't get certificates by itself; use certbot or similar, or the Compose bundle's Caddy if you want that handled. In Docker, Let's Encrypt's `live/` files are symlinks into `archive/`, so mount the whole `/etc/letsencrypt` folder read-only and point the settings at the `live/…` paths inside it.
+
 The image is small (a static binary on a distroless base): it has no shell, runs as a non-root user (65532), is built for `linux/amd64` and `linux/arm64`, and carries a built-in health check (`linecard-relay health`). Tags are `:X.Y.Z`, `:X.Y` and `:latest`; a published version is never re-tagged. `docker stop` ends it cleanly within a few seconds. It also runs with `--read-only --cap-drop ALL --security-opt no-new-privileges:true`; mount the `/data` volume (a bind mount must be owned by uid 65532). Admin commands work as before: `docker exec linecard-relay linecard-relay stats`.
 
 Changes reach the other computers within about a second: each one keeps a request open on the relay, which answers as soon as something new arrives.
@@ -41,6 +54,7 @@ Changes reach the other computers within about a second: each one keeps a reques
 | `LINECARD_RELAY_METRICS_ADDR` | off | Serve Prometheus `/metrics` here, apart from the public port |
 | `LINECARD_RELAY_BACKUP_DIR` | off | Folder for daily backups |
 | `LINECARD_RELAY_BACKUP_KEEP` | `7` | How many daily backups to keep |
+| `LINECARD_RELAY_TLS_CERT_FILE`, `LINECARD_RELAY_TLS_KEY_FILE` | off | PEM certificate chain and private key: serve HTTPS directly (both or neither) |
 
 ## Limits and abuse protection
 
@@ -72,6 +86,14 @@ docker exec linecard-relay linecard-relay account add alice --max-groups 3
 ```
 
 This prints an access key (`lcr_…`), shown only once. Alice enters it under **Settings → Sync → Access key** when she starts her sync group. Her other computers join with the 24-word phrase alone.
+
+If a key leaks or someone leaves, replace it:
+
+```bash
+docker exec linecard-relay linecard-relay account rotate alice
+```
+
+The new key is printed once and the old one stops working at once, for starting new groups. Groups Alice already started keep syncing: her computers reach them with the group's own token, not the key, so nothing needs re-entering. Only starting a *new* group needs the new key. To also cut off a leaked group, remove it with `group remove`.
 
 ## Storage limits and cleanup
 
@@ -114,6 +136,7 @@ Run them where the database lives (`docker exec linecard-relay …`):
 
 ```text
 linecard-relay account add <name> [--max-groups N]   create an account, print its access key
+linecard-relay account rotate <name>                   new access key; the old one stops working (its groups keep syncing)
 linecard-relay account list
 linecard-relay account remove <name> [--with-groups]
 linecard-relay group list [--idle [DAYS]]          id, owner, batches, size, devices, last write and last seen; --idle: only quiet groups
@@ -124,3 +147,14 @@ linecard-relay stats                                  totals, storage per accoun
 ```
 
 Removing an account stops it from starting new groups; `--with-groups` also deletes the data of the groups it started.
+
+## Verifying the image
+
+Release images are signed with [cosign](https://github.com/sigstore/cosign) (keyless: the signature names the release workflow that built them) and carry an SBOM and build provenance. To check one before running it:
+
+```bash
+cosign verify ghcr.io/paintballrefjosh/linecard-relay:X.Y.Z \
+  --certificate-identity-regexp '^https://github.com/paintballrefjosh/linecard/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+docker buildx imagetools inspect ghcr.io/paintballrefjosh/linecard-relay:X.Y.Z --format '{{ json .SBOM }}'
+```

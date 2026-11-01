@@ -6,6 +6,7 @@
 //! linecard-relay health                        exit 0 if the local server answers (for container health checks)
 //! linecard-relay account add <name> [--max-groups N]   prints the access key
 //! linecard-relay account list
+//! linecard-relay account rotate <name>         new access key (the old one stops working; its groups keep syncing)
 //! linecard-relay account remove <name> [--with-groups]
 //! linecard-relay group list [--idle [DAYS]]    sizes and last activity; --idle: only quiet groups
 //! linecard-relay group remove <group-id>
@@ -21,7 +22,8 @@
 //! in flight a few seconds (long-polls are released), and folds the SQLite
 //! write-ahead log into the database file before exiting.
 //!
-//! Serve it behind HTTPS (a reverse proxy such as Caddy or Traefik); the
+//! Serve it behind HTTPS: a reverse proxy such as Caddy or Traefik, or the
+//! relay itself (LINECARD_RELAY_TLS_CERT_FILE and LINECARD_RELAY_TLS_KEY_FILE); the
 //! data is end-to-end encrypted, but the token travels in a header. The admin
 //! commands work on the database directly (run them where it lives, e.g.
 //! `docker exec <container> linecard-relay account add alice`).
@@ -162,6 +164,11 @@ fn admin(args: &[String]) -> Result<(), String> {
                 .transpose()?;
             let key = relay.add_account(name, max).map_err(err)?;
             println!("Account {name} created. Its access key (shown once; enter it in Linecard → Settings → Sync):");
+            println!("{key}");
+        }
+        ["account", "rotate", name] => {
+            let key = relay.rotate_account(name).map_err(err)?;
+            println!("New access key for {name} (shown once). The old key no longer starts groups; existing groups keep syncing:");
             println!("{key}");
         }
         ["account", "list"] => {
@@ -431,6 +438,20 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if cfg.tls_incomplete {
+        tracing::error!("set both LINECARD_RELAY_TLS_CERT_FILE and LINECARD_RELAY_TLS_KEY_FILE, or neither");
+        return ExitCode::FAILURE;
+    }
+    let acceptor = match &cfg.tls {
+        Some((cert, key)) => match linecard_relay::tls::acceptor(cert, key) {
+            Ok(a) => Some(a),
+            Err(e) => {
+                tracing::error!("can't use the TLS certificate: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
     let listener = match tokio::net::TcpListener::bind(cfg.addr).await {
         Ok(l) => l,
         Err(e) => {
@@ -441,6 +462,7 @@ async fn main() -> ExitCode {
     tracing::info!(
         addr = %cfg.addr,
         db = %cfg.db.display(),
+        https = acceptor.is_some(),
         access = if cfg.limits.open { "open to any sync phrase" } else { "private (accounts only)" },
         "linecard-relay listening"
     );
@@ -470,10 +492,20 @@ async fn main() -> ExitCode {
 
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
     let app = router(relay.clone()).into_make_service_with_connect_info::<SocketAddr>();
-    let server = axum::serve(listener, app).with_graceful_shutdown(async {
+    let tls_app = router(relay.clone()).into_make_service_with_connect_info::<linecard_relay::tls::Peer>();
+    let stop = async {
         let _ = stop_rx.await;
-    });
-    let mut server = tokio::spawn(async move { server.await });
+    };
+    let mut server = match acceptor {
+        Some(acceptor) => match linecard_relay::tls::TlsListener::new(listener, acceptor) {
+            Ok(l) => tokio::spawn(async move { axum::serve(l, tls_app).with_graceful_shutdown(stop).await }),
+            Err(e) => {
+                tracing::error!("can't start HTTPS: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => tokio::spawn(async move { axum::serve(listener, app).with_graceful_shutdown(stop).await }),
+    };
     tokio::select! {
         done = &mut server => {
             // The server ended by itself: that is an error.

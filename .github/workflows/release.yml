@@ -69,6 +69,11 @@ jobs:
           args: ${{ matrix.args }}
 
   relay:
+    # id-token: keyless signing with the workflow's identity (no key to keep).
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -88,7 +93,8 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: relay/Dockerfile
@@ -100,3 +106,13 @@ jobs:
           cache-to: type=gha,mode=max
           sbom: true
           provenance: mode=max
+      # Sign the image by digest (covers every tag and both architectures).
+      # Verify with the command in docs/relay.md.
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign the image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          image=$(echo "$TAGS" | head -n1 | cut -d: -f1)
+          cosign sign --yes "$image@$DIGEST"
