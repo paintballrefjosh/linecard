@@ -362,7 +362,7 @@ async fn apple_remote_desktop_login_and_pointer_shape() {
         shared_padded.extend(&shared);
         let key = Md5::digest(&shared_padded);
         let cipher = aes::Aes128::new(GenericArray::from_slice(&key));
-        for block in sealed.chunks_exact_mut(16) {
+        for block in sealed.as_chunks_mut::<16>().0 {
             cipher.decrypt_block(GenericArray::from_mut_slice(block));
         }
         let text = |b: &[u8]| String::from_utf8_lossy(&b[..b.iter().position(|&c| c == 0).unwrap()]).into_owned();
@@ -390,7 +390,7 @@ async fn apple_remote_desktop_login_and_pointer_shape() {
                     let mut e = vec![0u8; usize::from(n) * 4];
                     s.read_exact(&mut e).await.unwrap();
                     assert!(
-                        e.chunks_exact(4).any(|c| c == (-239i32).to_be_bytes()),
+                        e.as_chunks::<4>().0.iter().any(|c| *c == (-239i32).to_be_bytes()),
                         "asks for pointer shapes"
                     );
                 }
