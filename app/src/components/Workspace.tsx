@@ -76,6 +76,18 @@ function SessionPanel({ api, params }: IDockviewPanelProps<PanelParams>) {
   );
 }
 
+/** Put the keyboard in a tab's session (terminal or remote screen). Selecting
+ *  a tab leaves focus on the tab itself, so this runs just after. */
+function focusSession(dock: DockviewApi, id: string) {
+  const go = () =>
+    dock
+      .getPanel(id)
+      ?.view.content.element.querySelector<HTMLElement>("textarea.xterm-helper-textarea, canvas")
+      ?.focus();
+  requestAnimationFrame(go);
+  window.setTimeout(go, 60);
+}
+
 function SessionTab({ api, containerApi, params }: IDockviewPanelHeaderProps<PanelParams>) {
   const { status, activity, askClose } = useContext(SharedCtx);
   const conn = params.conn;
@@ -89,14 +101,7 @@ function SessionTab({ api, containerApi, params }: IDockviewPanelHeaderProps<Pan
       style={conn.tabColor ? ({ "--tab-color": conn.tabColor } as CSSProperties) : undefined}
       title={`${api.title} · ${conn.endpoint}${active ? " · new output" : ""}`}
       // Clicking a tab leaves focus on the tab; the keyboard belongs to the session.
-      onClick={() =>
-        requestAnimationFrame(() =>
-          containerApi
-            .getPanel(api.id)
-            ?.view.content.element.querySelector<HTMLElement>("textarea.xterm-helper-textarea, canvas")
-            ?.focus(),
-        )
-      }
+      onClick={() => focusSession(containerApi, api.id)}
       // Middle-click closes, as in browsers (mousedown would start autoscroll).
       onMouseDown={(e) => e.button === 1 && e.preventDefault()}
       onAuxClick={(e) => {
@@ -313,6 +318,7 @@ export function Workspace({
       );
       const next = tabs[(at + (e.shiftKey ? -1 : 1) + tabs.length) % tabs.length];
       next.api.setActive();
+      focusSession(a, next.id);
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
