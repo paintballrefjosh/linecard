@@ -87,7 +87,7 @@ jobs:
       # v1.2.3 → :1.2.3 and :1.2 (and :latest for a release, not a pre-release).
       # Published versions are never re-tagged: a fix ships as a new version.
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository_owner }}/linecard-relay
           tags: |
