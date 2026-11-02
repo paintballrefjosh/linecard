@@ -240,7 +240,10 @@ pub fn set_cli_path(on: bool) -> CmdResult<()> {
 pub fn opened_urls(app: &AppHandle, urls: Vec<String>) {
     let mut argv = vec![String::new()];
     argv.extend(urls);
-    second_instance(app, argv);
+    let cwd = std::env::current_dir()
+        .map(|d| d.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    second_instance(app, argv, &cwd);
 }
 
 #[cfg(test)]

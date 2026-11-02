@@ -119,6 +119,7 @@ jobs:
           docker tag linecard-relay:ci ghcr.io/paintballrefjosh/linecard-relay:ci
           printf 'RELAY_DOMAIN=:80\nRELAY_VERSION=ci\n' > .env
           docker compose config -q
+          docker pull caddy:2
           docker compose up -d --pull never
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1/health && break; sleep 2; done
           curl -fsS http://127.0.0.1/health
