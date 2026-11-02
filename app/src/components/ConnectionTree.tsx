@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -140,6 +141,8 @@ interface HoverState {
   node: TreeNode;
   top: number;
   left: number;
+  /** The row's own left edge, for placing the card on its left when the right is full. */
+  rowLeft: number;
 }
 
 interface RowCtxValue {
@@ -470,7 +473,7 @@ export function ConnectionTree({
   const showHover = (node: TreeNode, el: HTMLElement) => {
     window.clearTimeout(hideTimer.current);
     const r = el.getBoundingClientRect();
-    setHover({ node, top: r.top, left: r.right + 8 });
+    setHover({ node, top: r.top, left: r.right + 8, rowLeft: r.left });
   };
   const scheduleHide = () => {
     window.clearTimeout(hideTimer.current);
@@ -610,6 +613,7 @@ export function ConnectionTree({
               change={hover.node.change}
               top={hover.top}
               left={hover.left}
+              rowLeft={hover.rowLeft}
               onEnter={() => window.clearTimeout(hideTimer.current)}
               onLeave={scheduleHide}
               onAck={() => {
@@ -633,17 +637,36 @@ function HoverCard(props: {
   change: PendingChange;
   top: number;
   left: number;
+  rowLeft: number;
   onEnter(): void;
   onLeave(): void;
   onAck(): void;
   onRevert(opId: string): void;
 }) {
   const { node, change } = props;
+  const ref = useRef<HTMLDivElement>(null);
+  const [at, setAt] = useState({ top: props.top, left: props.left });
+  // Keep the card inside the window: beside the row if there is room on the
+  // right, else on its left, and slid up when it would run off the bottom.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const margin = 8;
+    const { width, height } = el.getBoundingClientRect();
+    let left = props.left;
+    if (left + width > window.innerWidth - margin) {
+      const beside = props.rowLeft - 8 - width;
+      left = beside >= margin ? beside : Math.max(margin, window.innerWidth - margin - width);
+    }
+    const top = Math.max(margin, Math.min(props.top, window.innerHeight - margin - height));
+    setAt((cur) => (cur.top === top && cur.left === left ? cur : { top, left }));
+  }, [props.top, props.left, props.rowLeft, change]);
   const revertLabel = (k: ChangeKind) => (k === "deleted" ? "Restore" : k === "reverted" ? "Undo revert" : "Revert");
   return (
     <div
+      ref={ref}
       className={`hover-card hc-${change.kind}`}
-      style={{ top: props.top, left: props.left }}
+      style={at}
       onMouseEnter={props.onEnter}
       onMouseLeave={props.onLeave}
       role="dialog"

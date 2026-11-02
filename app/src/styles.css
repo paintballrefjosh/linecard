@@ -650,6 +650,10 @@ body.is-resizing .main {
   position: fixed;
   z-index: 50;
   width: 300px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  box-sizing: border-box;
   padding: 12px;
   border-radius: var(--radius-m);
   background: var(--bg-main);
@@ -725,6 +729,7 @@ body.is-resizing .main {
   white-space: nowrap;
 }
 .hc-diff td {
+  overflow-wrap: anywhere;
   font-family: var(--font-mono);
   font-size: 11.5px;
   padding: 2px 4px;
