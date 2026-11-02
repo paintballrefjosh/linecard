@@ -5,8 +5,9 @@
 //! the tab paints onto a canvas. Everything else is JSON, shaped like the
 //! terminal's events so the same login and certificate prompts work.
 
+use base64::Engine;
 use linecard_core_model::{ConnectionKind, Endpoint};
-use linecard_proto::gfx::{GfxEvent, GfxSession};
+use linecard_proto::gfx::{CursorShape, GfxEvent, GfxSession};
 use linecard_proto::{SessionEvent, TerminalTarget};
 use serde::Serialize;
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -18,11 +19,33 @@ use crate::{err, network_target, new_id, parse_endpoint, AppState, CmdResult};
 #[derive(Serialize)]
 #[serde(tag = "event", rename_all = "camelCase")]
 enum GfxEventDto {
-    Connected { width: u16, height: u16, name: String },
-    Resized { width: u16, height: u16 },
+    Connected {
+        width: u16,
+        height: u16,
+        name: String,
+    },
+    Resized {
+        width: u16,
+        height: u16,
+    },
     Bell,
-    Clipboard { text: String },
-    Disconnected { reason: Option<String> },
+    Clipboard {
+        text: String,
+    },
+    /// `shape`: "default", "hidden" or "image" (then the rest is filled in).
+    #[serde(rename_all = "camelCase")]
+    Cursor {
+        shape: &'static str,
+        width: u16,
+        height: u16,
+        hot_x: u16,
+        hot_y: u16,
+        /// RGBA pixels, base64.
+        rgba: String,
+    },
+    Disconnected {
+        reason: Option<String>,
+    },
 }
 
 fn send_json(ch: &Channel<InvokeResponseBody>, v: &impl Serialize) {
@@ -51,6 +74,37 @@ fn forward(ch: &Channel<InvokeResponseBody>, who: &str, e: GfxEvent) {
         GfxEvent::Resized { width, height } => send_json(ch, &GfxEventDto::Resized { width, height }),
         GfxEvent::Bell => send_json(ch, &GfxEventDto::Bell),
         GfxEvent::Clipboard(text) => send_json(ch, &GfxEventDto::Clipboard { text }),
+        GfxEvent::Cursor(shape) => {
+            let (shape, width, height, hot_x, hot_y, rgba) = match shape {
+                CursorShape::Default => ("default", 0, 0, 0, 0, String::new()),
+                CursorShape::Hidden => ("hidden", 0, 0, 0, 0, String::new()),
+                CursorShape::Image {
+                    width,
+                    height,
+                    hot_x,
+                    hot_y,
+                    rgba,
+                } => (
+                    "image",
+                    width,
+                    height,
+                    hot_x,
+                    hot_y,
+                    base64::engine::general_purpose::STANDARD.encode(rgba),
+                ),
+            };
+            send_json(
+                ch,
+                &GfxEventDto::Cursor {
+                    shape,
+                    width,
+                    height,
+                    hot_x,
+                    hot_y,
+                    rgba,
+                },
+            )
+        }
         GfxEvent::Disconnected { reason } => {
             if let Some(r) = &reason {
                 crate::debuglog::write("remote", &format!("{who}: {r}"));

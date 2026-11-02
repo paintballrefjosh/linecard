@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **RDP pointer shapes**: the mouse pointer over an RDP screen now follows the server's: the text I-beam over text, the resize arrows on window edges, the busy ring, a hidden pointer in games and full-screen video. Before, it was always the local arrow.
+
 - **Password sync, two computers at once**: if two computers turned password sync on at the same moment, each made its own vault and one passphrase won. The other now says so plainly and asks for the winning passphrase (before, it showed a generic error), and when it does, its saved passwords are re-saved under the winning vault instead of being left unreadable. Records nothing can read any more are cleaned up.
 
 - **Multi-select**: Ctrl/Shift-click connections, then press Enter or right-click → **Open N in tabs** to open them all, or **Edit N connections…** to change settings on all of them in one window. The window shows only what can be shared (port, jump host, username, session log, keyword highlighting, tab color, notes, and serial framing when all are serial); a setting that differs between them reads "Mixed" and is left alone unless you change it. Names and hosts are never touched.

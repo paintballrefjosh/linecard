@@ -3560,6 +3560,7 @@ dependencies = [
 name = "linecard"
 version = "0.3.2"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "core-foundation 0.10.1",
  "linecard-core-model",

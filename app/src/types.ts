@@ -193,6 +193,7 @@ export type GfxEvent =
   | { event: "resized"; width: number; height: number }
   | { event: "bell" }
   | { event: "clipboard"; text: string }
+  | { event: "cursor"; shape: "default" | "hidden" | "image"; width: number; height: number; hotX: number; hotY: number; rgba: string }
   | { event: "disconnected"; reason: string | null }
   | HostKeyEvent
   | AuthEvent;

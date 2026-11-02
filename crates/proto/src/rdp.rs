@@ -40,7 +40,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-use crate::gfx::{scancode, Buttons, GfxEvent, GfxSession, GfxSink};
+use crate::gfx::{scancode, Buttons, CursorShape, GfxEvent, GfxSession, GfxSink, MAX_CURSOR};
 use crate::ssh::{JumpChain, SharedReplies};
 use crate::{
     AuthPrompt, Credentials, HostKeyDecision, HostKeyPrompt, HostKeyStatus, PromptField, PromptReply, SshOptions,
@@ -698,6 +698,27 @@ fn rgba_rect(image: &DecodedImage, r: &InclusiveRectangle) -> (u16, u16, u16, u1
     (left, top, w, h, out)
 }
 
+/// A server pointer as the UI wants it. One too big for a browser cursor
+/// (or malformed) falls back to the ordinary arrow.
+fn pointer_shape(p: &ironrdp_graphics::pointer::DecodedPointer) -> CursorShape {
+    let (w, h) = (p.width, p.height);
+    let sane = w > 0
+        && h > 0
+        && w <= MAX_CURSOR
+        && h <= MAX_CURSOR
+        && p.bitmap_data.len() == usize::from(w) * usize::from(h) * 4;
+    if !sane {
+        return CursorShape::Default;
+    }
+    CursorShape::Image {
+        width: w,
+        height: h,
+        hot_x: p.hotspot_x.min(w - 1),
+        hot_y: p.hotspot_y.min(h - 1),
+        rgba: p.bitmap_data.clone(),
+    }
+}
+
 // ---- clipboard (text only) ---------------------------------------------------------
 
 /// What the clipboard channel's callbacks ask the session loop to do; they
@@ -895,6 +916,9 @@ async fn session(result: ConnectionResult, framed: Upgraded, host: &str, ui: &mu
                         rgba,
                     });
                 }
+                ActiveStageOutput::PointerBitmap(p) => (ui.emit)(GfxEvent::Cursor(pointer_shape(&p))),
+                ActiveStageOutput::PointerDefault => (ui.emit)(GfxEvent::Cursor(CursorShape::Default)),
+                ActiveStageOutput::PointerHidden => (ui.emit)(GfxEvent::Cursor(CursorShape::Hidden)),
                 ActiveStageOutput::DeactivateAll => {
                     // Deactivation-Reactivation (e.g. after a resize): new size, same session.
                     let mut activation = activation_factory.create();
@@ -950,6 +974,34 @@ async fn session(result: ConnectionResult, framed: Upgraded, host: &str, ui: &mu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_pointers_become_cursors() {
+        use ironrdp_graphics::pointer::DecodedPointer;
+        let ptr = |w: u16, h: u16, hot_x: u16, len: usize| DecodedPointer {
+            width: w,
+            height: h,
+            hotspot_x: hot_x,
+            hotspot_y: 1,
+            bitmap_data: vec![7; len],
+        };
+        assert_eq!(
+            pointer_shape(&ptr(2, 2, 9, 16)), // hotspot outside: pulled in
+            CursorShape::Image {
+                width: 2,
+                height: 2,
+                hot_x: 1,
+                hot_y: 1,
+                rgba: vec![7; 16]
+            }
+        );
+        assert_eq!(pointer_shape(&ptr(2, 2, 0, 3)), CursorShape::Default, "wrong size");
+        assert_eq!(
+            pointer_shape(&ptr(200, 200, 0, 200 * 200 * 4)),
+            CursorShape::Default,
+            "too big for a browser cursor"
+        );
+    }
 
     #[test]
     fn users_and_domains() {

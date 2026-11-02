@@ -10,6 +10,27 @@ use std::sync::Arc;
 
 use crate::{AuthPrompt, HostKeyPrompt, PromptReply};
 
+/// The mouse pointer the remote side wants shown over its screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CursorShape {
+    /// The ordinary arrow.
+    Default,
+    /// No pointer at all.
+    Hidden,
+    /// A custom pointer: `rgba` is `width * height * 4` bytes (not
+    /// premultiplied), and the hotspot is the pixel that points.
+    Image {
+        width: u16,
+        height: u16,
+        hot_x: u16,
+        hot_y: u16,
+        rgba: Vec<u8>,
+    },
+}
+
+/// Browsers show custom pointers up to this many pixels on a side.
+pub const MAX_CURSOR: u16 = 128;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GfxEvent {
     /// Logged in; the remote screen is `width`×`height`.
@@ -38,6 +59,8 @@ pub enum GfxEvent {
     Bell,
     /// Text the remote side copied.
     Clipboard(String),
+    /// The remote pointer changed shape.
+    Cursor(CursorShape),
     /// Ended; `None` for a clean close.
     Disconnected {
         reason: Option<String>,

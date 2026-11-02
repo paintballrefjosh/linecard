@@ -73,6 +73,14 @@ export function RemoteView({ conn, onStatus }: Props) {
           sentClip.current = e.text; // don't send it straight back
           void getBackend().then((b) => b.clipboardWrite(e.text));
           break;
+        case "cursor": {
+          const c = canvas.current;
+          if (!c) break;
+          if (e.shape === "hidden") c.style.cursor = "none";
+          else if (e.shape === "default") c.style.cursor = "";
+          else c.style.cursor = cursorCss(e.rgba, e.width, e.height, e.hotX, e.hotY);
+          break;
+        }
         case "disconnected":
           setPrompt(null);
           setEnded(e.reason);
@@ -229,4 +237,15 @@ export function RemoteView({ conn, onStatus }: Props) {
       {prompt && <SessionPrompt prompt={prompt} onReply={reply} />}
     </div>
   );
+}
+
+/** A CSS `cursor` value drawing the server's pointer (RGBA pixels, base64). */
+function cursorCss(rgbaBase64: string, width: number, height: number, hotX: number, hotY: number): string {
+  const bytes = Uint8ClampedArray.from(atob(rgbaBase64), (ch) => ch.charCodeAt(0));
+  if (bytes.length !== width * height * 4) return "";
+  const c = document.createElement("canvas");
+  c.width = width;
+  c.height = height;
+  c.getContext("2d")?.putImageData(new ImageData(bytes, width, height), 0, 0);
+  return `url(${c.toDataURL()}) ${hotX} ${hotY}, default`;
 }
