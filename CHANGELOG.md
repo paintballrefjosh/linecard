@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.4.0 — RDP clipboard and pointers, bulk editing, Mac Screen Sharing, scripting on a schedule, relay compaction and WebSocket push
 
 - **Scripts: several at once, and on a schedule**: up to six scripts can run at the same time (each with its own output tab in the Scripts window), and **Run on a schedule** starts a script every N minutes or daily at a set time while Linecard is open. See `docs/scripting.md`.
 
