@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **VNC: Tight encoding**, so TightVNC servers (common on Windows, and without the ZRLE encoding Linecard already used) send compressed screen updates instead of falling back to raw pixels. JPEG-quality Tight is not requested; updates stay lossless.
+
 - **The Windows installer no longer ticks "Create desktop shortcut" by default.**
 
 - **Right-click a tab to Reconnect or Close it.** Reconnect works on terminal, RDP, VNC and SFTP tabs once they have disconnected.
