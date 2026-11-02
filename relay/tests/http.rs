@@ -136,7 +136,8 @@ async fn only_so_many_long_polls_can_be_held_at_once() {
             tokio::spawn(async move { get(&base, &path, TOKEN, None).await.status() })
         })
         .collect();
-    tokio::time::sleep(Duration::from_millis(800)).await;
+    // All 32 must be in before the next one is tried; a busy CI machine can take a while.
+    tokio::time::sleep(Duration::from_secs(4)).await;
     let extra = get(&base, &path, TOKEN, None).await;
     assert_eq!(extra.status(), 429, "the 33rd is turned away");
     assert!(extra.headers().contains_key("retry-after"));
