@@ -30,6 +30,17 @@ dependencies = [
 
 [[package]]
 name = "aes"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0"
+dependencies = [
+ "cfg-if",
+ "cipher 0.4.4",
+ "cpufeatures 0.2.17",
+]
+
+[[package]]
+name = "aes"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35f0f96ce78e38c3dc6d8948aa8163d06385be74000f3c7a95bf1eef35d3ea32"
@@ -47,7 +58,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f2b8006a0c83f52b62ba44a97b58bf76fe2f70a329e588f67f89691d93d498f"
 dependencies = [
  "aead 0.6.1",
- "aes",
+ "aes 0.9.3",
  "cipher 0.5.2",
  "ctr",
  "ctutils",
@@ -61,7 +72,7 @@ version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41ac571010bd60765c56085a4f1d412012a9be2663b1a2f2b19b49318653fd0d"
 dependencies = [
- "aes",
+ "aes 0.9.3",
  "const-oid 0.10.2",
 ]
 
@@ -3624,9 +3635,11 @@ dependencies = [
 name = "linecard-proto"
 version = "0.3.2"
 dependencies = [
+ "aes 0.8.4",
  "base64 0.22.1",
  "des 0.8.1",
  "flate2",
+ "getrandom 0.2.17",
  "ironrdp-cliprdr",
  "ironrdp-connector",
  "ironrdp-core",
@@ -3639,6 +3652,8 @@ dependencies = [
  "ironrdp-tls",
  "ironrdp-tokio",
  "linecard-core-model",
+ "md-5 0.10.6",
+ "num-bigint 0.4.8",
  "russh",
  "russh-sftp",
  "serialport",
@@ -4720,7 +4735,7 @@ version = "7.0.0-rc.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07ad9686b270be4eb3f3c23027d202ad488a25c2bec6d6be20c2164b28d2c86c"
 dependencies = [
- "aes",
+ "aes 0.9.3",
  "aes-gcm",
  "aes-kw",
  "base64 0.22.1",
@@ -4804,7 +4819,7 @@ version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d188f3192356068dbdba54bddbca6fd0f7a09565d3861eeb8efe1ab77ae8e97"
 dependencies = [
- "aes",
+ "aes 0.9.3",
  "block-padding",
  "byteorder",
  "cbc",
@@ -4876,7 +4891,7 @@ version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63d440a804ec8d6fafbb6b84471e013286658d373248927692ab3366686220ca"
 dependencies = [
- "aes",
+ "aes 0.9.3",
  "aes-gcm",
  "cbc",
  "der 0.8.3",
@@ -5533,7 +5548,7 @@ version = "0.65.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3bb77a4b259312b2abbc541bca1c13cb4e9b61c560a7fd894068c3b92e0c9dc3"
 dependencies = [
- "aes",
+ "aes 0.9.3",
  "bitflags 2.13.2",
  "block-padding",
  "byteorder",
@@ -6432,7 +6447,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d801accda99469cde6d73da741422610fdf6508a72d9a69d1b55cb241c720597"
 dependencies = [
  "aead 0.6.1",
- "aes",
+ "aes 0.9.3",
  "aes-gcm",
  "chacha20 0.10.2",
  "cipher 0.5.2",

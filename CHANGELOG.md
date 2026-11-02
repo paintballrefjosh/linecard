@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **VNC: Mac Screen Sharing and pointer shapes**: connecting to a Mac's built-in Screen Sharing (Apple Remote Desktop login: your Mac username and password) now works, where it used to stop at "security type not supported". The VNC pointer also follows the server's shape (I-beam, resize arrows, hidden). Connections that have a username set use the Mac account login when the Mac offers both. Tested against a built-in server in this repo, not against a real Mac.
+
 - **RDP pointer shapes**: the mouse pointer over an RDP screen now follows the server's: the text I-beam over text, the resize arrows on window edges, the busy ring, a hidden pointer in games and full-screen video. Before, it was always the local arrow.
 
 - **Password sync, two computers at once**: if two computers turned password sync on at the same moment, each made its own vault and one passphrase won. The other now says so plainly and asks for the winning passphrase (before, it showed a generic error), and when it does, its saved passwords are re-saved under the winning vault instead of being left unreadable. Records nothing can read any more are cleaned up.

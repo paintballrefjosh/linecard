@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
-use linecard_proto::gfx::{GfxEvent, GfxSession, GfxSink};
+use linecard_proto::gfx::{CursorShape, GfxEvent, GfxSession, GfxSink};
 use linecard_proto::vnc::{vnc_auth_response, zrle, VncSession};
 use linecard_proto::{Credentials, PromptReply, TerminalTarget};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -317,4 +317,136 @@ async fn wrong_password_says_so() {
 #[test]
 fn zrle_rejects_truncated_data() {
     assert!(zrle(&[1, 255], 4, 4).is_err());
+}
+
+/// Apple Remote Desktop login (what macOS Screen Sharing uses) and a pointer
+/// shape from the Cursor pseudo-encoding.
+#[tokio::test]
+async fn apple_remote_desktop_login_and_pointer_shape() {
+    use aes::cipher::generic_array::GenericArray;
+    use aes::cipher::{BlockDecrypt, KeyInit};
+    use md5::{Digest, Md5};
+    use num_bigint::BigUint;
+
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    let seen = Arc::new(Mutex::new(None::<(String, String)>));
+    let seen_by_server = seen.clone();
+    tokio::spawn(async move {
+        let (mut s, _) = l.accept().await.unwrap();
+        s.write_all(b"RFB 003.008\n").await.unwrap();
+        let mut v = [0u8; 12];
+        s.read_exact(&mut v).await.unwrap();
+        s.write_all(&[1, 30]).await.unwrap(); // Apple Remote Desktop only
+        assert_eq!(s.read_u8().await.unwrap(), 30);
+
+        let prime: [u8; 16] = [
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x61,
+        ];
+        let p = BigUint::from_bytes_be(&prime);
+        let b = BigUint::from(0x1234_5678_9abc_def1u64);
+        let public = BigUint::from(2u32).modpow(&b, &p).to_bytes_be();
+        let mut padded = vec![0u8; 16 - public.len()];
+        padded.extend(&public);
+        s.write_u16(2).await.unwrap();
+        s.write_u16(16).await.unwrap();
+        s.write_all(&prime).await.unwrap();
+        s.write_all(&padded).await.unwrap();
+
+        let mut sealed = [0u8; 128];
+        s.read_exact(&mut sealed).await.unwrap();
+        let mut client_public = [0u8; 16];
+        s.read_exact(&mut client_public).await.unwrap();
+        let shared = BigUint::from_bytes_be(&client_public).modpow(&b, &p).to_bytes_be();
+        let mut shared_padded = vec![0u8; 16 - shared.len()];
+        shared_padded.extend(&shared);
+        let key = Md5::digest(&shared_padded);
+        let cipher = aes::Aes128::new(GenericArray::from_slice(&key));
+        for block in sealed.chunks_exact_mut(16) {
+            cipher.decrypt_block(GenericArray::from_mut_slice(block));
+        }
+        let text = |b: &[u8]| String::from_utf8_lossy(&b[..b.iter().position(|&c| c == 0).unwrap()]).into_owned();
+        *seen_by_server.lock().unwrap() = Some((text(&sealed[..64]), text(&sealed[64..])));
+        s.write_u32(0).await.unwrap(); // SecurityResult: ok
+
+        assert_eq!(s.read_u8().await.unwrap(), 1, "shared");
+        s.write_u16(W).await.unwrap();
+        s.write_u16(H).await.unwrap();
+        s.write_all(&[32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0])
+            .await
+            .unwrap();
+        s.write_u32(4).await.unwrap();
+        s.write_all(b"mac!").await.unwrap();
+        loop {
+            let Ok(msg) = s.read_u8().await else { return };
+            match msg {
+                0 => {
+                    let mut pf = [0u8; 19];
+                    s.read_exact(&mut pf).await.unwrap();
+                }
+                2 => {
+                    let _pad = s.read_u8().await.unwrap();
+                    let n = s.read_u16().await.unwrap();
+                    let mut e = vec![0u8; usize::from(n) * 4];
+                    s.read_exact(&mut e).await.unwrap();
+                    assert!(
+                        e.chunks_exact(4).any(|c| c == (-239i32).to_be_bytes()),
+                        "asks for pointer shapes"
+                    );
+                }
+                3 => {
+                    let mut req = [0u8; 9];
+                    s.read_exact(&mut req).await.unwrap();
+                    // A 2x2 cursor, hotspot (1, 0): red, green / blue, white;
+                    // the mask leaves the bottom-right pixel transparent.
+                    let mut out = vec![0u8, 0, 0, 1];
+                    out.extend(1u16.to_be_bytes()); // hotspot x
+                    out.extend(0u16.to_be_bytes()); // hotspot y
+                    out.extend(2u16.to_be_bytes());
+                    out.extend(2u16.to_be_bytes());
+                    out.extend((-239i32).to_be_bytes());
+                    out.extend([255, 0, 0, 0, 0, 255, 0, 0, 0, 0, 255, 0, 255, 255, 255, 0]);
+                    out.extend([0b1100_0000, 0b1000_0000]);
+                    s.write_all(&out).await.unwrap();
+                }
+                _ => return,
+            }
+        }
+    });
+
+    let (sink, mut events) = sink();
+    let mut target = TerminalTarget::new("127.0.0.1", port);
+    target.username = Some("admin".into());
+    let mut session = VncSession::connect(&target, None, Default::default(), sink).unwrap();
+    let GfxEvent::Auth(prompt) = next(&mut events).await else {
+        panic!("expected a login prompt")
+    };
+    assert_eq!(
+        prompt.fields.len(),
+        1,
+        "the username is known; only the password is asked"
+    );
+    session
+        .reply(PromptReply::Fields {
+            values: vec!["hunter2".into()],
+            remember: false,
+        })
+        .unwrap();
+    assert!(matches!(next(&mut events).await, GfxEvent::Connected { .. }));
+    assert_eq!(
+        seen.lock().unwrap().clone(),
+        Some(("admin".to_string(), "hunter2".to_string())),
+        "the server decrypted the login"
+    );
+    assert_eq!(
+        next(&mut events).await,
+        GfxEvent::Cursor(CursorShape::Image {
+            width: 2,
+            height: 2,
+            hot_x: 1,
+            hot_y: 0,
+            rgba: vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 0],
+        })
+    );
+    session.close().unwrap();
 }

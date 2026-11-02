@@ -1,7 +1,9 @@
 //! VNC (RFB 3.3–3.8, RFC 6143).
 //!
-//! Security: None and VNC authentication (DES challenge). Encodings: ZRLE,
-//! CopyRect and Raw, plus the DesktopSize pseudo-encoding. The client asks
+//! Security: None, VNC authentication (DES challenge) and Apple Remote
+//! Desktop (macOS Screen Sharing: username and password over a
+//! Diffie-Hellman exchange). Encodings: ZRLE, CopyRect and Raw, plus the
+//! DesktopSize and Cursor pseudo-encodings. The client asks
 //! for 32-bit true color laid out R, G, B, X in memory, keeps its own copy
 //! of the screen (CopyRect and ZRLE need it) and reports changed
 //! rectangles as RGBA.
@@ -17,7 +19,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-use crate::gfx::{keysym, Buttons, GfxEvent, GfxSession, GfxSink};
+use crate::gfx::{keysym, Buttons, CursorShape, GfxEvent, GfxSession, GfxSink, MAX_CURSOR};
 use crate::ssh::{JumpChain, SharedReplies};
 use crate::{AuthPrompt, Credentials, PromptField, PromptReply, SshOptions, TerminalTarget};
 
@@ -150,6 +152,86 @@ async fn until_closed(cmds: &mut UnboundedReceiver<Cmd>) {
     }
 }
 
+/// Security type 30: Apple Remote Desktop.
+const ARD: u8 = 30;
+
+/// Apple Remote Desktop login: Diffie-Hellman with the server's `generator`
+/// and `prime`, then username and password (64 bytes each, padded with
+/// random bytes) encrypted with AES-128-ECB under the MD5 of the shared
+/// secret. Returns the 128 encrypted bytes and our public key, both sent to
+/// the server. `private` and `padding` are random.
+pub fn ard_response(
+    username: &str,
+    password: &str,
+    generator: u16,
+    prime: &[u8],
+    server_public: &[u8],
+    private: &[u8],
+    padding: &[u8; 128],
+) -> (Vec<u8>, Vec<u8>) {
+    use aes::cipher::{BlockEncrypt as _, KeyInit as _};
+    use md5::{Digest, Md5};
+    use num_bigint::BigUint;
+
+    let p = BigUint::from_bytes_be(prime);
+    let a = BigUint::from_bytes_be(private);
+    let width = prime.len();
+    let be = |n: &BigUint| {
+        let raw = n.to_bytes_be();
+        let mut out = vec![0u8; width.saturating_sub(raw.len())];
+        out.extend(raw);
+        out
+    };
+    let public = BigUint::from(generator).modpow(&a, &p);
+    let shared = BigUint::from_bytes_be(server_public).modpow(&a, &p);
+    let key = Md5::digest(be(&shared));
+
+    let mut creds = *padding;
+    for (field, text) in [(0usize, username), (64, password)] {
+        let bytes = text.as_bytes();
+        let n = bytes.len().min(63);
+        creds[field..field + n].copy_from_slice(&bytes[..n]);
+        creds[field + n] = 0;
+    }
+    let cipher = aes::Aes128::new(aes::cipher::generic_array::GenericArray::from_slice(&key));
+    for block in creds.chunks_exact_mut(16) {
+        cipher.encrypt_block(aes::cipher::generic_array::GenericArray::from_mut_slice(block));
+    }
+    (creds.to_vec(), be(&public))
+}
+
+/// The Cursor pseudo-encoding: `px` is `w*h` pixels laid out R, G, B, X and
+/// `mask` one bit per pixel (rows padded to whole bytes), set where the
+/// cursor is drawn. A cursor with no pixels hides the pointer.
+fn cursor_shape(hot_x: u16, hot_y: u16, w: u16, h: u16, px: &[u8], mask: &[u8]) -> CursorShape {
+    if w == 0 || h == 0 {
+        return CursorShape::Hidden;
+    }
+    let row = usize::from(w).div_ceil(8);
+    if w > MAX_CURSOR
+        || h > MAX_CURSOR
+        || px.len() != usize::from(w) * usize::from(h) * 4
+        || mask.len() != row * usize::from(h)
+    {
+        return CursorShape::Default;
+    }
+    let mut rgba = Vec::with_capacity(px.len());
+    for y in 0..usize::from(h) {
+        for x in 0..usize::from(w) {
+            let i = (y * usize::from(w) + x) * 4;
+            let on = mask[y * row + x / 8] & (0x80 >> (x % 8)) != 0;
+            rgba.extend([px[i], px[i + 1], px[i + 2], if on { 255 } else { 0 }]);
+        }
+    }
+    CursorShape::Image {
+        width: w,
+        height: h,
+        hot_x: hot_x.min(w - 1),
+        hot_y: hot_y.min(h - 1),
+        rgba,
+    }
+}
+
 fn fail(msg: impl Into<String>) -> io::Error {
     io::Error::other(msg.into())
 }
@@ -228,8 +310,12 @@ async fn run(
         r.read_exact(&mut types).await?;
         let pick = if types.contains(&1) {
             1
+        } else if types.contains(&ARD) && target.username.as_deref().is_some_and(|u| !u.is_empty()) {
+            ARD // a login name is set: use the Mac account rather than a screen-sharing password
         } else if types.contains(&2) {
             2
+        } else if types.contains(&ARD) {
+            ARD
         } else {
             return Err(fail(format!(
                 "the server wants a security type Linecard doesn't support yet ({types:?}); allow VNC password authentication on it"
@@ -283,10 +369,74 @@ async fn run(
             };
             w.write_all(&vnc_auth_response(&password, &challenge)).await?;
         }
+        c if c == u32::from(ARD) => {
+            let generator = r.read_u16().await?;
+            let key_len = usize::from(r.read_u16().await?);
+            if !(8..=1024).contains(&key_len) {
+                return Err(fail("the server sent an unusable Apple Remote Desktop key"));
+            }
+            let mut prime = vec![0u8; key_len];
+            r.read_exact(&mut prime).await?;
+            let mut server_public = vec![0u8; key_len];
+            r.read_exact(&mut server_public).await?;
+
+            let saved = credentials.as_ref().and_then(|c| c.password(&slot));
+            let (user, password) = match (target.username.clone().filter(|u| !u.is_empty()), saved) {
+                (Some(u), Some(p)) => (u, p),
+                (known_user, _) => {
+                    let mut fields = Vec::new();
+                    if known_user.is_none() {
+                        fields.push(PromptField {
+                            label: "Username".into(),
+                            echo: true,
+                        });
+                    }
+                    fields.push(PromptField {
+                        label: "Password".into(),
+                        echo: false,
+                    });
+                    emit(GfxEvent::Auth(AuthPrompt {
+                        title: format!("Mac login for {}", target.host),
+                        instructions: "Screen Sharing asks for a user account on that Mac.".into(),
+                        fields,
+                        remember: credentials.as_ref().map(|_| true),
+                    }));
+                    loop {
+                        tokio::select! {
+                            reply = async { replies.lock().await.recv().await } => match reply {
+                                Some(PromptReply::Fields { values, remember }) => {
+                                    let mut values = values.into_iter();
+                                    let u = match &known_user {
+                                        Some(u) => u.clone(),
+                                        None => values.next().unwrap_or_default(),
+                                    };
+                                    let p = values.next().unwrap_or_default();
+                                    asked = Some((p.clone(), remember));
+                                    break (u, p);
+                                }
+                                Some(PromptReply::HostKey(_)) => continue,
+                                Some(PromptReply::Cancel) | None => return Err(fail("canceled")),
+                            },
+                            cmd = cmds.recv() => if matches!(cmd, Some(Cmd::Close) | None) {
+                                return Err(fail("canceled"));
+                            },
+                        }
+                    }
+                }
+            };
+            let mut private = vec![0u8; key_len];
+            let mut padding = [0u8; 128];
+            getrandom::getrandom(&mut private).map_err(|e| fail(e.to_string()))?;
+            getrandom::getrandom(&mut padding).map_err(|e| fail(e.to_string()))?;
+            let (sealed, public) =
+                ard_response(&user, &password, generator, &prime, &server_public, &private, &padding);
+            w.write_all(&sealed).await?;
+            w.write_all(&public).await?;
+        }
         other => return Err(fail(format!("unsupported security type {other}"))),
     }
     // SecurityResult (3.3/3.7 send none for "None").
-    if (chosen == 2 || minor == 8) && r.read_u32().await? != 0 {
+    if (chosen == 2 || chosen == u32::from(ARD) || minor == 8) && r.read_u32().await? != 0 {
         let why = if minor == 8 {
             reason(&mut r).await
         } else {
@@ -294,6 +444,8 @@ async fn run(
         };
         return Err(fail(if chosen == 2 {
             "wrong VNC password".to_string()
+        } else if chosen == u32::from(ARD) {
+            "the Mac refused that username and password".to_string()
         } else if why.is_empty() {
             "the server refused the connection".to_string()
         } else {
@@ -318,7 +470,7 @@ async fn run(
     // 32 bpp, depth 24, little endian, true color, R G B at shifts 0/8/16:
     // in memory R, G, B, X.
     let mut setup = vec![0u8, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0];
-    let encodings: [i32; 4] = [16, 1, 0, -223]; // ZRLE, CopyRect, Raw, DesktopSize
+    let encodings: [i32; 5] = [16, 1, 0, -223, -239]; // ZRLE, CopyRect, Raw, DesktopSize, Cursor
     setup.extend([2u8, 0]);
     setup.extend((encodings.len() as u16).to_be_bytes());
     for e in encodings {
@@ -351,6 +503,15 @@ async fn run(
                                 height = rh;
                                 screen = vec![0u8; usize::from(width) * usize::from(height) * 4];
                                 emit(GfxEvent::Resized { width, height });
+                                continue;
+                            }
+                            -239 => {
+                                // Hotspot is (x, y); the shape is rw×rh pixels, then a bitmask.
+                                let mut px = vec![0u8; usize::from(rw) * usize::from(rh) * 4];
+                                r.read_exact(&mut px).await?;
+                                let mut mask = vec![0u8; usize::from(rw).div_ceil(8) * usize::from(rh)];
+                                r.read_exact(&mut mask).await?;
+                                emit(GfxEvent::Cursor(cursor_shape(x, y, rw, rh, &px, &mask)));
                                 continue;
                             }
                             0 => {
