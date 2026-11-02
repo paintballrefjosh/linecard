@@ -74,6 +74,16 @@ function folderIds(nodes: TreeNode[]): string[] {
 /** Folder a node lives in (null = top level). */
 const parentIdOf = (n: NodeApi<TreeNode>) => (n.level > 0 && n.parent ? n.parent.id : null);
 
+/** Whether a node's name (or a connection's address) contains the search text. */
+function matchesSearch(d: TreeNode, term: string): boolean {
+  const t = term.toLowerCase();
+  return d.name.toLowerCase().includes(t) || (d.type === "connection" && d.endpoint.toLowerCase().includes(t));
+}
+
+function anyMatch(nodes: TreeNode[], term: string): boolean {
+  return nodes.some((n) => matchesSearch(n, term) || (n.type === "folder" && anyMatch(n.children, term)));
+}
+
 function countBelow(node: TreeNode): number {
   return node.type === "folder" ? node.children.reduce((n, c) => n + 1 + countBelow(c), 0) : 0;
 }
@@ -539,13 +549,7 @@ export function ConnectionTree({
                 saveClosed(next);
               }}
               searchTerm={search}
-              searchMatch={(n: NodeApi<TreeNode>, term: string) => {
-                const t = term.toLowerCase();
-                const d = n.data;
-                return (
-                  d.name.toLowerCase().includes(t) || (d.type === "connection" && d.endpoint.toLowerCase().includes(t))
-                );
-              }}
+              searchMatch={(n: NodeApi<TreeNode>, term: string) => matchesSearch(n.data, term)}
               disableDrop={({ parentNode }) => parentNode.data?.type === "connection"}
               onRename={({ id, name, node }) => {
                 if (name.trim() && name.trim() !== node.data.name) report(actions.rename(id, name));
@@ -554,6 +558,11 @@ export function ConnectionTree({
             >
               {Row}
             </Tree>
+          )}
+          {search && !anyMatch(data, search) && (
+            <p className="tree-empty" role="status">
+              No connections match “{search}”.
+            </p>
           )}
         </div>
 

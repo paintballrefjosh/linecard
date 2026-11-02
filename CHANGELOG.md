@@ -6,7 +6,7 @@
 
 - **RDP clipboard**: copy and paste text between your computer and an RDP session, in both directions (when the tab gains focus, as with VNC). Files and images are not shared.
 
-- **Fixes**: Ctrl+Tab and Ctrl+Shift+Tab leave the keyboard in the session; after saving a connection it is selected and focused in the tree, so Enter opens it; clicking a tab puts the keyboard in the session instead of on the tab; the update notice now appears in a running app (checked hourly and when you return to the window) instead of only after a restart.
+- **Fixes**: searching with no results says "No connections match …" instead of showing an empty pane; Ctrl+Tab and Ctrl+Shift+Tab leave the keyboard in the session; after saving a connection it is selected and focused in the tree, so Enter opens it; clicking a tab puts the keyboard in the session instead of on the tab; the update notice now appears in a running app (checked hourly and when you return to the window) instead of only after a restart.
 
 - **Security checks**: CodeQL, OpenSSF Scorecard, dependency review on pull requests, weekly Dependabot updates, and a `SECURITY.md` policy; badges in the README.
 

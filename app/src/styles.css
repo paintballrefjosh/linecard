@@ -494,6 +494,7 @@ body.is-resizing .main {
 .tree-box {
   flex: 1;
   min-height: 0;
+  position: relative;
   padding-bottom: 6px;
 }
 /* Arborist sizes rows to max-content (inline style), which scrolls the tree
@@ -2626,4 +2627,14 @@ button.status-version:hover {
   margin-top: -6px;
   color: var(--text-quiet);
   font-size: 0.85em;
+}
+
+.tree-empty {
+  position: absolute;
+  inset: 24px 12px auto;
+  margin: 0;
+  text-align: center;
+  color: var(--text-quiet);
+  font-size: 0.9em;
+  pointer-events: none;
 }
