@@ -16,6 +16,8 @@ Download `Linecard_<version>_x64-setup.exe` from [Releases](https://github.com/p
 
 Builds for macOS (dmg) and Linux (AppImage, deb) are on the same page, unsigned for now: on Windows, SmartScreen warns on the first install ("More info → Run anyway"); on macOS, right-click → Open the first time. To run the very latest code instead, [build it from source](#building-from-source).
 
+**Requirements:** Windows 10 or later (64-bit). Windows 7 and 8 can't run Linecard itself, because Microsoft's WebView2 runtime and current Rust builds no longer support them; Linecard can still connect *to* Windows 7 and Server 2008 R2 hosts over RDP.
+
 You don't need Rust, Node.js or anything else in the next section to use Linecard.
 
 ## What works today
