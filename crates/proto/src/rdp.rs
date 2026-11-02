@@ -774,6 +774,23 @@ impl RdpsndClientHandler for Sound {
         &self.formats
     }
 
+    fn choose_formats(&self, server_formats: &[AudioFormat]) -> Vec<AudioFormat> {
+        let name = |f: &AudioFormat| {
+            format!(
+                "{:?} {}ch {}Hz {}bit",
+                f.format, f.n_channels, f.n_samples_per_sec, f.bits_per_sample
+            )
+        };
+        let list = |formats: &[AudioFormat]| formats.iter().map(name).collect::<Vec<_>>().join(", ");
+        let chosen = ironrdp_rdpsnd::pdu::retain_offered(self.formats.clone(), server_formats);
+        (self.emit)(GfxEvent::Log(format!(
+            "sound: the server offers [{}]; Linecard accepts [{}]",
+            list(server_formats),
+            list(&chosen)
+        )));
+        chosen
+    }
+
     fn wave(&mut self, format: &AudioFormat, _ts: u32, data: std::borrow::Cow<'_, [u8]>) {
         if format.format == WaveFormat::PCM && format.bits_per_sample == 16 && !data.is_empty() {
             (self.emit)(GfxEvent::Audio {

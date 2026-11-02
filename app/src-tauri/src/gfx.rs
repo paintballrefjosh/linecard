@@ -116,6 +116,7 @@ fn forward(ch: &Channel<InvokeResponseBody>, who: &str, audio: &mut AudioBatch, 
         GfxEvent::Bell => send_json(ch, &GfxEventDto::Bell),
         GfxEvent::Clipboard(text) => send_json(ch, &GfxEventDto::Clipboard { text }),
         GfxEvent::Audio { channels, rate, pcm } => audio.add(ch, who, channels, rate, pcm),
+        GfxEvent::Log(line) => crate::debuglog::write("remote", &format!("{who}: {line}")),
         GfxEvent::Cursor(shape) => {
             let (shape, width, height, hot_x, hot_y, rgba) = match shape {
                 CursorShape::Default => ("default", 0, 0, 0, 0, String::new()),
