@@ -199,6 +199,10 @@ pub async fn open_gfx_session(
                 credentials,
                 known_certs: state.data_dir.join("known_rdp_certs"),
                 ssh: state.ssh.clone(),
+                share: crate::shares::get(&state.data_dir, &connection_id).map(|s| linecard_proto::rdp::ShareFolder {
+                    path: s.path.into(),
+                    writable: s.writable,
+                }),
             };
             Box::new(linecard_proto::rdp::RdpSession::connect(&target, width, height, opts, sink).map_err(err)?)
         }

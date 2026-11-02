@@ -15,6 +15,7 @@ mod logging;
 mod scripting;
 mod secrets;
 mod sftp;
+mod shares;
 mod snippets;
 mod stage;
 mod sync;
@@ -1119,6 +1120,9 @@ pub fn run() {
             sftp::sftp_download,
             sftp::sftp_upload,
             sftp::sftp_close,
+            shares::rdp_share_supported,
+            shares::get_rdp_share,
+            shares::set_rdp_share,
             stage::stage_begin,
             stage::stage_mkdir,
             stage::stage_write,

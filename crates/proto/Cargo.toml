@@ -46,6 +46,9 @@ russh-sftp = "3"
 # with ring (not aws-lc: no CMake/NASM needed).
 [target.'cfg(windows)'.dependencies]
 ironrdp-tls = { version = "0.3", features = ["native-tls"] }
+# Sharing a folder of this computer with the remote one (Windows only so far).
+ironrdp-rdpdr = "0.9"
+ironrdp-rdpdr-native = "0.9"
 
 [target.'cfg(not(windows))'.dependencies]
 ironrdp-tls = { version = "0.3", features = ["rustls-ring"] }

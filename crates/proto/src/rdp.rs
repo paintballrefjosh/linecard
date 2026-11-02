@@ -52,6 +52,14 @@ use crate::{
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const AUTH_ATTEMPTS: usize = 3;
 
+/// A folder of this computer offered to the remote computer as a drive.
+#[derive(Clone, Debug)]
+pub struct ShareFolder {
+    pub path: PathBuf,
+    /// Whether the remote computer may change, create and delete files.
+    pub writable: bool,
+}
+
 /// Saved passwords, and the file of trusted server certificates.
 #[derive(Clone, Debug)]
 pub struct RdpOptions {
@@ -60,6 +68,8 @@ pub struct RdpOptions {
     pub known_certs: PathBuf,
     /// For logging in to SSH jump hosts, when the target has them.
     pub ssh: SshOptions,
+    /// A folder to share as a drive. Windows only for now.
+    pub share: Option<ShareFolder>,
 }
 
 enum Cmd {
@@ -534,6 +544,33 @@ impl Login {
     }
 }
 
+/// Offer `share` to the server as a drive.
+#[cfg(windows)]
+fn with_share(connector: ClientConnector, share: &ShareFolder) -> io::Result<ClientConnector> {
+    use ironrdp_rdpdr_native::{RedirectedDrive, WindowsRdpdrBackendFactory, FIRST_NAMED_DRIVE_DEVICE_ID};
+
+    let name = share
+        .path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|n| !n.is_empty())
+        .unwrap_or("Linecard")
+        .to_string();
+    let drive = RedirectedDrive::new(FIRST_NAMED_DRIVE_DEVICE_ID, name, &share.path, !share.writable)
+        .map_err(|e| err(format!("can't share {}: {e}", share.path.display())))?;
+    let factory = WindowsRdpdrBackendFactory::new(drive);
+    let computer = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Linecard".into());
+    let rdpdr =
+        ironrdp_rdpdr::Rdpdr::new(Box::new(factory.build()), computer).with_drives(Some(factory.initial_drives()));
+    Ok(connector.with_static_channel(rdpdr))
+}
+
+/// Other systems can't share a folder yet; say so rather than connect without it.
+#[cfg(not(windows))]
+fn with_share(_connector: ClientConnector, _share: &ShareFolder) -> io::Result<ClientConnector> {
+    Err(err("sharing a folder with the remote computer is only available on Windows so far; clear the shared folder in this connection's settings"))
+}
+
 async fn attempt(
     target: &TerminalTarget,
     login: &mut Login,
@@ -572,6 +609,9 @@ async fn attempt(
         .with_static_channel(drdynvc)
         .with_static_channel(clipboard)
         .with_static_channel(Rdpsnd::new(Box::new(Sound::new(ui.emit.clone()))));
+    if let Some(share) = &opts.share {
+        connector = with_share(connector, share)?;
+    }
 
     let should_upgrade = ironrdp_tokio::connect_begin(&mut framed, &mut connector)
         .await
@@ -1272,5 +1312,31 @@ mod tests {
             }],
             "only non-empty 16-bit PCM is played"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_shared_folder_becomes_a_channel_and_a_bad_one_is_refused() {
+        let connector = || ClientConnector::new(connector_config("user", "", 800, 600), "127.0.0.1:0".parse().unwrap());
+        let ok = with_share(
+            connector(),
+            &ShareFolder {
+                path: std::env::temp_dir(),
+                writable: false,
+            },
+        );
+        assert!(ok.is_ok());
+        // A relative path is not a drive root or a folder on one.
+        let bad = with_share(
+            connector(),
+            &ShareFolder {
+                path: PathBuf::from("not/absolute"),
+                writable: true,
+            },
+        );
+        let Err(e) = bad else {
+            panic!("a relative path is refused")
+        };
+        assert!(e.to_string().contains("can't share"), "{e}");
     }
 }
