@@ -21,6 +21,7 @@ pub mod serial;
 pub mod sftp;
 pub mod ssh;
 pub mod telnet;
+mod tight;
 pub mod vnc;
 pub mod xmodem;
 

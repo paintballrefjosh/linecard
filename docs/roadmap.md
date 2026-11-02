@@ -42,7 +42,7 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 - [x] RDP text clipboard, both directions (files and images are not shared)
 - [ ] RDP sound: the code to play it is in (PCM, with a mute button on the tab), but the Windows 10 host we tried never starts sound with Linecard although it does with the Windows client. Needs a wire-level comparison on a branch.
 - [ ] RDP: sound from your microphone, drive redirection; Kerberos; RD Gateway
-- [x] VNC (RFB 3.3–3.8: None, VNC password, Apple Remote Desktop and VeNCrypt (TLS); ZRLE, CopyRect, Raw, DesktopSize, cursor shapes)
+- [x] VNC (RFB 3.3–3.8: None, VNC password, Apple Remote Desktop and VeNCrypt (TLS); ZRLE, Tight (lossless), CopyRect, Raw, DesktopSize, cursor shapes)
 
 ## Phase 4 — Power tools (v0.9–1.0)
 

@@ -581,3 +581,89 @@ async fn vencrypt_asks_about_the_certificate_once() {
     assert_eq!(reason.as_deref(), Some("certificate not accepted"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A server with no login that answers the first update request with one
+/// Tight rectangle (a solid fill, then a 2-colour palette).
+#[tokio::test]
+async fn tight_rectangles_reach_the_screen() {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        let (mut s, _) = l.accept().await.unwrap();
+        s.write_all(b"RFB 003.008\n").await.unwrap();
+        let mut v = [0u8; 12];
+        s.read_exact(&mut v).await.unwrap();
+        s.write_all(&[1, 1]).await.unwrap(); // no login
+        assert_eq!(s.read_u8().await.unwrap(), 1);
+        s.write_u32(0).await.unwrap();
+        assert_eq!(s.read_u8().await.unwrap(), 1, "shared");
+        s.write_u16(W).await.unwrap();
+        s.write_u16(H).await.unwrap();
+        s.write_all(&[32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0])
+            .await
+            .unwrap();
+        s.write_u32(5).await.unwrap();
+        s.write_all(b"tight").await.unwrap();
+        loop {
+            let Ok(msg) = s.read_u8().await else { return };
+            match msg {
+                0 => {
+                    let mut pf = [0u8; 19];
+                    s.read_exact(&mut pf).await.unwrap();
+                }
+                2 => {
+                    let _pad = s.read_u8().await.unwrap();
+                    let n = s.read_u16().await.unwrap();
+                    let mut e = vec![0u8; usize::from(n) * 4];
+                    s.read_exact(&mut e).await.unwrap();
+                    let wanted: Vec<i32> = e
+                        .chunks(4)
+                        .map(|c| i32::from_be_bytes([c[0], c[1], c[2], c[3]]))
+                        .collect();
+                    assert!(wanted.contains(&7), "Tight is asked for: {wanted:?}");
+                    assert!(
+                        !wanted.iter().any(|e| (-32..=-23).contains(e)),
+                        "no JPEG quality is requested"
+                    );
+                }
+                3 => {
+                    let mut req = [0u8; 9];
+                    s.read_exact(&mut req).await.unwrap();
+                    let mut out = vec![0u8, 0];
+                    out.extend(2u16.to_be_bytes());
+                    // 8×1 solid green at (0, 0).
+                    out.extend([0, 0, 0, 0]);
+                    out.extend(8u16.to_be_bytes());
+                    out.extend(1u16.to_be_bytes());
+                    out.extend(7i32.to_be_bytes());
+                    out.extend([0x80, 0, 255, 0]);
+                    // 2×1 palette (red, blue) at (10, 0): bits 0 then 1.
+                    out.extend(10u16.to_be_bytes());
+                    out.extend(0u16.to_be_bytes());
+                    out.extend(2u16.to_be_bytes());
+                    out.extend(1u16.to_be_bytes());
+                    out.extend(7i32.to_be_bytes());
+                    out.extend([0x40, 1, 1, 255, 0, 0, 0, 0, 255, 0b0100_0000]);
+                    s.write_all(&out).await.unwrap();
+                }
+                _ => return,
+            }
+        }
+    });
+
+    let (sink, mut events) = sink();
+    let mut session =
+        VncSession::connect(&TerminalTarget::new("127.0.0.1", port), None, Default::default(), sink).unwrap();
+    assert!(matches!(next(&mut events).await, GfxEvent::Connected { .. }));
+    let GfxEvent::Frame { x, width, rgba, .. } = next(&mut events).await else {
+        panic!("expected a frame")
+    };
+    assert_eq!((x, width), (0, 8));
+    assert_eq!(&rgba[..4], [0, 255, 0, 255], "solid fill");
+    let GfxEvent::Frame { x, width, rgba, .. } = next(&mut events).await else {
+        panic!("expected a frame")
+    };
+    assert_eq!((x, width), (10, 2));
+    assert_eq!(&rgba[..8], [255, 0, 0, 255, 0, 0, 255, 255], "palette");
+    session.close().unwrap();
+}

@@ -5,7 +5,7 @@
 //! password) and Apple Remote
 //! Desktop (macOS Screen Sharing: username and password over a
 //! Diffie-Hellman exchange). Encodings: ZRLE, CopyRect and Raw, plus the
-//! DesktopSize and Cursor pseudo-encodings. The client asks
+//! DesktopSize and Cursor pseudo-encodings, and Tight without JPEG (see `tight`). The client asks
 //! for 32-bit true color laid out R, G, B, X in memory, keeps its own copy
 //! of the screen (CopyRect and ZRLE need it) and reports changed
 //! rectangles as RGBA.
@@ -716,7 +716,7 @@ async fn run(
     // 32 bpp, depth 24, little endian, true color, R G B at shifts 0/8/16:
     // in memory R, G, B, X.
     let mut setup = vec![0u8, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0];
-    let encodings: [i32; 5] = [16, 1, 0, -223, -239]; // ZRLE, CopyRect, Raw, DesktopSize, Cursor
+    let encodings: [i32; 6] = [16, 7, 1, 0, -223, -239]; // ZRLE, Tight, CopyRect, Raw, DesktopSize, Cursor
     setup.extend([2u8, 0]);
     setup.extend((encodings.len() as u16).to_be_bytes());
     for e in encodings {
@@ -732,6 +732,7 @@ async fn run(
 
     let mut screen = vec![0u8; usize::from(width) * usize::from(height) * 4];
     let mut zlib = Decompress::new(true);
+    let mut tight_streams = crate::tight::Streams::default();
     let mut buttons: Buttons = 0;
 
     loop {
@@ -779,6 +780,10 @@ async fn run(
                                 r.read_exact(&mut data).await?;
                                 let raw = inflate(&mut zlib, &data)?;
                                 let px = zrle(&raw, rw, rh)?;
+                                blit(&mut screen, width, x, y, rw, rh, &px);
+                            }
+                            7 => {
+                                let px = crate::tight::read(&mut r, rw, rh, &mut tight_streams).await?;
                                 blit(&mut screen, width, x, y, rw, rh, &px);
                             }
                             other => return Err(fail(format!("the server sent an encoding Linecard didn't ask for ({other})"))),
@@ -906,15 +911,15 @@ fn region(screen: &[u8], sw: u16, sh: u16, x: u16, y: u16, w: u16, h: u16) -> Ve
     out
 }
 
-/// One ZRLE rectangle's zlib data, continuing the connection's stream.
-fn inflate(z: &mut Decompress, data: &[u8]) -> io::Result<Vec<u8>> {
+/// One rectangle's zlib data (ZRLE, Tight), continuing a stream of the connection.
+pub(crate) fn inflate(z: &mut Decompress, data: &[u8]) -> io::Result<Vec<u8>> {
     let mut out = Vec::with_capacity(data.len() * 4);
     let mut input = data;
     loop {
         out.reserve(64 * 1024);
         let before_in = z.total_in();
         z.decompress_vec(input, &mut out, FlushDecompress::Sync)
-            .map_err(|e| fail(format!("bad ZRLE data: {e}")))?;
+            .map_err(|e| fail(format!("bad compressed data: {e}")))?;
         let used = (z.total_in() - before_in) as usize;
         input = &input[used..];
         if input.is_empty() && out.len() < out.capacity() {
