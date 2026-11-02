@@ -278,8 +278,17 @@ export default function App() {
         }
       }
     };
+    // The browser's own menu offers Reload; keep it only for text fields (copy and paste).
+    const onMenu = (e: MouseEvent) => {
+      const t = e.target instanceof Element ? e.target : null;
+      if (!import.meta.env.DEV && !t?.closest("input, textarea, [contenteditable]")) e.preventDefault();
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("contextmenu", onMenu);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("contextmenu", onMenu);
+    };
   }, [changeLayout]);
 
   const openFilesRef = useRef<(conn: ConnectionNode) => void>(() => {});
