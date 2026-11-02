@@ -549,19 +549,36 @@ impl Login {
 fn with_share(connector: ClientConnector, share: &ShareFolder) -> io::Result<ClientConnector> {
     use ironrdp_rdpdr_native::{RedirectedDrive, WindowsRdpdrBackendFactory, FIRST_NAMED_DRIVE_DEVICE_ID};
 
-    let name = share
-        .path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .filter(|n| !n.is_empty())
-        .unwrap_or("Linecard")
-        .to_string();
-    let drive = RedirectedDrive::new(FIRST_NAMED_DRIVE_DEVICE_ID, name, &share.path, !share.writable)
-        .map_err(|e| err(format!("can't share {}: {e}", share.path.display())))?;
+    let drive = RedirectedDrive::new(
+        FIRST_NAMED_DRIVE_DEVICE_ID,
+        drive_name(&share.path),
+        &share.path,
+        !share.writable,
+    )
+    .map_err(|e| err(format!("can't share {}: {e}", share.path.display())))?;
     let factory = WindowsRdpdrBackendFactory::new(drive);
     let rdpdr = ironrdp_rdpdr::Rdpdr::new(Box::new(factory.build()), computer_name())
         .with_drives(Some(factory.initial_drives()));
     Ok(connector.with_static_channel(rdpdr))
+}
+
+/// The name a shared folder appears under in the remote session. The protocol
+/// carries at most seven plain characters, and Windows failed to open a drive
+/// whose name had a space in it, so only letters and digits are kept.
+fn drive_name(path: &std::path::Path) -> String {
+    let name: String = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(7)
+        .collect();
+    if name.is_empty() {
+        "share".into()
+    } else {
+        name
+    }
 }
 
 /// This computer's name, as shown beside a shared drive.
@@ -1350,5 +1367,15 @@ mod tests {
             panic!("a relative path is refused")
         };
         assert!(e.to_string().contains("can't share"), "{e}");
+    }
+
+    #[test]
+    fn a_shared_folder_is_named_with_plain_characters() {
+        let name = |p: &str| drive_name(std::path::Path::new(p));
+        assert_eq!(name(r"C:\Users\josh\Downloads\mobile home"), "mobileh");
+        assert_eq!(name(r"C:\Share"), "Share");
+        assert_eq!(name(r"C:\a b-c_d.e"), "abcde");
+        assert_eq!(name("C:\\"), "share", "a drive root has no folder name");
+        assert_eq!(name("C:\\caf\u{e9} \u{2603}"), "caf");
     }
 }
