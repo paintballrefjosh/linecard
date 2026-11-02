@@ -267,6 +267,9 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // A reload would drop every open session; keys are still passed to the terminal.
+      if (!import.meta.env.DEV && (e.key === "F5" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r")))
+        e.preventDefault();
       if (e.ctrlKey && e.altKey) {
         const id = layoutShortcut(e.key);
         if (id) {

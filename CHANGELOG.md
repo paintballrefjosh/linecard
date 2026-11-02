@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **F5 and Ctrl+R no longer reload the window**, which used to close every open connection. Terminal programs still receive the keys.
+
 - **Windows installer upgrades in place**: running a newer installer over an installed Linecard no longer asks whether to uninstall the old version first; it just updates it, keeping your connections and settings.
 
 ## v0.4.0 — RDP clipboard and pointers, bulk editing, Mac Screen Sharing, scripting on a schedule, relay compaction and WebSocket push
