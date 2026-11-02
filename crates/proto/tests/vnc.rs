@@ -8,7 +8,7 @@ use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use linecard_proto::gfx::{CursorShape, GfxEvent, GfxSession, GfxSink};
 use linecard_proto::vnc::{vnc_auth_response, zrle, VncSession};
-use linecard_proto::{Credentials, PromptReply, TerminalTarget};
+use linecard_proto::{Credentials, HostKeyDecision, HostKeyStatus, PromptReply, TerminalTarget};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -449,4 +449,135 @@ async fn apple_remote_desktop_login_and_pointer_shape() {
         })
     );
     session.close().unwrap();
+}
+
+/// A server that wants VeNCrypt: TLS with a self-signed certificate, then a
+/// username and password. Accepts connections until the test ends.
+async fn vencrypt_server() -> u16 {
+    let key = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).unwrap();
+    let cert = key.cert.der().clone();
+    let private = rustls::pki_types::PrivateKeyDer::try_from(key.signing_key.serialize_der()).unwrap();
+    let config = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert], private)
+        .unwrap();
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        loop {
+            let (mut s, _) = l.accept().await.unwrap();
+            let acceptor = acceptor.clone();
+            tokio::spawn(async move {
+                s.write_all(b"RFB 003.008\n").await.unwrap();
+                let mut v = [0u8; 12];
+                s.read_exact(&mut v).await.unwrap();
+                s.write_all(&[2, 2, 19]).await.unwrap(); // VNC auth, or VeNCrypt
+                assert_eq!(s.read_u8().await.unwrap(), 19, "TLS is preferred");
+                s.write_all(&[0, 2]).await.unwrap(); // VeNCrypt 0.2
+                let mut ver = [0u8; 2];
+                s.read_exact(&mut ver).await.unwrap();
+                assert_eq!(ver, [0, 2]);
+                s.write_u8(0).await.unwrap();
+                // TLSPlain (anonymous, unsupported), X509Vnc, X509Plain.
+                s.write_u8(3).await.unwrap();
+                for sub in [259u32, 261, 262] {
+                    s.write_u32(sub).await.unwrap();
+                }
+                assert_eq!(s.read_u32().await.unwrap(), 262, "a login name is set");
+                s.write_u8(1).await.unwrap();
+
+                let mut s = acceptor.accept(s).await.unwrap();
+                let user_len = s.read_u32().await.unwrap() as usize;
+                let pass_len = s.read_u32().await.unwrap() as usize;
+                let mut user = vec![0u8; user_len];
+                s.read_exact(&mut user).await.unwrap();
+                let mut pass = vec![0u8; pass_len];
+                s.read_exact(&mut pass).await.unwrap();
+                assert_eq!((&user[..], &pass[..]), (&b"admin"[..], &b"hunter2"[..]));
+                s.write_u32(0).await.unwrap();
+                assert_eq!(s.read_u8().await.unwrap(), 1, "shared");
+                s.write_u16(W).await.unwrap();
+                s.write_u16(H).await.unwrap();
+                s.write_all(&[32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0])
+                    .await
+                    .unwrap();
+                s.write_u32(4).await.unwrap();
+                s.write_all(b"tls!").await.unwrap();
+                // Hold the connection open until the client goes.
+                let mut sink = [0u8; 256];
+                while matches!(s.read(&mut sink).await, Ok(n) if n > 0) {}
+            });
+        }
+    });
+    port
+}
+
+#[tokio::test]
+async fn vencrypt_asks_about_the_certificate_once() {
+    let port = vencrypt_server().await;
+    let dir = std::env::temp_dir().join(format!("linecard-vnc-test-{}", std::process::id()));
+    let known = dir.join("known_certs");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let mut target = TerminalTarget::new("127.0.0.1", port);
+    target.username = Some("admin".into());
+    let connect = |target: &TerminalTarget| {
+        let (sink, events) = sink();
+        let session = VncSession::connect_with(target, None, Default::default(), known.clone(), sink).unwrap();
+        (session, events)
+    };
+
+    // First time: the certificate is new, so the user is asked, then the login.
+    let (mut session, mut events) = connect(&target);
+    let GfxEvent::HostKey(prompt) = next(&mut events).await else {
+        panic!("expected a certificate prompt")
+    };
+    assert!(prompt.fingerprint.starts_with("SHA256:"));
+    assert_eq!(prompt.status, HostKeyStatus::Unknown);
+    session
+        .reply(PromptReply::HostKey(HostKeyDecision::AcceptAndSave))
+        .unwrap();
+    assert!(matches!(next(&mut events).await, GfxEvent::Auth(_)));
+    session
+        .reply(PromptReply::Fields {
+            values: vec!["hunter2".into()],
+            remember: false,
+        })
+        .unwrap();
+    assert_eq!(
+        next(&mut events).await,
+        GfxEvent::Connected {
+            width: W,
+            height: H,
+            name: "tls!".into()
+        }
+    );
+    session.close().unwrap();
+
+    // Second time: the saved certificate matches, so only the login is asked.
+    let (mut session, mut events) = connect(&target);
+    assert!(matches!(next(&mut events).await, GfxEvent::Auth(_)));
+    session
+        .reply(PromptReply::Fields {
+            values: vec!["hunter2".into()],
+            remember: false,
+        })
+        .unwrap();
+    assert!(matches!(next(&mut events).await, GfxEvent::Connected { .. }));
+    session.close().unwrap();
+
+    // Refusing a certificate ends the connection.
+    let _ = std::fs::remove_dir_all(&dir);
+    let (mut session, mut events) = connect(&target);
+    assert!(matches!(next(&mut events).await, GfxEvent::HostKey(_)));
+    session.reply(PromptReply::HostKey(HostKeyDecision::Reject)).unwrap();
+    let GfxEvent::Disconnected { reason } = next(&mut events).await else {
+        panic!("expected the connection to end")
+    };
+    assert_eq!(reason.as_deref(), Some("certificate not accepted"));
+    let _ = std::fs::remove_dir_all(&dir);
 }

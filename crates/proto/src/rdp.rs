@@ -297,20 +297,20 @@ impl Ui {
 
 // ---- certificates --------------------------------------------------------------------
 
-fn fingerprint(der: &[u8]) -> String {
+pub(crate) fn fingerprint(der: &[u8]) -> String {
     format!(
         "SHA256:{}",
         base64::engine::general_purpose::STANDARD_NO_PAD.encode(Sha256::digest(der))
     )
 }
 
-enum Known {
+pub(crate) enum Known {
     Match,
     Changed(usize),
     Unknown,
 }
 
-fn lookup(path: &std::path::Path, who: &str, fp: &str) -> Known {
+pub(crate) fn lookup(path: &std::path::Path, who: &str, fp: &str) -> Known {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Known::Unknown;
     };
@@ -327,7 +327,7 @@ fn lookup(path: &std::path::Path, who: &str, fp: &str) -> Known {
     changed.map_or(Known::Unknown, Known::Changed)
 }
 
-fn remember_cert(path: &std::path::Path, who: &str, fp: &str) -> io::Result<()> {
+pub(crate) fn remember_cert(path: &std::path::Path, who: &str, fp: &str) -> io::Result<()> {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let mut lines: Vec<String> = text
         .lines()

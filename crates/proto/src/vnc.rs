@@ -1,6 +1,8 @@
 //! VNC (RFB 3.3–3.8, RFC 6143).
 //!
-//! Security: None, VNC authentication (DES challenge) and Apple Remote
+//! Security: None, VNC authentication (DES challenge), VeNCrypt (TLS with a
+//! certificate the user trusts, then none, VNC password or username and
+//! password) and Apple Remote
 //! Desktop (macOS Screen Sharing: username and password over a
 //! Diffie-Hellman exchange). Encodings: ZRLE, CopyRect and Raw, plus the
 //! DesktopSize and Cursor pseudo-encodings. The client asks
@@ -9,19 +11,27 @@
 //! rectangles as RGBA.
 
 use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use des::cipher::generic_array::GenericArray;
 use des::cipher::{BlockEncrypt, KeyInit};
 use flate2::{Decompress, FlushDecompress};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{DigitallySignedStruct, SignatureScheme};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use crate::gfx::{keysym, Buttons, CursorShape, GfxEvent, GfxSession, GfxSink, MAX_CURSOR};
+use crate::rdp::{fingerprint, lookup, remember_cert, Known};
 use crate::ssh::{JumpChain, SharedReplies};
-use crate::{AuthPrompt, Credentials, PromptField, PromptReply, SshOptions, TerminalTarget};
+use crate::{
+    AuthPrompt, Credentials, HostKeyDecision, HostKeyPrompt, HostKeyStatus, PromptField, PromptReply, SshOptions,
+    TerminalTarget,
+};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -56,11 +66,24 @@ pub struct VncSession {
 
 impl VncSession {
     /// Start connecting in the background (inside a tokio runtime).
-    /// `credentials` supplies and saves the VNC password.
+    /// `credentials` supplies and saves the VNC password. A server's TLS
+    /// certificate is asked about every time (see `connect_with`).
     pub fn connect(
         target: &TerminalTarget,
         credentials: Option<Arc<dyn Credentials>>,
         ssh: SshOptions,
+        events: GfxSink,
+    ) -> io::Result<Self> {
+        Self::connect_with(target, credentials, ssh, PathBuf::new(), events)
+    }
+
+    /// Like `connect`, with the file of trusted server certificates (lines of
+    /// `host:port SHA256:<base64>`) for servers that use TLS (VeNCrypt).
+    pub fn connect_with(
+        target: &TerminalTarget,
+        credentials: Option<Arc<dyn Credentials>>,
+        ssh: SshOptions,
+        known_certs: PathBuf,
         events: GfxSink,
     ) -> io::Result<Self> {
         let rt = tokio::runtime::Handle::try_current()
@@ -76,7 +99,7 @@ impl VncSession {
                     s(e)
                 }
             });
-            let reason = match run(&target, credentials, &ssh, &emit, cmd_rx, replies).await {
+            let reason = match run(&target, credentials, &ssh, &known_certs, &emit, cmd_rx, replies).await {
                 Ok(()) => None,
                 Err(e) => Some(e.to_string()),
             };
@@ -154,6 +177,226 @@ async fn until_closed(cmds: &mut UnboundedReceiver<Cmd>) {
 
 /// Security type 30: Apple Remote Desktop.
 const ARD: u8 = 30;
+/// Security type 19: VeNCrypt, TLS around one of the other logins.
+const VENCRYPT: u8 = 19;
+/// What VeNCrypt's "X509Plain" login is called once TLS is up (a username
+/// and password sent as they are, safe inside the tunnel).
+const PLAIN: u32 = 256;
+
+/// Accepts any certificate, so that the user is asked about it (like an SSH
+/// host key) instead of the connection failing for a self-signed one. The
+/// handshake's signatures are still checked, so the server does hold the
+/// certificate's key.
+#[derive(Debug)]
+struct AnyCert(Arc<rustls::crypto::CryptoProvider>);
+
+impl ServerCertVerifier for AnyCert {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
+}
+
+/// A username and password: the saved ones, or ask. Also returns the password
+/// to save if the user typed it and asked for that.
+#[allow(clippy::too_many_arguments)]
+async fn login(
+    target: &TerminalTarget,
+    credentials: &Option<Arc<dyn Credentials>>,
+    slot: &str,
+    title: &str,
+    instructions: &str,
+    emit: &Arc<dyn Fn(GfxEvent) + Send + Sync>,
+    cmds: &mut UnboundedReceiver<Cmd>,
+    replies: &SharedReplies,
+) -> io::Result<(String, String, Option<(String, bool)>)> {
+    let known_user = target.username.clone().filter(|u| !u.is_empty());
+    if let (Some(u), Some(p)) = (&known_user, credentials.as_ref().and_then(|c| c.password(slot))) {
+        return Ok((u.clone(), p, None));
+    }
+    let mut fields = Vec::new();
+    if known_user.is_none() {
+        fields.push(PromptField {
+            label: "Username".into(),
+            echo: true,
+        });
+    }
+    fields.push(PromptField {
+        label: "Password".into(),
+        echo: false,
+    });
+    emit(GfxEvent::Auth(AuthPrompt {
+        title: format!("{title} for {}", target.host),
+        instructions: instructions.into(),
+        fields,
+        remember: credentials.as_ref().map(|_| true),
+    }));
+    loop {
+        tokio::select! {
+            reply = async { replies.lock().await.recv().await } => match reply {
+                Some(PromptReply::Fields { values, remember }) => {
+                    let mut values = values.into_iter();
+                    let user = match &known_user {
+                        Some(u) => u.clone(),
+                        None => values.next().unwrap_or_default(),
+                    };
+                    let password = values.next().unwrap_or_default();
+                    return Ok((user, password.clone(), Some((password, remember))));
+                }
+                Some(PromptReply::HostKey(_)) => continue,
+                Some(PromptReply::Cancel) | None => return Err(fail("canceled")),
+            },
+            cmd = cmds.recv() => if matches!(cmd, Some(Cmd::Close) | None) {
+                return Err(fail("canceled"));
+            },
+        }
+    }
+}
+
+/// Ask whether to trust a server's certificate, unless it is a known one.
+async fn trust_certificate(
+    der: &[u8],
+    target: &TerminalTarget,
+    known_certs: &Path,
+    emit: &Arc<dyn Fn(GfxEvent) + Send + Sync>,
+    cmds: &mut UnboundedReceiver<Cmd>,
+    replies: &SharedReplies,
+) -> io::Result<()> {
+    let who = format!("{}:{}", target.host, target.port);
+    let fp = fingerprint(der);
+    let status = match lookup(known_certs, &who, &fp) {
+        Known::Match => return Ok(()),
+        Known::Unknown => HostKeyStatus::Unknown,
+        Known::Changed(line) => HostKeyStatus::Changed {
+            known_hosts: known_certs.to_path_buf(),
+            line,
+        },
+    };
+    emit(GfxEvent::HostKey(HostKeyPrompt {
+        host: target.host.clone(),
+        port: target.port,
+        algorithm: "TLS certificate".into(),
+        fingerprint: fp.clone(),
+        status,
+    }));
+    loop {
+        tokio::select! {
+            reply = async { replies.lock().await.recv().await } => match reply {
+                Some(PromptReply::HostKey(HostKeyDecision::AcceptOnce)) => return Ok(()),
+                Some(PromptReply::HostKey(HostKeyDecision::AcceptAndSave)) => {
+                    // Still connect if saving fails; it just asks again next time.
+                    let _ = remember_cert(known_certs, &who, &fp);
+                    return Ok(());
+                }
+                Some(PromptReply::HostKey(HostKeyDecision::Reject)) | Some(PromptReply::Cancel) | None => {
+                    return Err(fail("certificate not accepted"));
+                }
+                Some(PromptReply::Fields { .. }) => {}
+            },
+            cmd = cmds.recv() => if matches!(cmd, Some(Cmd::Close) | None) {
+                return Err(fail("canceled"));
+            },
+        }
+    }
+}
+
+/// VeNCrypt (version 0.2): agree on a login, wrap the connection in TLS and
+/// check the certificate. Returns the stream and the login to run on it as
+/// the ordinary security type (1 none, 2 VNC password, `PLAIN`).
+async fn vencrypt(
+    mut stream: Box<dyn Io>,
+    target: &TerminalTarget,
+    known_certs: &Path,
+    emit: &Arc<dyn Fn(GfxEvent) + Send + Sync>,
+    cmds: &mut UnboundedReceiver<Cmd>,
+    replies: &SharedReplies,
+) -> io::Result<(Box<dyn Io>, u32)> {
+    let (major, minor) = (stream.read_u8().await?, stream.read_u8().await?);
+    if (major, minor) < (0, 2) {
+        return Err(fail("the server's VeNCrypt is too old"));
+    }
+    stream.write_all(&[0, 2]).await?;
+    if stream.read_u8().await? != 0 {
+        return Err(fail("the server doesn't accept VeNCrypt 0.2"));
+    }
+    let n = stream.read_u8().await?;
+    let mut offered = Vec::new();
+    for _ in 0..n {
+        offered.push(stream.read_u32().await?);
+    }
+    // Only the TLS variants with a certificate: the anonymous ones need
+    // ciphers that rustls (rightly) does not have, and "Plain" outside TLS
+    // would send the password in the clear.
+    let has_user = target.username.as_deref().is_some_and(|u| !u.is_empty());
+    let order: [u32; 3] = if has_user { [260, 262, 261] } else { [260, 261, 262] };
+    let Some(sub) = order.into_iter().find(|s| offered.contains(s)) else {
+        return Err(fail(
+            "the server's encrypted VNC needs anonymous TLS, which Linecard doesn't support; \
+             give the server a certificate (x509 security types)",
+        ));
+    };
+    stream.write_u32(sub).await?;
+    if stream.read_u8().await? != 1 {
+        return Err(fail("the server refused that VeNCrypt login"));
+    }
+
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .map_err(|e| fail(e.to_string()))?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(AnyCert(provider)))
+        .with_no_client_auth();
+    let name = ServerName::try_from(target.host.clone()).map_err(|_| fail("not a usable server name"))?;
+    let tls = tokio::select! {
+        r = tokio_rustls::TlsConnector::from(Arc::new(config)).connect(name, stream) => {
+            r.map_err(|e| fail(format!("TLS handshake failed: {e}")))?
+        }
+        _ = until_closed(cmds) => return Err(fail("canceled")),
+    };
+    let der = tls
+        .get_ref()
+        .1
+        .peer_certificates()
+        .and_then(|c| c.first())
+        .map(|c| c.as_ref().to_vec())
+        .ok_or_else(|| fail("the server sent no certificate"))?;
+    trust_certificate(&der, target, known_certs, emit, cmds, replies).await?;
+    let login = match sub {
+        260 => 1,
+        261 => 2,
+        _ => PLAIN,
+    };
+    Ok((Box::new(tls), login))
+}
 
 /// Apple Remote Desktop login: Diffie-Hellman with the server's `generator`
 /// and `prime`, then username and password (64 bytes each, padded with
@@ -255,6 +498,7 @@ async fn run(
     target: &TerminalTarget,
     credentials: Option<Arc<dyn Credentials>>,
     ssh: &SshOptions,
+    known_certs: &Path,
     emit: &Arc<dyn Fn(GfxEvent) + Send + Sync>,
     mut cmds: UnboundedReceiver<Cmd>,
     replies: SharedReplies,
@@ -299,7 +543,7 @@ async fn run(
     w.write_all(format!("RFB 003.00{minor}\n").as_bytes()).await?;
 
     // Security type.
-    let chosen = if minor == 3 {
+    let mut chosen = if minor == 3 {
         r.read_u32().await?
     } else {
         let n = r.read_u8().await?;
@@ -312,6 +556,8 @@ async fn run(
             1
         } else if types.contains(&ARD) && target.username.as_deref().is_some_and(|u| !u.is_empty()) {
             ARD // a login name is set: use the Mac account rather than a screen-sharing password
+        } else if types.contains(&VENCRYPT) {
+            VENCRYPT // encrypted: preferred over a bare VNC password
         } else if types.contains(&2) {
             2
         } else if types.contains(&ARD) {
@@ -324,6 +570,18 @@ async fn run(
         w.write_u8(pick).await?;
         pick.into()
     };
+
+    if chosen == u32::from(VENCRYPT) {
+        if !r.buffer().is_empty() {
+            return Err(fail("the server sent data before the TLS handshake"));
+        }
+        let stream = r.into_inner().unsplit(w);
+        let (stream, sub) = vencrypt(stream, target, known_certs, emit, &mut cmds, &replies).await?;
+        let (rd, wr) = tokio::io::split(stream);
+        r = BufReader::new(rd);
+        w = wr;
+        chosen = sub;
+    }
 
     let slot = target
         .credential_key
@@ -380,50 +638,18 @@ async fn run(
             let mut server_public = vec![0u8; key_len];
             r.read_exact(&mut server_public).await?;
 
-            let saved = credentials.as_ref().and_then(|c| c.password(&slot));
-            let (user, password) = match (target.username.clone().filter(|u| !u.is_empty()), saved) {
-                (Some(u), Some(p)) => (u, p),
-                (known_user, _) => {
-                    let mut fields = Vec::new();
-                    if known_user.is_none() {
-                        fields.push(PromptField {
-                            label: "Username".into(),
-                            echo: true,
-                        });
-                    }
-                    fields.push(PromptField {
-                        label: "Password".into(),
-                        echo: false,
-                    });
-                    emit(GfxEvent::Auth(AuthPrompt {
-                        title: format!("Mac login for {}", target.host),
-                        instructions: "Screen Sharing asks for a user account on that Mac.".into(),
-                        fields,
-                        remember: credentials.as_ref().map(|_| true),
-                    }));
-                    loop {
-                        tokio::select! {
-                            reply = async { replies.lock().await.recv().await } => match reply {
-                                Some(PromptReply::Fields { values, remember }) => {
-                                    let mut values = values.into_iter();
-                                    let u = match &known_user {
-                                        Some(u) => u.clone(),
-                                        None => values.next().unwrap_or_default(),
-                                    };
-                                    let p = values.next().unwrap_or_default();
-                                    asked = Some((p.clone(), remember));
-                                    break (u, p);
-                                }
-                                Some(PromptReply::HostKey(_)) => continue,
-                                Some(PromptReply::Cancel) | None => return Err(fail("canceled")),
-                            },
-                            cmd = cmds.recv() => if matches!(cmd, Some(Cmd::Close) | None) {
-                                return Err(fail("canceled"));
-                            },
-                        }
-                    }
-                }
-            };
+            let (user, password, ask) = login(
+                target,
+                &credentials,
+                &slot,
+                "Mac login",
+                "Screen Sharing asks for a user account on that Mac.",
+                emit,
+                &mut cmds,
+                &replies,
+            )
+            .await?;
+            asked = ask;
             let mut private = vec![0u8; key_len];
             let mut padding = [0u8; 128];
             getrandom::getrandom(&mut private).map_err(|e| fail(e.to_string()))?;
@@ -433,10 +659,28 @@ async fn run(
             w.write_all(&sealed).await?;
             w.write_all(&public).await?;
         }
+        PLAIN => {
+            let (user, password, ask) = login(
+                target,
+                &credentials,
+                &slot,
+                "VNC login",
+                "The server asks for a username and password.",
+                emit,
+                &mut cmds,
+                &replies,
+            )
+            .await?;
+            asked = ask;
+            w.write_u32(user.len() as u32).await?;
+            w.write_u32(password.len() as u32).await?;
+            w.write_all(user.as_bytes()).await?;
+            w.write_all(password.as_bytes()).await?;
+        }
         other => return Err(fail(format!("unsupported security type {other}"))),
     }
     // SecurityResult (3.3/3.7 send none for "None").
-    if (chosen == 2 || chosen == u32::from(ARD) || minor == 8) && r.read_u32().await? != 0 {
+    if (chosen == 2 || chosen == u32::from(ARD) || chosen == PLAIN || minor == 8) && r.read_u32().await? != 0 {
         let why = if minor == 8 {
             reason(&mut r).await
         } else {
@@ -446,6 +690,8 @@ async fn run(
             "wrong VNC password".to_string()
         } else if chosen == u32::from(ARD) {
             "the Mac refused that username and password".to_string()
+        } else if chosen == PLAIN {
+            "the server refused that username and password".to_string()
         } else if why.is_empty() {
             "the server refused the connection".to_string()
         } else {

@@ -3654,11 +3654,14 @@ dependencies = [
  "linecard-core-model",
  "md-5 0.10.6",
  "num-bigint 0.4.8",
+ "rcgen",
  "russh",
  "russh-sftp",
+ "rustls",
  "serialport",
  "sha2 0.10.9",
  "tokio",
+ "tokio-rustls",
  "x509-cert",
 ]
 

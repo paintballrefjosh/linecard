@@ -32,6 +32,9 @@ ironrdp-displaycontrol = "0.10"
 ironrdp-cliprdr = "0.9"
 x509-cert = { version = "0.3", features = ["std"] }
 sha2 = "0.10"
+# VNC's VeNCrypt (TLS); ring like the rest, no CMake/NASM.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 base64 = "0.22"
 # SFTP client (independent of russh; works over any stream).
 russh-sftp = "3"
@@ -48,3 +51,4 @@ ironrdp-tls = { version = "0.3", features = ["rustls-ring"] }
 
 [dev-dependencies]
 ironrdp-svc = "0.10"
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }

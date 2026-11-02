@@ -147,7 +147,14 @@ pub async fn open_gfx_session(
     let sink: linecard_proto::gfx::GfxSink = Box::new(move |e| forward(&on_event, &who, e));
     let session: Box<dyn GfxSession> = match kind {
         ConnectionKind::Vnc => Box::new(
-            linecard_proto::vnc::VncSession::connect(&target, credentials, state.ssh.clone(), sink).map_err(err)?,
+            linecard_proto::vnc::VncSession::connect_with(
+                &target,
+                credentials,
+                state.ssh.clone(),
+                state.data_dir.join("known_rdp_certs"),
+                sink,
+            )
+            .map_err(err)?,
         ),
         ConnectionKind::Rdp => {
             let opts = linecard_proto::rdp::RdpOptions {
