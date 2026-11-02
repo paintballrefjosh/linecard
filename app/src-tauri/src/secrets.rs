@@ -185,16 +185,24 @@ pub fn reconcile(app: &AppHandle) -> CmdResult<()> {
     };
     let Some(meta) = meta else { return Ok(()) };
     if !k.verifies(&meta.check) {
-        return Err("The vault passphrase was changed on another computer; turn password sync on again.".into());
+        // Most often two computers turned password sync on at the same moment
+        // and each made a vault; one passphrase wins, and this is the other.
+        // Dropping the key makes Settings ask for the winning passphrase.
+        if let Some(device) = device(&state) {
+            let _ = state.vault.forget_hidden(&key_slot(&device));
+        }
+        return Err("Another computer set the vault passphrase at the same time, and its passphrase is the one in use. Enter that passphrase in Settings to turn password sync on here.".into());
     }
     let before = synced_slots(&state);
     let mut now: BTreeSet<String> = BTreeSet::new();
 
     // Theirs → here (also when the keychain has it but Settings doesn't list it).
     let listed: BTreeSet<String> = state.vault.list().into_iter().map(|c| c.key).collect();
+    let mut unreadable: Vec<SyncedSecret> = Vec::new();
     for r in records.values() {
         now.insert(r.key.clone());
         let Ok(password) = k.decrypt(&r.key, &r.blob) else {
+            unreadable.push(r.clone());
             continue;
         };
         let stored = state.vault.get(&r.key).map(|s| s.expose().to_string());
@@ -205,6 +213,22 @@ pub fn reconcile(app: &AppHandle) -> CmdResult<()> {
     // Removed elsewhere → removed here.
     for gone in before.difference(&now) {
         let _ = state.vault.forget(gone);
+    }
+    // Records made under a vault key that lost a race can't be read by anyone
+    // now: re-save them from this keychain when it has the password, else drop them.
+    let (resaved, dropped) = repair_unreadable(&k, &unreadable, |slot| {
+        state.vault.get(slot).map(|s| s.expose().to_string())
+    });
+    if !resaved.is_empty() || !dropped.is_empty() {
+        edit(app, &state, |t| {
+            for r in resaved {
+                t.secrets.insert(r.id.clone(), r);
+            }
+            for id in dropped {
+                t.secrets.remove(&id);
+            }
+            Ok(())
+        })?;
     }
     // New here → theirs.
     let uploads: Vec<SyncedSecret> = state
@@ -233,4 +257,59 @@ pub fn reconcile(app: &AppHandle) -> CmdResult<()> {
     }
     set_synced_slots(&state, &now);
     Ok(())
+}
+
+/// What to do with records that the current vault key can't decrypt: the
+/// ones this computer still has a password for are encrypted again under the
+/// current key (replacing them); the others are dropped, since nothing can
+/// read them. Returns (records to store, ids to remove).
+fn repair_unreadable(
+    key: &VaultKey,
+    unreadable: &[SyncedSecret],
+    local: impl Fn(&str) -> Option<String>,
+) -> (Vec<SyncedSecret>, Vec<String>) {
+    let mut resaved = Vec::new();
+    let mut dropped = Vec::new();
+    for r in unreadable {
+        match local(&r.key).and_then(|pw| key.encrypt(&r.key, &pw).ok()) {
+            Some(blob) => resaved.push(SyncedSecret { blob, ..r.clone() }),
+            None => dropped.push(r.id.clone()),
+        }
+    }
+    (resaved, dropped)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(key: &VaultKey, slot: &str, password: &str) -> SyncedSecret {
+        SyncedSecret {
+            id: SyncedSecret::id_for(slot),
+            key: slot.into(),
+            label: slot.into(),
+            blob: key.encrypt(slot, password).unwrap(),
+        }
+    }
+
+    #[test]
+    fn records_from_a_vault_that_lost_are_resaved_or_dropped() {
+        let salt = new_salt().unwrap();
+        let loser = VaultKey::derive("loser passphrase", &salt).unwrap();
+        let winner = VaultKey::derive("winner passphrase", &new_salt().unwrap()).unwrap();
+        let mine = record(&loser, "ssh:a", "pw-a");
+        let theirs = record(&loser, "ssh:b", "pw-b");
+        assert!(
+            winner.decrypt(&mine.key, &mine.blob).is_err(),
+            "unreadable under the winning key"
+        );
+
+        let have = |slot: &str| (slot == "ssh:a").then(|| "pw-a".to_string());
+        let (resaved, dropped) = repair_unreadable(&winner, &[mine.clone(), theirs.clone()], have);
+
+        assert_eq!(resaved.len(), 1);
+        assert_eq!(resaved[0].id, mine.id, "replaces the same record");
+        assert_eq!(winner.decrypt("ssh:a", &resaved[0].blob).unwrap(), "pw-a");
+        assert_eq!(dropped, vec![theirs.id], "no local copy: nothing can read it");
+    }
 }
