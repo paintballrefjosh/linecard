@@ -30,6 +30,7 @@ ironrdp-tokio = "0.12"
 ironrdp-dvc = "0.10"
 ironrdp-displaycontrol = "0.10"
 ironrdp-cliprdr = "0.9"
+ironrdp-rdpsnd = "0.11"
 x509-cert = { version = "0.3", features = ["std"] }
 sha2 = "0.10"
 # VNC's VeNCrypt (TLS); ring like the rest, no CMake/NASM.

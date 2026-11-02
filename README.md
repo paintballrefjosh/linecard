@@ -36,7 +36,7 @@ You don't need Rust, Node.js or anything else in the next section to use Linecar
 | SSH port forwarding (local, remote, SOCKS); ssh:// and telnet:// links; command-line launcher | Done |
 | Keyword-highlight profiles per folder/connection, SecureCRT keyword-list import | Done |
 | VNC | Done |
-| RDP (IronRDP: NLA, certificate check, resize with the tab, text clipboard both ways) | Done |
+| RDP (IronRDP: NLA, certificate check, resize with the tab, text clipboard both ways, sound) | Done |
 
 ## Building from source
 

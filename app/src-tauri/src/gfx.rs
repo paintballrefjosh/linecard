@@ -32,6 +32,12 @@ enum GfxEventDto {
     Clipboard {
         text: String,
     },
+    /// 16-bit little-endian PCM, base64.
+    Audio {
+        channels: u16,
+        rate: u32,
+        pcm: String,
+    },
     /// `shape`: "default", "hidden" or "image" (then the rest is filled in).
     #[serde(rename_all = "camelCase")]
     Cursor {
@@ -74,6 +80,14 @@ fn forward(ch: &Channel<InvokeResponseBody>, who: &str, e: GfxEvent) {
         GfxEvent::Resized { width, height } => send_json(ch, &GfxEventDto::Resized { width, height }),
         GfxEvent::Bell => send_json(ch, &GfxEventDto::Bell),
         GfxEvent::Clipboard(text) => send_json(ch, &GfxEventDto::Clipboard { text }),
+        GfxEvent::Audio { channels, rate, pcm } => send_json(
+            ch,
+            &GfxEventDto::Audio {
+                channels,
+                rate,
+                pcm: base64::engine::general_purpose::STANDARD.encode(pcm),
+            },
+        ),
         GfxEvent::Cursor(shape) => {
             let (shape, width, height, hot_x, hot_y, rgba) = match shape {
                 CursorShape::Default => ("default", 0, 0, 0, 0, String::new()),

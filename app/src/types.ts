@@ -194,6 +194,7 @@ export type GfxEvent =
   | { event: "bell" }
   | { event: "clipboard"; text: string }
   | { event: "cursor"; shape: "default" | "hidden" | "image"; width: number; height: number; hotX: number; hotY: number; rgba: string }
+  | { event: "audio"; channels: number; rate: number; pcm: string }
   | { event: "disconnected"; reason: string | null }
   | HostKeyEvent
   | AuthEvent;

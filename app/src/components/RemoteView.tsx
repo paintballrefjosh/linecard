@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type WheelEvent } from "react";
-import { RotateCw } from "lucide-react";
+import { RotateCw, Volume2, VolumeX } from "lucide-react";
 import { getBackend, type GfxHandle } from "../api";
+import { PcmPlayer } from "../audio";
 import type { AuthEvent, ConnectionNode, GfxEvent, HostKeyEvent, PromptReply } from "../types";
 import { KindIcon, kindLabel } from "./icons";
 import { SessionPrompt } from "./SessionPrompt";
@@ -25,6 +26,9 @@ export function RemoteView({ conn, onStatus }: Props) {
   const [prompt, setPrompt] = useState<HostKeyEvent | AuthEvent | null>(null);
   const [ended, setEnded] = useState<string | null | undefined>(undefined);
   const [attempt, setAttempt] = useState(0);
+  const player = useRef(new PcmPlayer());
+  const [hasSound, setHasSound] = useState(false);
+  const [muted, setMuted] = useState(false);
   /** The clipboard text the server last had (sent or received). */
   const sentClip = useRef("");
   const statusRef = useRef(onStatus);
@@ -73,6 +77,10 @@ export function RemoteView({ conn, onStatus }: Props) {
           sentClip.current = e.text; // don't send it straight back
           void getBackend().then((b) => b.clipboardWrite(e.text));
           break;
+        case "audio":
+          setHasSound(true);
+          player.current.play(e.channels, e.rate, e.pcm);
+          break;
         case "cursor": {
           const c = canvas.current;
           if (!c) break;
@@ -106,6 +114,8 @@ export function RemoteView({ conn, onStatus }: Props) {
       closed = true;
       handle?.close();
       session.current = null;
+      player.current.close();
+      setHasSound(false);
     };
   }, [conn, attempt]);
 
@@ -233,6 +243,20 @@ export function RemoteView({ conn, onStatus }: Props) {
             <RotateCw size={14} /> Reconnect
           </button>
         </div>
+      )}
+      {hasSound && (
+        <button
+          className="remote-sound"
+          title={muted ? "Unmute sound" : "Mute sound"}
+          aria-label={muted ? "Unmute sound" : "Mute sound"}
+          onClick={() => {
+            player.current.muted = !muted;
+            setMuted(!muted);
+            canvas.current?.focus();
+          }}
+        >
+          {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+        </button>
       )}
       {prompt && <SessionPrompt prompt={prompt} onReply={reply} />}
     </div>

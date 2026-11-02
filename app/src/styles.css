@@ -2693,3 +2693,21 @@ button.status-version:hover {
 .script-dot.is-bad {
   background: var(--chg-deleted);
 }
+
+.remote-sound {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  padding: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(20, 24, 30, 0.7);
+  color: #c9d1d9;
+  opacity: 0.35;
+  cursor: pointer;
+}
+.remote-sound:hover,
+.remote-sound:focus-visible {
+  opacity: 1;
+}

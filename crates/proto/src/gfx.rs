@@ -61,6 +61,12 @@ pub enum GfxEvent {
     Clipboard(String),
     /// The remote pointer changed shape.
     Cursor(CursorShape),
+    /// Sound to play: 16-bit little-endian samples, channels interleaved.
+    Audio {
+        channels: u16,
+        rate: u32,
+        pcm: Vec<u8>,
+    },
     /// Ended; `None` for a clean close.
     Disconnected {
         reason: Option<String>,

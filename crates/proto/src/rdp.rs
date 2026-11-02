@@ -32,6 +32,8 @@ use ironrdp_pdu::input::mouse::PointerFlags;
 use ironrdp_pdu::input::MousePdu;
 use ironrdp_pdu::rdp::capability_sets::{client_codecs_capabilities, MajorPlatformType};
 use ironrdp_pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
+use ironrdp_rdpsnd::client::{Rdpsnd, RdpsndClientHandler};
+use ironrdp_rdpsnd::pdu::{AudioFormat, PitchPdu, VolumePdu, WaveFormat};
 use ironrdp_session::image::DecodedImage;
 use ironrdp_session::{fast_path, ActiveStage, ActiveStageBuilder, ActiveStageOutput};
 use ironrdp_tokio::{single_sequence_step_read, split_tokio_framed, FramedWrite, NetworkClient};
@@ -444,7 +446,7 @@ fn connector_config(user: &str, password: &str, width: u16, height: u16) -> iron
         license_cache: None,
         enable_server_pointer: true,
         autologon: false,
-        enable_audio_playback: false,
+        enable_audio_playback: true,
         request_data: None,
         pointer_software_rendering: false,
         multitransport_flags: None,
@@ -564,7 +566,8 @@ async fn attempt(
     let user = login.user.clone().unwrap_or_default();
     let mut connector = ClientConnector::new(connector_config(&user, "", width, height), client_addr)
         .with_static_channel(drdynvc)
-        .with_static_channel(clipboard);
+        .with_static_channel(clipboard)
+        .with_static_channel(Rdpsnd::new(Box::new(Sound::new(ui.emit.clone()))));
 
     let should_upgrade = ironrdp_tokio::connect_begin(&mut framed, &mut connector)
         .await
@@ -731,6 +734,61 @@ enum ClipEvent {
     RemoteText,
     /// The server wants our clipboard text.
     Wanted(ClipboardFormatId),
+}
+
+/// Sound from the server, as 16-bit PCM for the window to play. Only PCM is
+/// offered, so there is nothing to decode (servers send PCM when the client
+/// offers nothing else).
+struct Sound {
+    emit: Arc<dyn Fn(GfxEvent) + Send + Sync>,
+    formats: Vec<AudioFormat>,
+}
+
+impl std::fmt::Debug for Sound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Sound")
+    }
+}
+
+impl Sound {
+    fn new(emit: Arc<dyn Fn(GfxEvent) + Send + Sync>) -> Self {
+        // Best first: CD quality stereo, then smaller.
+        let formats = [(2u16, 44_100u32), (1, 44_100), (2, 22_050), (1, 22_050), (1, 11_025)]
+            .into_iter()
+            .map(|(n_channels, n_samples_per_sec)| AudioFormat {
+                format: WaveFormat::PCM,
+                n_channels,
+                n_samples_per_sec,
+                n_avg_bytes_per_sec: n_samples_per_sec * u32::from(n_channels) * 2,
+                n_block_align: n_channels * 2,
+                bits_per_sample: 16,
+                data: None,
+            })
+            .collect();
+        Sound { emit, formats }
+    }
+}
+
+impl RdpsndClientHandler for Sound {
+    fn get_formats(&self) -> &[AudioFormat] {
+        &self.formats
+    }
+
+    fn wave(&mut self, format: &AudioFormat, _ts: u32, data: std::borrow::Cow<'_, [u8]>) {
+        if format.format == WaveFormat::PCM && format.bits_per_sample == 16 && !data.is_empty() {
+            (self.emit)(GfxEvent::Audio {
+                channels: format.n_channels,
+                rate: format.n_samples_per_sec,
+                pcm: data.into_owned(),
+            });
+        }
+    }
+
+    fn set_volume(&mut self, _volume: VolumePdu) {}
+
+    fn set_pitch(&mut self, _pitch: PitchPdu) {}
+
+    fn close(&mut self) {}
 }
 
 struct ClipBackend {
@@ -1180,5 +1238,35 @@ mod tests {
             .unwrap();
         pump(&mut client, &mut server, messages(reply), Vec::new());
         assert_eq!(seen.lock().unwrap().text.as_deref(), Some("show version\r\n"));
+    }
+
+    #[test]
+    fn sound_is_offered_as_pcm_and_passed_on() {
+        let heard = Arc::new(Mutex::new(Vec::new()));
+        let sink = heard.clone();
+        let mut sound = Sound::new(Arc::new(move |e| sink.lock().unwrap().push(e)));
+        let formats = sound.get_formats().to_vec();
+        assert!(formats
+            .iter()
+            .all(|f| f.format == WaveFormat::PCM && f.bits_per_sample == 16));
+        assert_eq!((formats[0].n_channels, formats[0].n_samples_per_sec), (2, 44_100));
+        assert_eq!(formats[0].n_avg_bytes_per_sec, 44_100 * 4);
+
+        sound.wave(&formats[1], 0, std::borrow::Cow::Borrowed(&[1, 0, 2, 0]));
+        sound.wave(&formats[1], 0, std::borrow::Cow::Borrowed(&[]));
+        let other = AudioFormat {
+            bits_per_sample: 8,
+            ..formats[1].clone()
+        };
+        sound.wave(&other, 0, std::borrow::Cow::Borrowed(&[9]));
+        assert_eq!(
+            heard.lock().unwrap().as_slice(),
+            [GfxEvent::Audio {
+                channels: 1,
+                rate: 44_100,
+                pcm: vec![1, 0, 2, 0]
+            }],
+            "only non-empty 16-bit PCM is played"
+        );
     }
 }
