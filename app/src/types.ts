@@ -61,6 +61,12 @@ export interface SerialSettings {
 
 /** The connection editor's form. `id: null` creates a new connection.
  *  Empty `username` / `tabColor` mean "inherit from the folder". */
+/** A folder of this computer shared with an RDP connection (kept on this computer only). */
+export interface RdpShare {
+  path: string;
+  writable: boolean;
+}
+
 export interface ConnectionDraft {
   id: string | null;
   folderId: string | null;

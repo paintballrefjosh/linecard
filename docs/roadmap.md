@@ -41,7 +41,8 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 - [x] RDP via IronRDP on every platform (NLA, certificate trust prompt, dynamic resize)
 - [x] RDP text clipboard, both directions (files and images are not shared)
 - [ ] RDP sound: the code to play it is in (PCM, with a mute button on the tab), but the Windows 10 host we tried never starts sound with Linecard although it does with the Windows client. Needs a wire-level comparison on a branch.
-- [ ] RDP: sound from your microphone, drive redirection; Kerberos; RD Gateway
+- [x] RDP shared folder: one folder per connection, read-only unless you allow changes, Windows only for now, kept on this computer (not synced)
+- [ ] RDP: shared folder on macOS and Linux, sound from your microphone; Kerberos; RD Gateway
 - [x] VNC (RFB 3.3–3.8: None, VNC password, Apple Remote Desktop and VeNCrypt (TLS); ZRLE, Tight (lossless), CopyRect, Raw, DesktopSize, cursor shapes)
 
 ## Phase 4 — Power tools (v0.9–1.0)

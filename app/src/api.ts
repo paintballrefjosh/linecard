@@ -12,6 +12,7 @@ import type {
   LoggingSettings,
   PromptReply,
   PasswordTarget,
+  RdpShare,
   SavedPassword,
   SftpEntry,
   ScriptEvent,
@@ -218,6 +219,12 @@ export interface Backend {
   /** Serial ports present right now. */
   listSerialPorts(): Promise<{ name: string; description: string | null }[]>;
   /** Native folder picker; null if canceled. */
+  /** Whether this system can share a folder with a remote computer yet. */
+  rdpShareSupported(): Promise<boolean>;
+  /** The folder an RDP connection shares, if any. */
+  getRdpShare(connectionId: string): Promise<RdpShare | null>;
+  /** Share a folder with an RDP connection, or stop sharing with null. */
+  setRdpShare(connectionId: string, share: RdpShare | null): Promise<void>;
   pickFolder(title: string): Promise<string | null>;
   /** Native file picker; null if canceled. */
   pickFile(mode: "open" | "save", title: string): Promise<string | null>;
@@ -348,6 +355,9 @@ async function tauriBackend(): Promise<Backend> {
     getLogging: () => invoke<LoggingSettings>("get_logging"),
     setLogging: (logging) => invoke("set_logging", { logging }),
     listSerialPorts: () => invoke("list_serial_ports"),
+    rdpShareSupported: () => invoke<boolean>("rdp_share_supported"),
+    getRdpShare: (connectionId) => invoke<RdpShare | null>("get_rdp_share", { connectionId }),
+    setRdpShare: (connectionId, share) => invoke<void>("set_rdp_share", { connectionId, share }),
     async pickFolder(title) {
       const dialog = await import("@tauri-apps/plugin-dialog");
       const picked = await dialog.open({ title, multiple: false, directory: true });

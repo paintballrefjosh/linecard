@@ -2711,3 +2711,24 @@ button.status-version:hover {
 .remote-sound:focus-visible {
   opacity: 1;
 }
+
+.share-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.share-row {
+  display: flex;
+  gap: 6px;
+}
+.share-row input {
+  flex: 1;
+  min-width: 0;
+}
+.share-writable {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}

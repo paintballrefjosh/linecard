@@ -9,6 +9,7 @@ import type {
   FolderNode,
   LoggingSettings,
   PendingChange,
+  RdpShare,
   SerialSettings,
   FolderSettings,
   PortForward,
@@ -111,6 +112,7 @@ function find(nodes: TreeNode[], id: string): { node: TreeNode; siblings: TreeNo
 
 export function mockBackend(): Backend {
   let tree = seed();
+  const shares = new Map<string, RdpShare>();
   const listeners = new Set<() => void>();
   const emit = () => listeners.forEach((l) => l());
 
@@ -336,6 +338,12 @@ export function mockBackend(): Backend {
     onSyncChanged(cb) {
       syncListeners.add(cb);
       return () => syncListeners.delete(cb);
+    },
+    rdpShareSupported: async () => true,
+    getRdpShare: async (id: string) => shares.get(id) ?? null,
+    setRdpShare: async (id: string, share: RdpShare | null) => {
+      if (share && share.path.trim()) shares.set(id, share);
+      else shares.delete(id);
     },
     pickFolder: async () => "\\\\nas\\share\\Linecard",
     async ackChange(id) {

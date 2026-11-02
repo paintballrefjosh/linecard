@@ -8,6 +8,7 @@ import type {
   Inherited,
   Parity,
   PortForward,
+  RdpShare,
   SerialSettings,
 } from "../types";
 import { ArrowRight, X } from "lucide-react";
@@ -54,7 +55,8 @@ interface Props {
   initial: ConnectionDraft;
   /** Where a new connection goes, e.g. "/DC1 Fort Worth/Spine". */
   location: string;
-  onSave(draft: ConnectionDraft): Promise<void>;
+  /** Returns the id the connection was saved under (a new one has none until then). */
+  onSave(draft: ConnectionDraft): Promise<string>;
   onClose(): void;
   /** Saved SSH connections that can serve as a jump host. */
   jumpHosts: { id: string; name: string; endpoint: string }[];
@@ -200,6 +202,28 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
   useEffect(() => {
     void getBackend().then((b) => b.inheritedSettings(initial.folderId).then(setInherited));
   }, [initial.folderId]);
+  /** RDP: the folder shared with the remote computer (kept on this computer only). */
+  const [share, setShare] = useState<RdpShare | null>(null);
+  const [shareSupported, setShareSupported] = useState(false);
+  /** Set once the saved share is read, so saving too early cannot erase it. */
+  const [shareLoaded, setShareLoaded] = useState(false);
+  useEffect(() => {
+    if (d.kind !== "rdp") return;
+    let live = true;
+    void getBackend().then(async (b) => {
+      const supported = await b.rdpShareSupported();
+      const saved = initial.id ? await b.getRdpShare(initial.id) : null;
+      if (!live) return;
+      setShareSupported(supported);
+      if (!shareLoaded) setShare(saved);
+      setShareLoaded(true);
+    });
+    return () => {
+      live = false;
+    };
+    // Read once per connection, not again after every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d.kind, initial.id]);
   const isNew = initial.id === null;
   const serial = d.kind === "serial";
   /** Ports present now (USB adapters come and go), refreshed when Serial is picked. */
@@ -221,7 +245,10 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
     setError(null);
     try {
       const fwds = d.kind === "ssh" ? forwards.map((r, i) => fromRow(r, i + 1)) : [];
-      await onSave({ ...d, name, forwards: fwds });
+      const id = await onSave({ ...d, name, forwards: fwds });
+      // If the folder below is refused, a second Save must update this connection, not add another.
+      set({ id });
+      if (d.kind === "rdp" && shareSupported && shareLoaded) await (await getBackend()).setRdpShare(id, share);
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -433,6 +460,54 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
           inherited={inherited?.highlight ?? null}
           onChange={(highlight) => set({ highlight })}
         />
+
+        {d.kind === "rdp" && (
+          <>
+            <span className="form-label">Shared folder</span>
+            {shareSupported ? (
+              <div className="share-field">
+                <div className="share-row">
+                  <input
+                    aria-label="Shared folder"
+                    value={share?.path ?? ""}
+                    onChange={(e) => setShare({ path: e.target.value, writable: share?.writable ?? false })}
+                    placeholder="None: no folder is shared"
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={async () => {
+                      const picked = await (await getBackend()).pickFolder("Folder to share with the remote computer");
+                      if (picked) setShare({ path: picked, writable: share?.writable ?? false });
+                    }}
+                  >
+                    Browse…
+                  </button>
+                  <button type="button" className="btn" disabled={!share} onClick={() => setShare(null)}>
+                    Clear
+                  </button>
+                </div>
+                <label className="share-writable">
+                  <input
+                    type="checkbox"
+                    checked={share?.writable ?? false}
+                    disabled={!share?.path}
+                    onChange={(e) => share && setShare({ ...share, writable: e.target.checked })}
+                  />
+                  Let the remote computer change and delete files in it
+                </label>
+                <p className="form-hint">
+                  Shows up as a drive in the remote session, read-only unless you tick the box. This is kept on
+                  this computer only and is not synced to your others.
+                </p>
+              </div>
+            ) : (
+              <p className="form-hint">Sharing a folder with the remote computer is available on Windows only for now.</p>
+            )}
+          </>
+        )}
 
         <span className="form-label">Tab color</span>
         <div className="swatches" role="radiogroup" aria-label="Tab color">

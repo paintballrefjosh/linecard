@@ -579,6 +579,7 @@ export default function App() {
             location={folderPath(tree, editing.folderId)}
             onSave={async (d) => {
               saved.current = await backend.saveConnection(d);
+              return saved.current;
             }}
             onClose={() => {
               const id = saved.current;
