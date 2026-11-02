@@ -32,7 +32,7 @@ use ironrdp_pdu::input::mouse::PointerFlags;
 use ironrdp_pdu::input::MousePdu;
 use ironrdp_pdu::rdp::capability_sets::{client_codecs_capabilities, MajorPlatformType};
 use ironrdp_pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
-use ironrdp_rdpsnd::client::{Rdpsnd, RdpsndClientHandler};
+use ironrdp_rdpsnd::client::{Rdpsnd, RdpsndClientHandler, RdpsndDvc};
 use ironrdp_rdpsnd::pdu::{AudioFormat, PitchPdu, VolumePdu, WaveFormat};
 use ironrdp_session::image::DecodedImage;
 use ironrdp_session::{fast_path, ActiveStage, ActiveStageBuilder, ActiveStageOutput};
@@ -558,7 +558,11 @@ async fn attempt(
         }
     };
     let mut framed = ironrdp_tokio::TokioFramed::new(stream);
-    let drdynvc = ironrdp_dvc::DrdynvcClient::new().with_dynamic_channel(DisplayControlClient::new(|_| Ok(Vec::new())));
+    // Windows 8 and later offer sound on a dynamic channel first, and fall
+    // back to the static one only for clients that lack it.
+    let drdynvc = ironrdp_dvc::DrdynvcClient::new()
+        .with_dynamic_channel(DisplayControlClient::new(|_| Ok(Vec::new())))
+        .with_dynamic_channel(RdpsndDvc::new(Box::new(Sound::new(ui.emit.clone()))));
     let clipboard = Cliprdr::<Client>::new(Box::new(ClipBackend {
         events: ui.clip_tx.clone(),
         emit: ui.emit.clone(),
