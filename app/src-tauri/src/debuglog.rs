@@ -92,7 +92,8 @@ pub fn trace() {
     }
     let only = Targets::new()
         .with_target("ironrdp_rdpsnd", LevelFilter::DEBUG)
-        .with_target("ironrdp_dvc", LevelFilter::DEBUG);
+        .with_target("ironrdp_dvc", LevelFilter::DEBUG)
+        .with_target("ironrdp_connector::channel_connection", LevelFilter::DEBUG);
     let layer = tracing_subscriber::fmt::layer()
         .with_ansi(false)
         .without_time()

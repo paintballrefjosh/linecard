@@ -921,6 +921,14 @@ async fn session(result: ConnectionResult, framed: Upgraded, host: &str, ui: &mu
     let size = result.desktop_size;
     let mut image = DecodedImage::new(PixelFormat::RgbA32, size.width, size.height);
     let activation_factory = result.activation_factory;
+    (ui.emit)(GfxEvent::Log(format!(
+        "static channel ids: rdpsnd {:?}, cliprdr {:?}, drdynvc {:?}",
+        result.static_channels.get_channel_id_by_type::<Rdpsnd>(),
+        result.static_channels.get_channel_id_by_type::<Cliprdr<Client>>(),
+        result
+            .static_channels
+            .get_channel_id_by_type::<ironrdp_dvc::DrdynvcClient>(),
+    )));
     let mut stage = ActiveStageBuilder {
         static_channels: result.static_channels,
         user_channel_id: result.user_channel_id,

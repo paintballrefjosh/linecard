@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **The Windows installer no longer ticks "Create desktop shortcut" by default.**
+
 - **Right-click a tab to Reconnect or Close it.** Reconnect works on terminal, RDP, VNC and SFTP tabs once they have disconnected.
 - **A disconnected RDP or VNC tab now blanks the frozen picture** and shows the "Disconnected" message with a Reconnect button, instead of leaving the last image on screen.
 
