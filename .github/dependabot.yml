@@ -1,10 +1,16 @@
 version: 2
+# Minor and patch updates arrive as PRs. Major versions of libraries are left
+# for a hands-on upgrade (the UI libraries and the RustCrypto family must
+# move together), so they are not proposed.
 updates:
   - package-ecosystem: cargo
     directory: /
     open-pull-requests-limit: 5
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       rust-minor-and-patch:
         update-types: [minor, patch]
@@ -13,6 +19,9 @@ updates:
     open-pull-requests-limit: 5
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-minor-and-patch:
         update-types: [minor, patch]
