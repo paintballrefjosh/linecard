@@ -2613,3 +2613,17 @@ button.status-version:hover {
   align-items: flex-start;
   font-size: 12px;
 }
+
+.bulk-intro {
+  margin: 0 0 12px;
+  color: var(--text-quiet);
+  font-size: 0.9em;
+  line-height: 1.4;
+}
+
+.bulk-note {
+  grid-column: 2;
+  margin-top: -6px;
+  color: var(--text-quiet);
+  font-size: 0.85em;
+}

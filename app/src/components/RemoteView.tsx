@@ -178,7 +178,7 @@ export function RemoteView({ conn, onStatus }: Props) {
   /** VNC: when the screen gets focus, offer the local clipboard if it changed,
    *  so a plain Ctrl+V on the remote side pastes it. */
   const shareClipboard = () => {
-    if (conn.kind !== "vnc") return;
+    if (conn.kind !== "vnc" && conn.kind !== "rdp") return;
     void getBackend()
       .then((b) => b.clipboardRead())
       .then((t) => {

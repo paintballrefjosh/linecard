@@ -25,6 +25,7 @@ import type {
   SyncState,
   TreeNode,
 } from "./types";
+import { BulkEditor } from "./components/BulkEditor";
 import { ConnectionEditor, blankDraft } from "./components/ConnectionEditor";
 import { FolderSettingsDialog } from "./components/FolderSettings";
 import { UpdateDialog } from "./components/UpdateDialog";
@@ -129,11 +130,11 @@ export default function App() {
   /** Auto-hidden connections pane: showing right now. */
   const [peek, setPeek] = useState(false);
   const [editing, setEditing] = useState<ConnectionDraft | null>(null);
-  /** Connections still to edit after this one, when several were picked. */
-  const [editQueue, setEditQueue] = useState<string[]>([]);
+  /** Several connections being edited together. */
+  const [bulk, setBulk] = useState<ConnectionDraft[] | null>(null);
   const saved = useRef<string | null>(null);
   /** Asks the tree to select and focus a connection (after saving it). */
-  const [focusRequest, setFocusRequest] = useState<{ id: string; n: number } | null>(null);
+  const [focusRequest, setFocusRequest] = useState<{ id: string; ids?: string[]; n: number } | null>(null);
   const [passwordFor, setPasswordFor] = useState<{ id: string; name: string } | null>(null);
   const [prefs, setPrefs] = useState<Preferences>(defaultPrefs);
   const [importing, setImporting] = useState(false);
@@ -191,9 +192,8 @@ export default function App() {
       backend && {
         newConnection: (folderId) => setEditing(blankDraft(folderId)),
         editConnection: (ids) => {
-          if (ids.length === 0) return;
-          setEditQueue(ids.slice(1));
-          void backend.getConnection(ids[0]).then(setEditing);
+          if (ids.length === 1) void backend.getConnection(ids[0]).then(setEditing);
+          else if (ids.length > 1) void Promise.all(ids.map((id) => backend.getConnection(id))).then(setBulk);
         },
         setPassword: (id, name) => setPasswordFor({ id, name }),
         openFiles: (id) =>
@@ -512,25 +512,42 @@ export default function App() {
           />
         )}
 
+        {bulk && backend && (
+          <BulkEditor
+            drafts={bulk}
+            jumpHosts={sshConnections(tree)}
+            onSave={async (drafts) => {
+              const failed: string[] = [];
+              for (const d of drafts) {
+                try {
+                  await backend.saveConnection(d);
+                } catch (e) {
+                  failed.push(`${d.name}: ${e instanceof Error ? e.message : String(e)}`);
+                }
+              }
+              if (failed.length)
+                throw new Error(`Saved ${drafts.length - failed.length} of ${drafts.length}. ${failed.join("; ")}`);
+            }}
+            onClose={() => {
+              const ids = bulk.flatMap((d) => (d.id ? [d.id] : []));
+              setBulk(null);
+              setFocusRequest({ id: ids[0], ids, n: Date.now() });
+            }}
+          />
+        )}
+
         {editing && backend && (
           <ConnectionEditor
             initial={editing}
             location={folderPath(tree, editing.folderId)}
-            key={editing.id ?? "new"}
             onSave={async (d) => {
               saved.current = await backend.saveConnection(d);
             }}
             onClose={() => {
               const id = saved.current;
               saved.current = null;
-              const [next, ...rest] = id ? editQueue : [];
-              setEditQueue(rest);
-              if (next) void backend.getConnection(next).then(setEditing);
-              else {
-                setEditing(null);
-                setEditQueue([]);
-                if (id) setFocusRequest({ id, n: Date.now() });
-              }
+              setEditing(null);
+              if (id) setFocusRequest({ id, n: Date.now() });
             }}
             jumpHosts={sshConnections(tree)}
           />

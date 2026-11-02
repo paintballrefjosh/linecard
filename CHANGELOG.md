@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- **Multi-select**: Ctrl/Shift-click connections, then press Enter or right-click → **Open N in tabs** to open them all, or **Edit N connections…** to edit them one after another.
+- **Multi-select**: Ctrl/Shift-click connections, then press Enter or right-click → **Open N in tabs** to open them all, or **Edit N connections…** to change settings on all of them in one window. The window shows only what can be shared (port, jump host, username, session log, keyword highlighting, tab color, notes, and serial framing when all are serial); a setting that differs between them reads "Mixed" and is left alone unless you change it. Names and hosts are never touched.
+
+- **RDP clipboard**: copy and paste text between your computer and an RDP session, in both directions (when the tab gains focus, as with VNC). Files and images are not shared.
 
 - **Fixes**: after saving a connection it is selected and focused in the tree, so Enter opens it; clicking a tab puts the keyboard in the session instead of on the tab; the update notice now appears in a running app (checked hourly and when you return to the window) instead of only after a restart.
 

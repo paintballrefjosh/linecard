@@ -38,7 +38,7 @@ import { ChangeGlyph, KindIcon, Undo2, changeLabel } from "./icons";
 /** Tree edits; the App owns the connection editor dialog. */
 export interface TreeActions {
   newConnection(folderId: string | null): void;
-  /** Edit one or several connections (one editor after another). */
+  /** Edit one connection, or several together. */
   editConnection(ids: string[]): void;
   /** Save a password for a connection without logging in first. */
   setPassword(id: string, name: string): void;
@@ -57,7 +57,7 @@ interface Props {
   actions: TreeActions;
   onOpen(conn: ConnectionNode): void;
   /** Select and focus this connection (e.g. after saving it). */
-  focusRequest?: { id: string; n: number } | null;
+  focusRequest?: { id: string; ids?: string[]; n: number } | null;
   onAck(id: string): void;
   onAckAll(): void;
   onRevert(opId: string): void;
@@ -275,7 +275,9 @@ export function ConnectionTree({
     if (!t || !node) return; // not in the tree yet: try again when it changes
     handledFocus.current = focusRequest.n;
     node.openParents();
-    t.select(focusRequest.id);
+    if (focusRequest.ids && focusRequest.ids.length > 1)
+      t.setSelection({ ids: focusRequest.ids, anchor: focusRequest.id, mostRecent: focusRequest.id });
+    else t.select(focusRequest.id);
     t.scrollTo(focusRequest.id);
     // The editor dialog hands focus back to what had it when it closes; go after that.
     window.setTimeout(() => {

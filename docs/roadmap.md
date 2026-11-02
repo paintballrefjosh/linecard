@@ -39,7 +39,8 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 ## Phase 3 — Graphical (v0.7–0.8)
 
 - [x] RDP via IronRDP on every platform (NLA, certificate trust prompt, dynamic resize)
-- [ ] RDP: clipboard, audio, drive redirection; Kerberos; RD Gateway
+- [x] RDP text clipboard, both directions (files and images are not shared)
+- [ ] RDP: audio, drive redirection; Kerberos; RD Gateway
 - [x] VNC (RFB 3.3–3.8: None and VNC password; ZRLE, CopyRect, Raw, DesktopSize)
 
 ## Phase 4 — Power tools (v0.9–1.0)

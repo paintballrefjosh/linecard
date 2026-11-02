@@ -66,7 +66,7 @@ pub trait GfxSession: Send {
     fn key(&mut self, code: &str, key: &str, down: bool) -> io::Result<()>;
     /// Type text (paste).
     fn text(&mut self, text: &str) -> io::Result<()>;
-    /// Offer the local clipboard text to the server (VNC only; RDP ignores it).
+    /// Offer the local clipboard text to the server.
     fn clipboard(&mut self, _text: &str) -> io::Result<()> {
         Ok(())
     }
