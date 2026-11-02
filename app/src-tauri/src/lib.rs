@@ -1020,6 +1020,7 @@ pub fn run() {
                 None => app.path().app_data_dir()?,
             };
             debuglog::init(&data, &app.package_info().version.to_string());
+            debuglog::trace();
             let mut lib = Library::open(&data.join("library.db"), seed_starter)
                 .map_err(|e| format!("could not open the connection library: {e}"))?;
             highlight::migrate(&mut lib, PREFERENCES_KEY)?;
