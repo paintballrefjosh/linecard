@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **SFTP: drag files in**: drop files or whole folders from Explorer onto an SFTP tab to upload them to the folder you are viewing, with the same Cancel and Resume as the Upload buttons. (The window gives dropped files no path, so they are copied to a temporary folder first and removed afterwards; very large files need that much free space in your temp folder.) Dragging files out to the desktop is not possible in this window; use Download.
+
 - **VNC: Mac Screen Sharing and pointer shapes**: connecting to a Mac's built-in Screen Sharing (Apple Remote Desktop login: your Mac username and password) now works, where it used to stop at "security type not supported". The VNC pointer also follows the server's shape (I-beam, resize arrows, hidden). Connections that have a username set use the Mac account login when the Mac offers both. Tested against a built-in server in this repo, not against a real Mac.
 
 - **RDP pointer shapes**: the mouse pointer over an RDP screen now follows the server's: the text I-beam over text, the resize arrows on window edges, the busy ring, a hidden pointer in games and full-screen video. Before, it was always the local arrow.

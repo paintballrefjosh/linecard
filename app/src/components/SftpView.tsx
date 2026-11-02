@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
 import {
   ArrowUp,
   Download,
@@ -17,6 +17,7 @@ import type { AuthEvent, ConnectionNode, HostKeyEvent, PromptReply, SftpEntry } 
 import { ConfirmDialog, Modal } from "./Dialog";
 import { relativeTime } from "./ConnectionTree";
 import { SessionPrompt } from "./SessionPrompt";
+import { collectDrop, hasFiles, stageDrop } from "../staging";
 import { formatBytes, type SessionStatus } from "./TerminalView";
 
 interface Props {
@@ -182,6 +183,31 @@ export function SftpView({ conn, onStatus }: Props) {
     );
   };
 
+  /** Files dragged in from the desktop: staged on disk, then uploaded here. */
+  const [dropping, setDropping] = useState(false);
+  const onDrop = (e: DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    setDropping(false);
+    if (busy || state !== "ready") return;
+    const to = path;
+    // The browser invalidates the drop once this handler returns: read it now.
+    const dropped = collectDrop(e.dataTransfer);
+    void dropped.then(async (items) => {
+      const tops = new Set(items.map((d) => d.rel.split("/")[0]));
+      if (!tops.size) return;
+      const label = `Uploading ${tops.size === 1 ? [...tops][0] : `${tops.size} items`}`;
+      await transfer(label, async (h, resume, p) => {
+        const staged = await stageDrop(items, p);
+        try {
+          await h.upload(staged.paths, to, resume, p);
+        } finally {
+          await staged.end().catch(() => {});
+        }
+      });
+    });
+  };
+
   const select = (name: string, e: MouseEvent) => {
     if (e.shiftKey && anchor.current) {
       const names = entries.map((x) => x.name);
@@ -284,7 +310,22 @@ export function SftpView({ conn, onStatus }: Props) {
         </button>
       </div>
 
-      <div className="sftp-list" role="grid" aria-label={`Files in ${path}`} tabIndex={0}>
+      <div
+        className={`sftp-list ${dropping ? "is-dropping" : ""}`}
+        role="grid"
+        aria-label={`Files in ${path}`}
+        tabIndex={0}
+        onDragOver={(e) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = busy ? "none" : "copy";
+          setDropping(true);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false);
+        }}
+        onDrop={onDrop}
+      >
         <div className="sftp-row sftp-head" role="row">
           <span>Name</span>
           <span>Size</span>

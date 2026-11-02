@@ -219,6 +219,12 @@ export interface Backend {
   pickFile(mode: "open" | "save", title: string): Promise<string | null>;
   /** Native picker for several files; empty if canceled. */
   pickFiles(title: string): Promise<string[]>;
+  /** Staging for files dropped onto the SFTP browser: a temporary folder
+   *  they are written into (the window gives no paths for dropped files). */
+  stageBegin(): Promise<string>;
+  stageMkdir(dir: string, rel: string): Promise<void>;
+  stageWrite(dir: string, rel: string, offset: number, bytes: Uint8Array): Promise<void>;
+  stageEnd(dir: string): Promise<void>;
   /** Open a web page in the default browser. */
   openUrl(url: string): Promise<void>;
   clipboardRead(): Promise<string>;
@@ -356,6 +362,13 @@ async function tauriBackend(): Promise<Backend> {
       const picked = await dialog.open({ title, multiple: true, directory: false });
       return Array.isArray(picked) ? picked : [];
     },
+    stageBegin: () => invoke<string>("stage_begin"),
+    stageMkdir: (dir, rel) => invoke("stage_mkdir", { dir, rel }),
+    stageWrite: (dir, rel, offset, bytes) =>
+      invoke("stage_write", bytes, {
+        headers: { "x-dir": encodeURIComponent(dir), "x-rel": encodeURIComponent(rel), "x-offset": String(offset) },
+      }),
+    stageEnd: (dir) => invoke("stage_end", { dir }),
     openUrl: async (url) => (await import("@tauri-apps/plugin-opener")).openUrl(url),
     // The clipboard plugin: WebView2 can refuse navigator.clipboard reads.
     clipboardRead: async () => (await clipboard).readText().catch(() => ""),

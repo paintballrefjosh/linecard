@@ -16,6 +16,7 @@ mod scripting;
 mod secrets;
 mod sftp;
 mod snippets;
+mod stage;
 mod sync;
 mod system;
 
@@ -1118,6 +1119,10 @@ pub fn run() {
             sftp::sftp_download,
             sftp::sftp_upload,
             sftp::sftp_close,
+            stage::stage_begin,
+            stage::stage_mkdir,
+            stage::stage_write,
+            stage::stage_end,
             highlight::save_highlight_profile,
             highlight::delete_highlight_profile,
             highlight::set_default_highlight,

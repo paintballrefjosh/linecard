@@ -2400,6 +2400,11 @@ button.status-version:hover {
   overflow: auto;
   outline: none;
 }
+.sftp-list.is-dropping {
+  outline: 2px dashed var(--accent, #3a7bd5);
+  outline-offset: -4px;
+  background: color-mix(in srgb, var(--accent, #3a7bd5) 8%, transparent);
+}
 .sftp-row {
   display: grid;
   grid-template-columns: minmax(120px, 1fr) 80px 100px 90px;

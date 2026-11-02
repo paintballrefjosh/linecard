@@ -706,6 +706,10 @@ export function mockBackend(): Backend {
       memClipboard = text;
       await navigator.clipboard.writeText(text).catch(() => {});
     },
+    stageBegin: async () => "C:\mock-stage",
+    stageMkdir: async () => {},
+    stageWrite: async () => {},
+    stageEnd: async () => {},
     async pickFiles() {
       return ["C:\temp\firmware.bin"];
     },
