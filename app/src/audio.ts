@@ -8,10 +8,9 @@ export class PcmPlayer {
    *  turn into a growing delay. */
   private static readonly MAX_AHEAD = 0.5;
 
-  play(channels: number, rate: number, base64: string) {
+  play(channels: number, rate: number, pcm: Uint8Array) {
     if (this.muted || channels < 1 || channels > 2) return;
-    const raw = atob(base64);
-    const frames = Math.floor(raw.length / (2 * channels));
+    const frames = Math.floor(pcm.length / (2 * channels));
     if (frames === 0) return;
     const ctx = (this.ctx ??= new AudioContext());
     void ctx.resume(); // allowed once the user has touched the page
@@ -20,8 +19,7 @@ export class PcmPlayer {
       const out = buffer.getChannelData(c);
       for (let i = 0; i < frames; i++) {
         const at = (i * channels + c) * 2;
-        const v = raw.charCodeAt(at) | (raw.charCodeAt(at + 1) << 8);
-        out[i] = (v << 16 >> 16) / 32768; // sign-extend 16 bits
+        out[i] = ((pcm[at] | (pcm[at + 1] << 8)) << 16 >> 16) / 32768; // sign-extend 16 bits
       }
     }
     const now = ctx.currentTime;

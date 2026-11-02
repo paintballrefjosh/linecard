@@ -90,9 +90,13 @@ export interface GfxHandle {
   close(): void;
 }
 
-/** Binary frame: x, y, width, height (u16 little endian), then RGBA. */
+/** Binary frame: x, y, width, height (u16 little endian), then RGBA; or
+ *  sound: 0xFFFF, channels (u16), rate (u32), then 16-bit samples. */
 function decodeFrame(buf: ArrayBuffer): GfxEvent {
   const v = new DataView(buf);
+  // Sound shares the channel with frames; 0xFFFF where x would be marks it.
+  if (v.getUint16(0, true) === 0xffff)
+    return { event: "audio", channels: v.getUint16(2, true), rate: v.getUint32(4, true), pcm: new Uint8Array(buf, 8) };
   return {
     event: "frame",
     x: v.getUint16(0, true),

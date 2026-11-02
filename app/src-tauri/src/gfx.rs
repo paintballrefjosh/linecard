@@ -32,12 +32,6 @@ enum GfxEventDto {
     Clipboard {
         text: String,
     },
-    /// 16-bit little-endian PCM, base64.
-    Audio {
-        channels: u16,
-        rate: u32,
-        pcm: String,
-    },
     /// `shape`: "default", "hidden" or "image" (then the rest is filled in).
     #[serde(rename_all = "camelCase")]
     Cursor {
@@ -60,7 +54,48 @@ fn send_json(ch: &Channel<InvokeResponseBody>, v: &impl Serialize) {
     }
 }
 
-fn forward(ch: &Channel<InvokeResponseBody>, who: &str, e: GfxEvent) {
+/// Sound waiting to be sent: waves come every few milliseconds and each
+/// message costs the window time, so they go out about 100 ms at a time.
+#[derive(Default)]
+struct AudioBatch {
+    channels: u16,
+    rate: u32,
+    pcm: Vec<u8>,
+    announced: bool,
+}
+
+impl AudioBatch {
+    /// Binary like a frame, told apart by 0xFFFF where the frame's x would be:
+    /// marker, channels, rate (u16, u16, u32 little endian), then 16-bit samples.
+    fn flush(&mut self, ch: &Channel<InvokeResponseBody>) {
+        if self.pcm.is_empty() {
+            return;
+        }
+        let mut msg = Vec::with_capacity(8 + self.pcm.len());
+        msg.extend(0xFFFFu16.to_le_bytes());
+        msg.extend(self.channels.to_le_bytes());
+        msg.extend(self.rate.to_le_bytes());
+        msg.append(&mut self.pcm);
+        let _ = ch.send(InvokeResponseBody::Raw(msg));
+    }
+
+    fn add(&mut self, ch: &Channel<InvokeResponseBody>, who: &str, channels: u16, rate: u32, pcm: Vec<u8>) {
+        if !self.announced {
+            self.announced = true;
+            crate::debuglog::write("remote", &format!("{who}: sound, {channels} channel(s) at {rate} Hz"));
+        }
+        if (self.channels, self.rate) != (channels, rate) {
+            self.flush(ch);
+            (self.channels, self.rate) = (channels, rate);
+        }
+        self.pcm.extend(pcm);
+        if self.pcm.len() >= usize::from(channels) * rate as usize * 2 / 10 {
+            self.flush(ch);
+        }
+    }
+}
+
+fn forward(ch: &Channel<InvokeResponseBody>, who: &str, audio: &mut AudioBatch, e: GfxEvent) {
     match e {
         GfxEvent::Frame {
             x,
@@ -80,14 +115,7 @@ fn forward(ch: &Channel<InvokeResponseBody>, who: &str, e: GfxEvent) {
         GfxEvent::Resized { width, height } => send_json(ch, &GfxEventDto::Resized { width, height }),
         GfxEvent::Bell => send_json(ch, &GfxEventDto::Bell),
         GfxEvent::Clipboard(text) => send_json(ch, &GfxEventDto::Clipboard { text }),
-        GfxEvent::Audio { channels, rate, pcm } => send_json(
-            ch,
-            &GfxEventDto::Audio {
-                channels,
-                rate,
-                pcm: base64::engine::general_purpose::STANDARD.encode(pcm),
-            },
-        ),
+        GfxEvent::Audio { channels, rate, pcm } => audio.add(ch, who, channels, rate, pcm),
         GfxEvent::Cursor(shape) => {
             let (shape, width, height, hot_x, hot_y, rgba) = match shape {
                 CursorShape::Default => ("default", 0, 0, 0, 0, String::new()),
@@ -158,7 +186,8 @@ pub async fn open_gfx_session(
     };
     let credentials = state.ssh.credentials.clone();
     let who = format!("{kind:?} {endpoint}");
-    let sink: linecard_proto::gfx::GfxSink = Box::new(move |e| forward(&on_event, &who, e));
+    let mut audio = AudioBatch::default();
+    let sink: linecard_proto::gfx::GfxSink = Box::new(move |e| forward(&on_event, &who, &mut audio, e));
     let session: Box<dyn GfxSession> = match kind {
         ConnectionKind::Vnc => Box::new(
             linecard_proto::vnc::VncSession::connect_with(
