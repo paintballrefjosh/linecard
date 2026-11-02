@@ -27,7 +27,7 @@ ironrdp-dvc = "0.10"
 ironrdp-displaycontrol = "0.10"
 ironrdp-cliprdr = "0.9"
 x509-cert = { version = "0.3", features = ["std"] }
-sha2 = "0.10"
+sha2 = "0.11"
 base64 = "0.22"
 # SFTP client (independent of russh; works over any stream).
 russh-sftp = "3"
