@@ -778,23 +778,6 @@ impl RdpsndClientHandler for Sound {
         &self.formats
     }
 
-    fn choose_formats(&self, server_formats: &[AudioFormat]) -> Vec<AudioFormat> {
-        let name = |f: &AudioFormat| {
-            format!(
-                "{:?} {}ch {}Hz {}bit",
-                f.format, f.n_channels, f.n_samples_per_sec, f.bits_per_sample
-            )
-        };
-        let list = |formats: &[AudioFormat]| formats.iter().map(name).collect::<Vec<_>>().join(", ");
-        let chosen = ironrdp_rdpsnd::pdu::retain_offered(self.formats.clone(), server_formats);
-        (self.emit)(GfxEvent::Log(format!(
-            "sound: the server offers [{}]; Linecard accepts [{}]",
-            list(server_formats),
-            list(&chosen)
-        )));
-        chosen
-    }
-
     fn wave(&mut self, format: &AudioFormat, _ts: u32, data: std::borrow::Cow<'_, [u8]>) {
         if format.format == WaveFormat::PCM && format.bits_per_sample == 16 && !data.is_empty() {
             (self.emit)(GfxEvent::Audio {
@@ -921,14 +904,6 @@ async fn session(result: ConnectionResult, framed: Upgraded, host: &str, ui: &mu
     let size = result.desktop_size;
     let mut image = DecodedImage::new(PixelFormat::RgbA32, size.width, size.height);
     let activation_factory = result.activation_factory;
-    (ui.emit)(GfxEvent::Log(format!(
-        "static channel ids: rdpsnd {:?}, cliprdr {:?}, drdynvc {:?}",
-        result.static_channels.get_channel_id_by_type::<Rdpsnd>(),
-        result.static_channels.get_channel_id_by_type::<Cliprdr<Client>>(),
-        result
-            .static_channels
-            .get_channel_id_by_type::<ironrdp_dvc::DrdynvcClient>(),
-    )));
     let mut stage = ActiveStageBuilder {
         static_channels: result.static_channels,
         user_channel_id: result.user_channel_id,

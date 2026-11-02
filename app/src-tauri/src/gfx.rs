@@ -61,7 +61,6 @@ struct AudioBatch {
     channels: u16,
     rate: u32,
     pcm: Vec<u8>,
-    announced: bool,
 }
 
 impl AudioBatch {
@@ -79,11 +78,7 @@ impl AudioBatch {
         let _ = ch.send(InvokeResponseBody::Raw(msg));
     }
 
-    fn add(&mut self, ch: &Channel<InvokeResponseBody>, who: &str, channels: u16, rate: u32, pcm: Vec<u8>) {
-        if !self.announced {
-            self.announced = true;
-            crate::debuglog::write("remote", &format!("{who}: sound, {channels} channel(s) at {rate} Hz"));
-        }
+    fn add(&mut self, ch: &Channel<InvokeResponseBody>, channels: u16, rate: u32, pcm: Vec<u8>) {
         if (self.channels, self.rate) != (channels, rate) {
             self.flush(ch);
             (self.channels, self.rate) = (channels, rate);
@@ -115,8 +110,7 @@ fn forward(ch: &Channel<InvokeResponseBody>, who: &str, audio: &mut AudioBatch, 
         GfxEvent::Resized { width, height } => send_json(ch, &GfxEventDto::Resized { width, height }),
         GfxEvent::Bell => send_json(ch, &GfxEventDto::Bell),
         GfxEvent::Clipboard(text) => send_json(ch, &GfxEventDto::Clipboard { text }),
-        GfxEvent::Audio { channels, rate, pcm } => audio.add(ch, who, channels, rate, pcm),
-        GfxEvent::Log(line) => crate::debuglog::write("remote", &format!("{who}: {line}")),
+        GfxEvent::Audio { channels, rate, pcm } => audio.add(ch, channels, rate, pcm),
         GfxEvent::Cursor(shape) => {
             let (shape, width, height, hot_x, hot_y, rgba) = match shape {
                 CursorShape::Default => ("default", 0, 0, 0, 0, String::new()),

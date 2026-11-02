@@ -71,37 +71,6 @@ pub fn path() -> Option<PathBuf> {
     LOG.lock().ok()?.as_ref().map(|l| l.path.clone())
 }
 
-/// Send the RDP library's own notes about sound and dynamic channels to the
-/// log (area "rdp-trace"), to see how a server negotiates them. Only those
-/// two parts of the library: they carry channel names and audio formats.
-pub fn trace() {
-    use tracing_subscriber::filter::{LevelFilter, Targets};
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
-    use tracing_subscriber::Layer;
-
-    struct Line;
-    impl Write for Line {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            write("rdp-trace", &String::from_utf8_lossy(buf));
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let only = Targets::new()
-        .with_target("ironrdp_rdpsnd", LevelFilter::DEBUG)
-        .with_target("ironrdp_dvc", LevelFilter::DEBUG)
-        .with_target("ironrdp_connector::channel_connection", LevelFilter::DEBUG);
-    let layer = tracing_subscriber::fmt::layer()
-        .with_ansi(false)
-        .without_time()
-        .with_writer(|| Line)
-        .with_filter(only);
-    let _ = tracing_subscriber::registry().with(layer).try_init();
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

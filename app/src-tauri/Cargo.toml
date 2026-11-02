@@ -19,9 +19,6 @@ linecard-core-store = { workspace = true }
 linecard-vault = { workspace = true }
 linecard-sync = { workspace = true }
 linecard-script = { workspace = true }
-# A trace of the RDP sound channels in the debug log (see debuglog::trace).
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "registry", "fmt"] }
 tokio = { workspace = true }
 linecard-importers = { workspace = true }
 linecard-proto = { workspace = true }

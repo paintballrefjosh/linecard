@@ -61,8 +61,6 @@ pub enum GfxEvent {
     Clipboard(String),
     /// The remote pointer changed shape.
     Cursor(CursorShape),
-    /// Something for the debug log (how a feature was negotiated).
-    Log(String),
     /// Sound to play: 16-bit little-endian samples, channels interleaved.
     Audio {
         channels: u16,
