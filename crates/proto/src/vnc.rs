@@ -194,7 +194,7 @@ pub fn ard_response(
         creds[field + n] = 0;
     }
     let cipher = aes::Aes128::new(aes::cipher::generic_array::GenericArray::from_slice(&key));
-    for block in creds.chunks_exact_mut(16) {
+    for block in creds.as_chunks_mut::<16>().0 {
         cipher.encrypt_block(aes::cipher::generic_array::GenericArray::from_mut_slice(block));
     }
     (creds.to_vec(), be(&public))
