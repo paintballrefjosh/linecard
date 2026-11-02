@@ -463,7 +463,7 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
 
         {d.kind === "rdp" && (
           <>
-            <span className="form-label">Shared folder</span>
+            <span className="form-label form-label-top">Shared folder</span>
             {shareSupported ? (
               <div className="share-field">
                 <div className="share-row">

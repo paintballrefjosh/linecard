@@ -2726,9 +2726,25 @@ button.status-version:hover {
   flex: 1;
   min-width: 0;
 }
+.form-label-top {
+  align-self: start;
+  padding-top: 6px;
+}
 .share-writable {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  justify-content: flex-start;
   gap: 6px;
   font-size: 13px;
+  text-align: left;
+}
+/* The form grid sizes every input like a text box; a checkbox is only as big as itself. */
+.form-grid .share-writable input {
+  flex: none;
+  width: auto;
+  height: auto;
+  margin: 2px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
 }
