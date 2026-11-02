@@ -29,6 +29,7 @@ import {
 import { attachHighlighter, highlightStore } from "../highlight";
 import { pasteLineCount, usePrefs } from "../prefs";
 import { broadcast, useBroadcast } from "../broadcast";
+import { reconnect } from "../reconnect";
 import { scripts } from "../scripts";
 import { screens } from "../screens";
 import { ContextMenu } from "./ContextMenu";
@@ -262,6 +263,7 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
     reconnectRef.current = () => {
       if (ended) start();
     };
+    if (panelId) reconnect.register(panelId, () => reconnectRef.current());
     start();
 
     const highlighter = attachHighlighter(t, () => ({
@@ -341,6 +343,7 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
       highlighter.dispose();
       input.dispose();
       if (panelId) broadcast.register(panelId, null);
+      if (panelId) reconnect.register(panelId, null);
       resize.dispose();
       session?.close();
       t.dispose();

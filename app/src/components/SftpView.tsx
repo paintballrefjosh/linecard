@@ -18,10 +18,13 @@ import { ConfirmDialog, Modal } from "./Dialog";
 import { relativeTime } from "./ConnectionTree";
 import { SessionPrompt } from "./SessionPrompt";
 import { collectDrop, hasFiles, stageDrop } from "../staging";
+import { reconnect } from "../reconnect";
 import { formatBytes, type SessionStatus } from "./TerminalView";
 
 interface Props {
   conn: ConnectionNode;
+  /** The tab this is in, so the tab menu can reconnect it. */
+  panelId?: string;
   onStatus(status: SessionStatus): void;
 }
 
@@ -41,7 +44,7 @@ type Busy = { label: string; bytes: number } | null;
 
 /** A remote folder browser over SFTP: browse, upload, download, rename,
  *  create folders and delete. */
-export function SftpView({ conn, onStatus }: Props) {
+export function SftpView({ conn, panelId, onStatus }: Props) {
   const handle = useRef<SftpHandle | null>(null);
   const [prompt, setPrompt] = useState<HostKeyEvent | AuthEvent | null>(null);
   const [state, setState] = useState<"connecting" | "ready" | "failed">("connecting");
@@ -113,6 +116,12 @@ export function SftpView({ conn, onStatus }: Props) {
       handle.current = null;
     };
   }, [conn, attempt]);
+
+  useEffect(() => {
+    if (!panelId) return;
+    reconnect.register(panelId, () => setAttempt((a) => a + 1));
+    return () => reconnect.register(panelId, null);
+  }, [panelId]);
 
   const reply = (r: PromptReply) => {
     setPrompt(null);

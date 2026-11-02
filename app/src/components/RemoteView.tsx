@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, typ
 import { RotateCw, Volume2, VolumeX } from "lucide-react";
 import { getBackend, type GfxHandle } from "../api";
 import { PcmPlayer } from "../audio";
+import { reconnect } from "../reconnect";
 import type { AuthEvent, ConnectionNode, GfxEvent, HostKeyEvent, PromptReply } from "../types";
 import { KindIcon, kindLabel } from "./icons";
 import { SessionPrompt } from "./SessionPrompt";
@@ -9,6 +10,8 @@ import type { SessionStatus } from "./TerminalView";
 
 interface Props {
   conn: ConnectionNode;
+  /** The tab this is in, so the tab menu can reconnect it. */
+  panelId?: string;
   onStatus(status: SessionStatus): void;
 }
 
@@ -17,7 +20,7 @@ const buttonsOf = (b: number) => (b & 1) | ((b & 4) >> 1) | ((b & 2) << 1);
 
 /** A VNC or RDP session: the remote screen on a canvas, scaled to fit the
  *  tab, with mouse and keyboard going back to it. */
-export function RemoteView({ conn, onStatus }: Props) {
+export function RemoteView({ conn, panelId, onStatus }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const session = useRef<GfxHandle | null>(null);
@@ -91,6 +94,9 @@ export function RemoteView({ conn, onStatus }: Props) {
         }
         case "disconnected":
           setPrompt(null);
+          // Blank the frozen picture: the message says the session is over.
+          canvas.current?.getContext("2d")?.clearRect(0, 0, size.current.w, size.current.h);
+          setScreen(null);
           setEnded(e.reason);
           statusRef.current("disconnected");
           break;
@@ -118,6 +124,12 @@ export function RemoteView({ conn, onStatus }: Props) {
       setHasSound(false);
     };
   }, [conn, attempt]);
+
+  useEffect(() => {
+    if (!panelId) return;
+    reconnect.register(panelId, () => setAttempt((a) => a + 1));
+    return () => reconnect.register(panelId, null);
+  }, [panelId]);
 
   // RDP can follow the tab's size (the server decides; VNC ignores it).
   useEffect(() => {

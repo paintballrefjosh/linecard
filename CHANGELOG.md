@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Right-click a tab to Reconnect or Close it.** Reconnect works on terminal, RDP, VNC and SFTP tabs once they have disconnected.
+- **A disconnected RDP or VNC tab now blanks the frozen picture** and shows the "Disconnected" message with a Reconnect button, instead of leaving the last image on screen.
+
 - **RDP sound**: audio from the remote computer now plays on this one, with a mute button in the corner of the tab. Only the server-to-you direction (no microphone).
 
 - **VNC over TLS (VeNCrypt)**: servers that insist on encryption, which is TigerVNC's and most Linux servers' default, now work, with a VNC password or a username and password. The server's certificate is shown the first time (like an SSH host key) and remembered if you accept it; a changed certificate warns you. Servers that offer only anonymous TLS (no certificate) are still unsupported.

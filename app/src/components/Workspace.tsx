@@ -9,7 +9,7 @@ import {
   type SerializedDockview,
 } from "dockview";
 import "dockview/dist/styles/dockview.css";
-import { FolderOpen, Radio, X } from "lucide-react";
+import { FolderOpen, Radio, RotateCw, X } from "lucide-react";
 import type { ConnectionNode, LayoutId } from "../types";
 import type { Theme } from "../theme";
 import { KindIcon } from "./icons";
@@ -17,6 +17,8 @@ import { TerminalView, type SessionStatus } from "./TerminalView";
 import { RemoteView } from "./RemoteView";
 import { SftpView } from "./SftpView";
 import { Modal } from "./Dialog";
+import { ContextMenu } from "./ContextMenu";
+import { reconnect } from "../reconnect";
 import { usePrefs } from "../prefs";
 import { broadcast, useBroadcast } from "../broadcast";
 
@@ -61,9 +63,9 @@ function SessionPanel({ api, params }: IDockviewPanelProps<PanelParams>) {
     const sub = api.onDidActiveChange((e) => setActive(e.isActive));
     return () => sub.dispose();
   }, [api]);
-  if (params.files) return <SftpView conn={conn} onStatus={(s) => setStatus(api.id, s)} />;
+  if (params.files) return <SftpView conn={conn} panelId={api.id} onStatus={(s) => setStatus(api.id, s)} />;
   if (conn.kind === "rdp" || conn.kind === "vnc")
-    return <RemoteView conn={conn} onStatus={(s) => setStatus(api.id, s)} />;
+    return <RemoteView conn={conn} panelId={api.id} onStatus={(s) => setStatus(api.id, s)} />;
   return (
     <TerminalView
       panelId={api.id}
@@ -95,6 +97,7 @@ function SessionTab({ api, containerApi, params }: IDockviewPanelHeaderProps<Pan
   const active = activity[api.id];
   const { on: casting, members } = useBroadcast();
   const member = members.has(api.id);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   return (
     <div
       className={`session-tab ${active ? "has-activity" : ""}`}
@@ -102,6 +105,10 @@ function SessionTab({ api, containerApi, params }: IDockviewPanelHeaderProps<Pan
       title={`${api.title} · ${conn.endpoint}${active ? " · new output" : ""}`}
       // Clicking a tab leaves focus on the tab; the keyboard belongs to the session.
       onClick={() => focusSession(containerApi, api.id)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenu({ x: e.clientX, y: e.clientY });
+      }}
       // Middle-click closes, as in browsers (mousedown would start autoscroll).
       onMouseDown={(e) => e.button === 1 && e.preventDefault()}
       onAuxClick={(e) => {
@@ -139,6 +146,23 @@ function SessionTab({ api, containerApi, params }: IDockviewPanelHeaderProps<Pan
       >
         <X size={13} />
       </button>
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          label={` tab`}
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              label: "Reconnect",
+              icon: <RotateCw size={15} />,
+              disabled: s !== "disconnected",
+              onSelect: () => reconnect.run(api.id),
+            },
+            { label: "Close tab", icon: <X size={15} />, onSelect: () => askClose(api.id) },
+          ]}
+        />
+      )}
     </div>
   );
 }
