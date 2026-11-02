@@ -120,10 +120,15 @@ The latest 512 KB of each session's output is kept for scripts; one that falls f
 ## Starting scripts without the window
 
 - **Command line.** `linecard run versions.py` (a path, relative to where you typed it) or `linecard run versions` (a script in the scripts folder) opens Linecard's Scripts window and runs it there; if Linecard is already running it uses that window. The command returns at once; the output is in the window.
-- **On connect.** In the Scripts window, under **Run on connect**, choose a connection and a script. Each time that connection logs in, the script starts with that tab as `lc.active()`. If another script is still running, a note appears in the tab and nothing starts. Rules are kept per computer (script paths differ between computers) and aren't synced.
+- **On connect.** In the Scripts window, under **Run on connect**, choose a connection and a script. Each time that connection logs in, the script starts with that tab as `lc.active()`. If six scripts are already running, a note appears in the tab and nothing starts. Rules are kept per computer (script paths differ between computers) and aren't synced.
+
+- **On a schedule.** Under **Run on a schedule**, choose a script and either *every N minutes* or *daily at* a time. Linecard starts it while it is open; a script that is still running from the last time is not started again. Intervals count from when Linecard started (or the rule was added). A daily run that was missed because Linecard was closed is skipped; one missed because the computer was asleep runs when it wakes. A scheduled script cannot ask questions: `lc.ask()` returns `None` at once. Its output appears in the Scripts window, marked with a clock. Schedules are kept per computer, like the on-connect rules.
+
+## Several at once
+
+Up to six scripts run at the same time, from the Scripts window, `linecard run`, on-connect rules and schedules. Each has its own output, shown as tabs in the window. Two scripts driving the same session will interleave their input, so give each its own.
 
 ## Not (yet) there
 
-- Running a script on a schedule, or without Linecard's window.
+- Running a script without Linecard's window open.
 - A script editor or debugger inside Linecard; use your own editor.
-- More than one script at a time.

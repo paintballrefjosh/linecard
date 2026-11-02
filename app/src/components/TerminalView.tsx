@@ -53,7 +53,7 @@ const FONT = '"Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, "Dej
 const NEWLINE = String.fromCharCode(10);
 
 /** Shown instead of starting an on-connect script while another script runs. */
-const MSG_SCRIPT_BUSY = "\r\n\x1b[2m[A script is already running; not starting the on-connect script.]\x1b[0m\r\n";
+const MSG_SCRIPT_BUSY = "\r\n\x1b[2m[Too many scripts are running; not starting the on-connect script.]\x1b[0m\r\n";
 
 export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput }: Props) {
   const activeRef = useRef(active);
@@ -186,7 +186,7 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
       const rule = prefsRef.current.onConnect.find((r) => r.connectionId === conn.id);
       if (!rule) return;
       session.focus();
-      if (scripts.state.running) t.write(MSG_SCRIPT_BUSY);
+      if (!scripts.canStart()) t.write(MSG_SCRIPT_BUSY);
       else void scripts.start(rule.script);
     };
 

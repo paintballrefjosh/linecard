@@ -1,3 +1,4 @@
+import type { Schedule } from "./schedule";
 import { createContext, useContext } from "react";
 import type { SerializedDockview } from "dockview";
 
@@ -28,6 +29,8 @@ export interface Preferences {
   showButtonBar: boolean;
   /** Scripts to start when a connection logs in (per computer: paths differ). */
   onConnect: { connectionId: string; script: string }[];
+  /** Scripts to run now and then while Linecard is open (per computer). */
+  schedules: Schedule[];
   /** Python for scripts (empty: find one on this computer). */
   pythonPath: string;
   /** Ask once before quitting with sessions open. */
@@ -46,6 +49,7 @@ export const defaultPrefs: Preferences = {
   showButtonBar: false,
   pythonPath: "",
   onConnect: [],
+  schedules: [],
 };
 
 export function withDefaults(stored: Partial<Preferences> | null | undefined): Preferences {

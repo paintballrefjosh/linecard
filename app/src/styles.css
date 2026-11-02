@@ -2648,3 +2648,48 @@ button.status-version:hover {
   font-size: 0.9em;
   pointer-events: none;
 }
+
+.scripts-note {
+  margin: 4px 0 0;
+  color: var(--text-quiet);
+  font-size: 0.85em;
+}
+.script-runs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 6px;
+}
+.script-run {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.script-run.is-selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.script-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-quiet);
+}
+.script-dot.is-running {
+  background: var(--accent);
+}
+.script-dot.is-ok {
+  background: var(--chg-added);
+}
+.script-dot.is-bad {
+  background: var(--chg-deleted);
+}

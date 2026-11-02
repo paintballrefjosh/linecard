@@ -37,6 +37,7 @@ import { DevicesPage, versionMismatch } from "./components/DevicesPage";
 import { BroadcastButton } from "./components/BroadcastButton";
 import { ButtonBar } from "./components/ButtonBar";
 import { ScriptsDialog } from "./components/ScriptsDialog";
+import { isDue } from "./schedule";
 import { scripts, useScripts } from "./scripts";
 import { screens } from "./screens";
 import { LayoutPicker, layoutShortcut } from "./components/LayoutPicker";
@@ -137,6 +138,26 @@ export default function App() {
   const [focusRequest, setFocusRequest] = useState<{ id: string; ids?: string[]; n: number } | null>(null);
   const [passwordFor, setPasswordFor] = useState<{ id: string; name: string } | null>(null);
   const [prefs, setPrefs] = useState<Preferences>(defaultPrefs);
+  // Scheduled scripts (Scripts window → Run on a schedule), checked every few seconds.
+  const schedules = useRef(prefs.schedules);
+  schedules.current = prefs.schedules;
+  useEffect(() => {
+    const seen = new Map<string, number>(); // when each rule was first noticed
+    const lastRun = new Map<string, number>();
+    const tick = () => {
+      const now = new Date();
+      for (const rule of schedules.current) {
+        if (!seen.has(rule.id)) seen.set(rule.id, now.getTime());
+        if (!isDue(rule, now, lastRun.get(rule.id) ?? null, seen.get(rule.id) ?? now.getTime())) continue;
+        if (scripts.isRunning(rule.script) || !scripts.canStart()) continue;
+        lastRun.set(rule.id, now.getTime());
+        void scripts.start(rule.script, { scheduled: true });
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const [importing, setImporting] = useState(false);
   const [showUpdate, setShowUpdate] = useState(false);
   /** Sessions open right now, and whether we're asking before quitting. */
@@ -413,8 +434,12 @@ export default function App() {
                 </button>
                 <button
                   className={`icon-btn ${script.running ? "is-running" : ""}`}
-                  aria-label={script.running ? "Scripts (one is running)" : "Scripts"}
-                  title={script.running ? "Scripts: one is running" : "Scripts: automate sessions with Python"}
+                  aria-label={script.running ? `Scripts (${script.running} running)` : "Scripts"}
+                  title={
+                    script.running
+                      ? `Scripts: ${script.running} running`
+                      : "Scripts: automate sessions with Python"
+                  }
                   onClick={() => setScriptsOpen(true)}
                 >
                   <FileCode2 size={16} />
