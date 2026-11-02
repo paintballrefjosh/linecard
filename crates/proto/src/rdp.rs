@@ -559,10 +559,16 @@ fn with_share(connector: ClientConnector, share: &ShareFolder) -> io::Result<Cli
     let drive = RedirectedDrive::new(FIRST_NAMED_DRIVE_DEVICE_ID, name, &share.path, !share.writable)
         .map_err(|e| err(format!("can't share {}: {e}", share.path.display())))?;
     let factory = WindowsRdpdrBackendFactory::new(drive);
-    let computer = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Linecard".into());
-    let rdpdr =
-        ironrdp_rdpdr::Rdpdr::new(Box::new(factory.build()), computer).with_drives(Some(factory.initial_drives()));
+    let rdpdr = ironrdp_rdpdr::Rdpdr::new(Box::new(factory.build()), computer_name())
+        .with_drives(Some(factory.initial_drives()));
     Ok(connector.with_static_channel(rdpdr))
+}
+
+/// This computer's name, as shown beside a shared drive.
+fn computer_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "Linecard".into())
 }
 
 /// Other systems can't share a folder yet; say so rather than connect without it.
@@ -609,9 +615,15 @@ async fn attempt(
         .with_static_channel(drdynvc)
         .with_static_channel(clipboard)
         .with_static_channel(Rdpsnd::new(Box::new(Sound::new(ui.emit.clone()))));
-    if let Some(share) = &opts.share {
-        connector = with_share(connector, share)?;
-    }
+    // Windows servers only start sound for clients that offer this channel (as
+    // mstsc always does), so it is offered even with nothing shared.
+    connector = match &opts.share {
+        Some(share) => with_share(connector, share)?,
+        None => connector.with_static_channel(ironrdp_rdpdr::Rdpdr::new(
+            Box::new(ironrdp_rdpdr::backend::noop::NoopRdpdrBackend),
+            computer_name(),
+        )),
+    };
 
     let should_upgrade = ironrdp_tokio::connect_begin(&mut framed, &mut connector)
         .await
