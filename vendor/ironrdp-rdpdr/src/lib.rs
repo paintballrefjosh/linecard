@@ -912,7 +912,11 @@ impl Rdpdr {
                     {
                         let _ = writeln!(f, "REQ {}", trace_req.chars().take(600).collect::<String>());
                         for m in &out {
-                            let _ = writeln!(f, "  RESP {:?}", m);
+                            let hex: String = m
+                                .encode_unframed_pdu()
+                                .map(|b| b.iter().map(|x| format!("{x:02x}")).collect())
+                                .unwrap_or_default();
+                            let _ = writeln!(f, "  RESP {:?} {hex}", m);
                         }
                         if out.is_empty() {
                             let _ = writeln!(f, "  (no reply yet)");
