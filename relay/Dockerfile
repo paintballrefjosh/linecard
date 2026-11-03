@@ -24,6 +24,8 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS build
 COPY --from=planner /src/recipe.json recipe.json
+# The patched IronRDP crates (root Cargo.toml [patch.crates-io]) must exist before cargo reads the manifest.
+COPY vendor vendor
 RUN cargo chef cook --release -p linecard-relay --recipe-path recipe.json
 COPY . .
 RUN cargo build --release -p linecard-relay \
