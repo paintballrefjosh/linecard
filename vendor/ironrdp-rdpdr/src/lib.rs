@@ -897,33 +897,11 @@ impl Rdpdr {
 
                 debug!(?req);
 
-                let trace_req = format!("{req:?}");
-                let out = self
+                Ok(self
                     .backend
                     .as_mut()
                     .ok_or_else(|| pdu_other_err!("missing rdpdr backend"))?
-                    .handle_drive_io_request(req)?;
-                {
-                    use std::io::Write as _;
-                    if let Ok(mut f) = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(std::env::temp_dir().join("linecard-rdpdr.log"))
-                    {
-                        let _ = writeln!(f, "REQ {}", trace_req.chars().take(600).collect::<String>());
-                        for m in &out {
-                            let hex: String = m
-                                .encode_unframed_pdu()
-                                .map(|b| b.iter().map(|x| format!("{x:02x}")).collect())
-                                .unwrap_or_default();
-                            let _ = writeln!(f, "  RESP {:?} {hex}", m);
-                        }
-                        if out.is_empty() {
-                            let _ = writeln!(f, "  (no reply yet)");
-                        }
-                    }
-                }
-                Ok(out)
+                    .handle_drive_io_request(req)?)
             }
             DeviceType::Print => {
                 if self.rejected_device_ids.contains(&dev_io_req.device_id) {

@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **RDP: share a folder with the remote computer (Windows).** In an RDP connection's settings, **Shared folder** picks one folder on this computer to appear as a drive in the remote session. It is read-only unless you tick "Let the remote computer change and delete files in it". The choice is kept on this computer only and is not synced to your others, since a folder path means nothing elsewhere and a synced setting could expose a folder here. On macOS and Linux the setting explains that it is not available yet.
+- **RDP: share a folder with the remote computer (Windows).** In an RDP connection's settings, **Shared folder** picks one folder on this computer to appear as a drive in the remote session. It is read-only unless you tick "Let the remote computer change and delete files in it". The choice is kept on this computer only and is not synced to your others, since a folder path means nothing elsewhere and a synced setting could expose a folder here. On macOS and Linux the setting explains that it is not available yet. Windows 10 hosts needed two small fixes to the sharing library, kept in `vendor/` (see its README).
 
 - **VNC: Tight encoding**, so TightVNC servers (common on Windows, and without the ZRLE encoding Linecard already used) send compressed screen updates instead of falling back to raw pixels. JPEG-quality Tight is not requested; updates stay lossless.
 
