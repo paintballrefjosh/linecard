@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.4.9"
+version = "0.4.10"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/paintballrefjosh/linecard"
@@ -44,3 +44,4 @@ strip = true
 
 [patch.crates-io]
 ironrdp-rdpdr = { path = "vendor/ironrdp-rdpdr" }
+ironrdp-rdpdr-native = { path = "vendor/ironrdp-rdpdr-native" }
