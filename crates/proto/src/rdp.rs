@@ -1369,7 +1369,7 @@ mod tests {
             },
         );
         assert!(ok.is_ok());
-        // A relative path is not a drive root or a folder on one.
+        // A folder that does not exist is refused.
         let bad = with_share(
             connector(),
             &ShareFolder {
@@ -1380,7 +1380,7 @@ mod tests {
         let Err(e) = bad else {
             panic!("a relative path is refused")
         };
-        assert!(e.to_string().contains("can't share"), "{e}");
+        assert!(e.to_string().contains("can't find the shared folder"), "{e}");
     }
 
     #[test]
