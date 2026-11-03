@@ -579,6 +579,7 @@ fn with_share(connector: ClientConnector, share: &ShareFolder) -> io::Result<Cli
 /// The name a shared folder appears under in the remote session. The protocol
 /// carries at most seven plain characters, and Windows failed to open a drive
 /// whose name had a space in it, so only letters and digits are kept.
+#[cfg(windows)]
 fn drive_name(path: &std::path::Path) -> String {
     let name: String = path
         .file_name()
@@ -1383,6 +1384,7 @@ mod tests {
         assert!(e.to_string().contains("can't find the shared folder"), "{e}");
     }
 
+    #[cfg(windows)]
     #[test]
     fn a_shared_folder_is_named_with_plain_characters() {
         let name = |p: &str| drive_name(std::path::Path::new(p));
