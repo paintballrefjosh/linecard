@@ -549,10 +549,24 @@ impl Login {
 fn with_share(connector: ClientConnector, share: &ShareFolder) -> io::Result<ClientConnector> {
     use ironrdp_rdpdr_native::{RedirectedDrive, WindowsRdpdrBackendFactory, FIRST_NAMED_DRIVE_DEVICE_ID};
 
+    // The backend refuses any path that passes through a link (junction, symbolic link, a
+    // mapped or OneDrive folder), so share the folder's real location instead.
+    let real = std::fs::canonicalize(&share.path)
+        .map_err(|e| err(format!("can't find the shared folder {}: {e}", share.path.display())))?;
+    let real = match real.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        Some(rest) if rest.starts_with("UNC\\") => {
+            return Err(err(format!(
+                "{} is on a network location, which can't be shared with a remote computer yet; choose a folder on this computer's own disk",
+                share.path.display()
+            )))
+        }
+        Some(rest) => std::path::PathBuf::from(rest),
+        None => real,
+    };
     let drive = RedirectedDrive::new(
         FIRST_NAMED_DRIVE_DEVICE_ID,
         drive_name(&share.path),
-        &share.path,
+        &real,
         !share.writable,
     )
     .map_err(|e| err(format!("can't share {}: {e}", share.path.display())))?;
