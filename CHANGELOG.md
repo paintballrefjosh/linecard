@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Dragging a tab works over Remote Desktop.** The drop areas did not show when a tab was dragged in a Linecard running inside an RDP session (dragging the empty tab bar was fine). The tab is now dragged with a plain text label.
+
 ## v0.4.10 — RDP sound and shared folder, VNC encryption and Tight, tab menu with Reconnect, in-place upgrades
 
 Includes everything in the v0.4.0 notes below, which was never published.

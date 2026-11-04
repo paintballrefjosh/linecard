@@ -98,8 +98,30 @@ function SessionTab({ api, containerApi, params }: IDockviewPanelHeaderProps<Pan
   const { on: casting, members } = useBroadcast();
   const member = members.has(api.id);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const root = useRef<HTMLDivElement>(null);
+  // Dockview drags a tab with a copy of the whole tab (every computed style, icons and buttons)
+  // as the drag image; over Remote Desktop the drop areas stopped showing for it, while the
+  // plain-text image it uses for the empty header area worked. Replace it with the same kind.
+  useEffect(() => {
+    const tab = root.current?.closest<HTMLElement>(".dv-tab");
+    if (!tab) return;
+    const title = api.title ?? "";
+    const onDragStart = (e: DragEvent) => {
+      if (!e.dataTransfer) return;
+      const ghost = document.createElement("div");
+      ghost.className = "tab-drag-image";
+      ghost.textContent = title;
+      document.body.appendChild(ghost);
+      e.dataTransfer.setDragImage(ghost, 30, -10);
+      window.setTimeout(() => ghost.remove(), 0);
+    };
+    // Added after dockview's own listener on this element, so this image is the one used.
+    tab.addEventListener("dragstart", onDragStart);
+    return () => tab.removeEventListener("dragstart", onDragStart);
+  }, [api]);
   return (
     <div
+      ref={root}
       className={`session-tab ${active ? "has-activity" : ""}`}
       style={conn.tabColor ? ({ "--tab-color": conn.tabColor } as CSSProperties) : undefined}
       title={`${api.title} · ${conn.endpoint}${active ? " · new output" : ""}`}
