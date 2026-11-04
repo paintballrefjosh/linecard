@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { DockviewApi } from "dockview";
+import type { DockviewApi } from "dockview-react";
 import { Pencil } from "lucide-react";
 import { getBackend } from "../api";
 import { sendInput } from "../broadcast";

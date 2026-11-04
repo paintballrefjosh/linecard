@@ -7,8 +7,8 @@ import {
   type IDockviewPanelProps,
   type IWatermarkPanelProps,
   type SerializedDockview,
-} from "dockview";
-import "dockview/dist/styles/dockview.css";
+} from "dockview-react";
+import "dockview-react/dist/styles/dockview.css";
 import { FolderOpen, Radio, RotateCw, X } from "lucide-react";
 import type { ConnectionNode, LayoutId } from "../types";
 import type { Theme } from "../theme";

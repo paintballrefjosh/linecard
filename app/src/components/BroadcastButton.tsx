@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import type { DockviewApi } from "dockview";
+import type { DockviewApi } from "dockview-react";
 import { Radio } from "lucide-react";
 import { broadcast, useBroadcast } from "../broadcast";
 
