@@ -15,8 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use des::cipher::generic_array::GenericArray;
-use des::cipher::{BlockEncrypt, KeyInit};
+use des::cipher::{BlockCipherEncrypt, KeyInit};
 use flate2::{Decompress, FlushDecompress};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -412,7 +411,7 @@ pub fn ard_response(
     private: &[u8],
     padding: &[u8; 128],
 ) -> (Vec<u8>, Vec<u8>) {
-    use aes::cipher::{BlockEncrypt as _, KeyInit as _};
+    use aes::cipher::{BlockCipherEncrypt as _, KeyInit as _};
     use md5::{Digest, Md5};
     use num_bigint::BigUint;
 
@@ -436,9 +435,9 @@ pub fn ard_response(
         creds[field..field + n].copy_from_slice(&bytes[..n]);
         creds[field + n] = 0;
     }
-    let cipher = aes::Aes128::new(aes::cipher::generic_array::GenericArray::from_slice(&key));
+    let cipher = aes::Aes128::new_from_slice(&key).expect("MD5 gives 16 bytes");
     for block in creds.as_chunks_mut::<16>().0 {
-        cipher.encrypt_block(aes::cipher::generic_array::GenericArray::from_mut_slice(block));
+        cipher.encrypt_block(block.into());
     }
     (creds.to_vec(), be(&public))
 }
@@ -486,10 +485,10 @@ pub fn vnc_auth_response(password: &str, challenge: &[u8; 16]) -> [u8; 16] {
     for (k, b) in key.iter_mut().zip(password.bytes()) {
         *k = b.reverse_bits();
     }
-    let cipher = des::Des::new(GenericArray::from_slice(&key));
+    let cipher = des::Des::new_from_slice(&key).expect("a DES key is 8 bytes");
     let mut out = *challenge;
     for block in out.as_chunks_mut::<8>().0 {
-        cipher.encrypt_block(GenericArray::from_mut_slice(block));
+        cipher.encrypt_block(block.into());
     }
     out
 }
@@ -652,8 +651,8 @@ async fn run(
             asked = ask;
             let mut private = vec![0u8; key_len];
             let mut padding = [0u8; 128];
-            getrandom::getrandom(&mut private).map_err(|e| fail(e.to_string()))?;
-            getrandom::getrandom(&mut padding).map_err(|e| fail(e.to_string()))?;
+            getrandom::fill(&mut private).map_err(|e| fail(e.to_string()))?;
+            getrandom::fill(&mut padding).map_err(|e| fail(e.to_string()))?;
             let (sealed, public) =
                 ard_response(&user, &password, generator, &prime, &server_public, &private, &padding);
             w.write_all(&sealed).await?;

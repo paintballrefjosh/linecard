@@ -90,7 +90,7 @@ impl Run {
         listener.set_nonblocking(true)?;
         let port = listener.local_addr()?.port();
         let mut raw = [0u8; 24];
-        getrandom::getrandom(&mut raw).map_err(|e| io::Error::other(e.to_string()))?;
+        getrandom::fill(&mut raw).map_err(|e| io::Error::other(e.to_string()))?;
         let token: String = raw.iter().map(|b| format!("{b:02x}")).collect();
 
         let mut path = vec![opts.lib_dir.clone()];

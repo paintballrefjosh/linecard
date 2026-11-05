@@ -25,7 +25,7 @@ fn b64() -> base64::engine::GeneralPurpose {
 
 fn random<const N: usize>() -> Result<[u8; N], VaultError> {
     let mut b = [0u8; N];
-    getrandom::getrandom(&mut b).map_err(|e| VaultError::Backend(e.to_string()))?;
+    getrandom::fill(&mut b).map_err(|e| VaultError::Backend(e.to_string()))?;
     Ok(b)
 }
 
@@ -73,7 +73,7 @@ impl VaultKey {
         let nonce = random::<24>()?;
         let ct = XChaCha20Poly1305::new((&self.0).into())
             .encrypt(
-                XNonce::from_slice(&nonce),
+                &XNonce::from(nonce),
                 Payload {
                     msg: plain.as_bytes(),
                     aad: aad.as_bytes(),
@@ -92,7 +92,7 @@ impl VaultKey {
         }
         let plain = XChaCha20Poly1305::new((&self.0).into())
             .decrypt(
-                XNonce::from_slice(&raw[..24]),
+                &XNonce::try_from(&raw[..24]).expect("24 bytes"),
                 Payload {
                     msg: &raw[24..],
                     aad: aad.as_bytes(),
