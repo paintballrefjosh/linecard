@@ -481,3 +481,79 @@ pub fn script_screen_reply(state: State<AppState>, id: u64, text: Option<String>
         let _ = tx.send(text);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(tap: &Arc<Tap>) -> Entry {
+        Entry {
+            name: "core1".into(),
+            kind: kind_name(ConnectionKind::Ssh),
+            endpoint: "10.0.0.1:22".into(),
+            connection: None,
+            tap: tap.clone(),
+        }
+    }
+
+    #[test]
+    fn kinds_are_lowercase_names() {
+        assert_eq!(kind_name(ConnectionKind::Ssh), "ssh");
+        assert_eq!(kind_name(ConnectionKind::Telnet), "telnet");
+    }
+
+    #[test]
+    fn a_closed_session_ends_its_tap_and_stops_being_active() {
+        let scripting = Scripting::default();
+        let (a, b) = (Arc::new(Tap::default()), Arc::new(Tap::default()));
+        scripting.register("a", entry(&a));
+        scripting.register("b", entry(&b));
+        *lock(&scripting.active) = Some("a".into());
+
+        scripting.unregister("b"); // not the active one
+        assert!(b.is_ended());
+        assert_eq!(lock(&scripting.active).as_deref(), Some("a"));
+
+        scripting.unregister("a");
+        assert!(a.is_ended());
+        assert_eq!(*lock(&scripting.active), None);
+        assert!(lock(&scripting.sessions).is_empty());
+
+        scripting.unregister("never-registered"); // harmless
+    }
+
+    #[test]
+    fn stopping_a_run_drops_its_pending_question() {
+        let (tx, rx) = mpsc::channel();
+        let live = Live {
+            run: OnceLock::new(),
+            ui: Channel::new(|_| Ok(())),
+            ask: Mutex::new(Some((1, tx))),
+            asks: AtomicU64::new(1),
+        };
+        live.cancel_ask();
+        assert!(lock(&live.ask).is_none());
+        assert!(rx.recv().is_err(), "the waiting script is released");
+    }
+
+    #[test]
+    fn events_reach_the_window_in_the_documented_shape() {
+        let ask = serde_json::to_value(ScriptEventDto::Ask {
+            id: 3,
+            prompt: "Password?".into(),
+            secret: true,
+        })
+        .unwrap();
+        assert_eq!(ask["event"], "ask");
+        assert_eq!(ask["id"], 3);
+        assert_eq!(ask["secret"], true);
+
+        let done = serde_json::to_value(ScriptEventDto::Finished {
+            code: Some(0),
+            stopped: false,
+        })
+        .unwrap();
+        assert_eq!(done["event"], "finished");
+        assert_eq!(done["code"], 0);
+    }
+}
