@@ -1,0 +1,52 @@
+[package]
+name = "linecard-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+linecard-importers = { path = "../crates/importers" }
+linecard-sync = { path = "../crates/sync" }
+serde_json = "1"
+
+# Not part of the main workspace: it needs nightly and the libFuzzer runtime.
+[workspace]
+
+[[bin]]
+name = "import_ssh_config"
+path = "fuzz_targets/import_ssh_config.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import_mremoteng"
+path = "fuzz_targets/import_mremoteng.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import_superputty"
+path = "fuzz_targets/import_superputty.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import_securecrt"
+path = "fuzz_targets/import_securecrt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sync_open"
+path = "fuzz_targets/sync_open.rs"
+test = false
+doc = false
+bench = false

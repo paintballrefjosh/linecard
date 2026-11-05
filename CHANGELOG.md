@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **A crafted ssh_config can no longer hang the import.** Found by the new fuzz tests: a Host pattern with many `*` wildcards took exponential time to match. Matching is now linear.
 - **Dragging a tab works over Remote Desktop.** The drop areas did not show when a tab was dragged in a Linecard running inside an RDP session (dragging the empty tab bar was fine). The tab is now dragged with a plain text label.
 
 ## v0.4.10 — RDP sound and shared folder, VNC encryption and Tight, tab menu with Reconnect, in-place upgrades

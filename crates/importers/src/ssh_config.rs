@@ -31,17 +31,37 @@ fn parse_line(line: &str) -> Option<(String, String)> {
 }
 
 /// OpenSSH glob: `*` any run, `?` one character; `!` negations are skipped.
+/// Matches in one pass, remembering only the last `*`, so a hostile pattern
+/// like `*a*a*a*a*b` can't make the import take exponential time.
 fn glob(pattern: &str, text: &str) -> bool {
-    fn go(p: &[u8], t: &[u8]) -> bool {
-        match (p.first(), t.first()) {
-            (None, None) => true,
-            (Some(b'*'), _) => go(&p[1..], t) || (!t.is_empty() && go(p, &t[1..])),
-            (Some(b'?'), Some(_)) => go(&p[1..], &t[1..]),
-            (Some(a), Some(b)) if a.eq_ignore_ascii_case(b) => go(&p[1..], &t[1..]),
-            _ => false,
+    let (p, t) = (pattern.as_bytes(), text.as_bytes());
+    let (mut pi, mut ti) = (0, 0);
+    let mut star: Option<(usize, usize)> = None; // pattern index after the `*`, text index it is matching from
+    while ti < t.len() {
+        match p.get(pi) {
+            Some(b'*') => {
+                pi += 1;
+                star = Some((pi, ti));
+            }
+            Some(b'?') => {
+                pi += 1;
+                ti += 1;
+            }
+            Some(a) if a.eq_ignore_ascii_case(&t[ti]) => {
+                pi += 1;
+                ti += 1;
+            }
+            _ => match star {
+                Some((sp, st)) => {
+                    pi = sp;
+                    ti = st + 1;
+                    star = Some((sp, st + 1));
+                }
+                None => return false,
+            },
         }
     }
-    go(pattern.as_bytes(), text.as_bytes())
+    p[pi..].iter().all(|&c| c == b'*')
 }
 
 fn is_pattern(s: &str) -> bool {
@@ -204,5 +224,17 @@ Host *
         assert!(glob("sw-*", "sw-edge1"));
         assert!(glob("10.0.?.1", "10.0.5.1"));
         assert!(!glob("sw-*", "core1"));
+        assert!(glob("*", ""));
+        assert!(glob("a*b*c", "AxxBxxC"));
+        assert!(!glob("a*b*c", "axxbxx"));
+        assert!(!glob("?", ""));
+        assert!(glob("sw-**", "sw-"));
+    }
+
+    #[test]
+    fn a_hostile_pattern_does_not_take_exponential_time() {
+        let pattern = "*a".repeat(40) + "*b";
+        let text = "a".repeat(200);
+        assert!(!glob(&pattern, &text));
     }
 }
