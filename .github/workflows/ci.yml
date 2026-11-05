@@ -41,6 +41,40 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
+  # Line coverage for the Rust workspace, uploaded to Codecov. Runs on Linux
+  # only; the numbers don't change by platform. Pull requests from forks have
+  # no CODECOV_TOKEN, so an upload failure never fails the build.
+  coverage:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux system libraries for Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libudev-dev
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Build UI (Tauri embeds it at compile time)
+        working-directory: app
+        run: |
+          npm ci
+          npm run build
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      - uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
   # Known vulnerabilities, licenses and sources in the dependencies. The
   # weekly run (see `schedule` above) catches advisories published after the last push.
   audit:
