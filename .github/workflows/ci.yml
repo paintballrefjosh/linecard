@@ -100,10 +100,10 @@ jobs:
       - name: Run each target
         run: |
           secs=20
-          [ "${{ github.event_name }}" = schedule ] && secs=300
+          if [ "${{ github.event_name }}" = schedule ]; then secs=300; fi
           for t in $(cargo fuzz list); do
             echo "::group::$t"
-            cargo fuzz run "$t" -- -max_total_time=$secs
+            cargo fuzz run --target x86_64-unknown-linux-gnu "$t" -- -max_total_time=$secs
             echo "::endgroup::"
           done
 
