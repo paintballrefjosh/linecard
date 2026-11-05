@@ -160,7 +160,13 @@ mod imp {
         if bytes.is_empty() {
             bytes = vec![0, 0];
         }
-        env_key()?.set_raw_value("Path", &RegValue { bytes, vtype })?;
+        env_key()?.set_raw_value(
+            "Path",
+            &RegValue {
+                bytes: bytes.into(),
+                vtype,
+            },
+        )?;
         broadcast_environment_change();
         Ok(())
     }

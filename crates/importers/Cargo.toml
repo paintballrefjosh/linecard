@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 linecard-core-model = { workspace = true }
-roxmltree = "0.20"   # mRemoteNG confCons.xml
+roxmltree = "0.21"   # mRemoteNG confCons.xml
 
 [target.'cfg(windows)'.dependencies]
-winreg = "0.55"      # PuTTY keeps sessions in the registry
+winreg = "0.56"      # PuTTY keeps sessions in the registry

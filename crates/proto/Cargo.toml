@@ -17,7 +17,7 @@ serialport = { version = "4", default-features = false }
 des = "0.8"
 aes = "0.8"
 md-5 = "0.10"
-num-bigint = "0.4"
+num-bigint = "0.5"
 getrandom = "0.2"
 flate2 = "1"
 # RDP (IronRDP): NLA over TLS.
@@ -38,7 +38,7 @@ sha2 = "0.10"
 # VNC's VeNCrypt (TLS); ring like the rest, no CMake/NASM.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
-base64 = "0.22"
+base64 = "0.23"
 # SFTP client (independent of russh; works over any stream).
 russh-sftp = "3"
 

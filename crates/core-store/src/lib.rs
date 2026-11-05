@@ -63,11 +63,11 @@ impl Store {
     }
 
     fn migrate(&mut self) -> Result<()> {
-        let current: usize = self.db.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        let current: i64 = self.db.pragma_query_value(None, "user_version", |r| r.get(0))?;
         let tx = self.db.transaction()?;
-        for (i, sql) in MIGRATIONS.iter().enumerate().skip(current) {
+        for (i, sql) in MIGRATIONS.iter().enumerate().skip(current as usize) {
             tx.execute_batch(sql)?;
-            tx.pragma_update(None, "user_version", i + 1)?;
+            tx.pragma_update(None, "user_version", (i + 1) as i64)?;
         }
         tx.commit()?;
         Ok(())
