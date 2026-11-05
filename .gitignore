@@ -11,3 +11,5 @@ app/src-tauri/gen/
 .tauri/
 *.key
 /packaging/out/
+/fuzz/corpus/
+/fuzz/artifacts/
