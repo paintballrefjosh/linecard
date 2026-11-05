@@ -14,11 +14,12 @@ chacha20poly1305 = "0.11"
 base64 = "0.23"
 getrandom = "0.4"
 
-# OS keychain: Windows Credential Manager / macOS Keychain / kernel keyutils.
+# OS keychain: Windows Credential Manager / macOS Keychain / Secret Service (GNOME Keyring, KWallet),
+# with kernel keyutils as the fallback where no Secret Service is running.
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "3", features = ["linux-native"] }
+keyring = { version = "3", features = ["linux-native-async-persistent", "crypto-rust", "async-io"] }
 

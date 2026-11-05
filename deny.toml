@@ -7,6 +7,8 @@ version = 2
 ignore = [
     # IronRDP -> sspi -> winscard -> iso7816 -> heapless. Unmaintained, no vulnerability; waiting on IronRDP.
     { id = "RUSTSEC-2023-0089", reason = "atomic-polyfill: unmaintained, via IronRDP" },
+    # IronRDP -> sspi -> async-dnssd -> pin-utils. Unmaintained, no vulnerability; waiting on IronRDP.
+    { id = "RUSTSEC-2026-0441", reason = "pin-utils: unmaintained, via IronRDP" },
     # Tauri's GTK3 stack (Linux only). Unmaintained, no vulnerability; goes when Tauri leaves GTK3.
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error: unmaintained, via Tauri/GTK3 (Linux)" },
     # IronRDP -> picky -> rsa (CredSSP). Timing side channel on RSA private-key use over the network;

@@ -97,7 +97,8 @@ impl SecretStore for MemoryStore {
 }
 
 /// The OS keychain: Windows Credential Manager, macOS Keychain, Linux
-/// keyutils. Entries are named `linecard` / `<credential id>`.
+/// Secret Service (GNOME Keyring, KWallet), with kernel keyutils as the
+/// fallback when none is running. Entries are named `linecard` / `<credential id>`.
 pub struct KeychainStore;
 
 const SERVICE: &str = "linecard";
