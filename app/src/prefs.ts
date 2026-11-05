@@ -1,6 +1,6 @@
 import type { Schedule } from "./schedule";
 import { createContext, useContext } from "react";
-import type { SerializedDockview } from "dockview";
+import type { SerializedDockview } from "dockview-react";
 
 /** Open tabs and pane layout saved under a name. */
 export interface SavedWorkspace {

@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { DockviewApi } from "dockview";
+import type { DockviewApi } from "dockview-react";
 import { BookmarkPlus, LayoutDashboard } from "lucide-react";
 import { usePrefs, type SavedWorkspace } from "../prefs";
 import type { ConnectionNode } from "../types";

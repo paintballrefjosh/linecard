@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import type { DockviewApi } from "dockview";
+import type { DockviewApi } from "dockview-react";
 import {
   Download,
   FileCode2,

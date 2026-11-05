@@ -2748,3 +2748,19 @@ button.status-version:hover {
   border: 0;
   background: none;
 }
+
+/* The image shown while dragging a tab: plain text, off screen until the browser copies it. */
+.tab-drag-image {
+  position: absolute;
+  top: -9999px;
+  padding: 2px 10px;
+  border-radius: 12px;
+  background: var(--bg-main);
+  color: var(--text);
+  border: 1px solid var(--border, #444);
+  font-size: 12px;
+  line-height: 20px;
+  height: 24px;
+  white-space: nowrap;
+  pointer-events: none;
+}
