@@ -968,4 +968,56 @@ mod tests {
         // The operator restored a backup.
         assert!(relay_restored(Some("a:60"), "b:0"));
     }
+    #[test]
+    fn keys_round_trip_through_hex() {
+        let key: [u8; 32] = std::array::from_fn(|i| (i * 8) as u8);
+        let text = hex(&key);
+        assert_eq!(text.len(), 64);
+        assert_eq!(unhex32(&text), Some(key));
+        assert_eq!(unhex32(&text.to_uppercase()), Some(key));
+    }
+
+    #[test]
+    fn a_damaged_hex_key_is_refused() {
+        let good = hex(&[7u8; 32]);
+        assert_eq!(unhex32(""), None);
+        assert_eq!(unhex32(&good[..62]), None, "too short");
+        assert_eq!(unhex32(&format!("{good}00")), None, "too long");
+        assert_eq!(unhex32(&good.replacen("07", "zz", 1)), None, "not hex");
+        assert_eq!(unhex32(&good[..63]), None, "odd length");
+    }
+
+    #[test]
+    fn each_install_keeps_its_own_keychain_entries() {
+        assert_eq!(group_secret("d1"), "sync:d1:group-key");
+        assert_eq!(device_secret("d1"), "sync:d1:device-key");
+        assert_eq!(account_secret("d1"), "sync:d1:relay-account");
+        assert_ne!(group_secret("d1"), group_secret("d2"));
+    }
+
+    #[test]
+    fn transports_are_named_and_polled_at_their_own_pace() {
+        let cfg = |t: &str| SyncConfig {
+            transport: t.into(),
+            location: String::new(),
+        };
+        assert_eq!(cfg("folder").label(), "shared folder");
+        assert_eq!(cfg("github").label(), "GitHub");
+        assert_eq!(cfg("lan").label(), "this network");
+        assert_eq!(cfg("relay").label(), "relay");
+        assert_eq!(cfg("lan").interval(), Duration::from_secs(3));
+        assert_eq!(cfg("relay").interval(), Duration::from_secs(5));
+        assert_eq!(cfg("folder").interval(), Duration::from_secs(10));
+        assert_eq!(cfg("github").interval(), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn the_closed_notice_names_who_to_ask() {
+        let text = closed_text(&Notice {
+            closed_by: "Office PC".into(),
+            at: 0,
+        });
+        assert!(text.starts_with("Office PC replaced the sync phrase"));
+        assert!(text.contains("from Office PC under Settings"));
+    }
 }

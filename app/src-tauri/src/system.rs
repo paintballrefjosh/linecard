@@ -227,6 +227,33 @@ mod imp {
         };
         set_user_path(&next, vtype).map_err(|e| format!("couldn't update PATH: {e}"))
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn the_install_folder_is_the_exes_parent() {
+            assert_eq!(dir_of(Path::new(r"C:\Apps\Linecard\linecard.exe")), r"C:\Apps\Linecard");
+            assert_eq!(dir_of(Path::new("linecard.exe")), "");
+        }
+
+        #[test]
+        fn path_membership_ignores_case_spaces_and_trailing_slashes() {
+            let path = r"C:\Windows; C:\Apps\Linecard\ ;D:\Tools";
+            assert!(has(path, r"C:\Apps\Linecard"));
+            assert!(has(path, r"c:\apps\linecard\"));
+            assert!(has(path, r"D:\Tools"));
+            assert!(!has(path, r"C:\Apps"));
+            assert!(!has("", r"C:\Apps"));
+        }
+
+        #[test]
+        fn the_url_handler_command_quotes_the_exe() {
+            let cmd = command(Path::new(r"C:\Program Files\Linecard\linecard.exe"));
+            assert!(cmd.starts_with('"') && cmd.contains(r#"linecard.exe" "%1""#), "{cmd}");
+        }
+    }
 }
 
 // ---- Linux -----------------------------------------------------------------------
