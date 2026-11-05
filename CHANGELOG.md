@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Linux: saved passwords survive a reboot.** They were kept only in the kernel keyring, which is emptied at logout. They now go to the desktop's Secret Service (GNOME Keyring, KWallet) as well, falling back to the kernel keyring when none is running.
 - **A crafted ssh_config can no longer hang the import.** Found by the new fuzz tests: a Host pattern with many `*` wildcards took exponential time to match. Matching is now linear.
 - **Dragging a tab works over Remote Desktop.** The drop areas did not show when a tab was dragged in a Linecard running inside an RDP session (dragging the empty tab bar was fine). The tab is now dragged with a plain text label.
 
