@@ -1,0 +1,12 @@
+# Coverage is reported on pull requests but never blocks them.
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+comment:
+  layout: "condensed_header, diff, files"
+  require_changes: true

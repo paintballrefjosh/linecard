@@ -1,6 +1,7 @@
 # <img src="docs/logo.svg" alt="" width="40" align="absmiddle"> Linecard
 
 [![CI](https://github.com/paintballrefjosh/linecard/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/paintballrefjosh/linecard/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/paintballrefjosh/linecard/graph/badge.svg)](https://codecov.io/gh/paintballrefjosh/linecard)
 [![CodeQL](https://github.com/paintballrefjosh/linecard/actions/workflows/codeql.yml/badge.svg?branch=master)](https://github.com/paintballrefjosh/linecard/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/paintballrefjosh/linecard/badge)](https://scorecard.dev/viewer/?uri=github.com/paintballrefjosh/linecard)
 [![Latest release](https://img.shields.io/github/v/release/paintballrefjosh/linecard)](https://github.com/paintballrefjosh/linecard/releases/latest)
