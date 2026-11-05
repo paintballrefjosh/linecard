@@ -7,11 +7,12 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
   app:
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -24,16 +25,17 @@ jobs:
             args: ""
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libudev-dev
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
           cache: npm
@@ -52,7 +54,7 @@ jobs:
             echo "$notes"
             echo "LINECARD_NOTES_EOF"
           } >> "$GITHUB_OUTPUT"
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Update-signing key (free; separate from OS code signing). See docs/releasing.md.
@@ -76,10 +78,10 @@ jobs:
       id-token: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -87,14 +89,14 @@ jobs:
       # v1.2.3 → :1.2.3 and :1.2 (and :latest for a release, not a pre-release).
       # Published versions are never re-tagged: a fix ships as a new version.
       - id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ghcr.io/${{ github.repository_owner }}/linecard-relay
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
       - id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: relay/Dockerfile
@@ -108,7 +110,7 @@ jobs:
           provenance: mode=max
       # Sign the image by digest (covers every tag and both architectures).
       # Verify with the command in docs/relay.md.
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
       - name: Sign the image
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
