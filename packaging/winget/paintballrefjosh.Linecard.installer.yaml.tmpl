@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: paintballrefjosh.Linecard
+PackageVersion: @VERSION@
+InstallerType: nullsoft
+Scope: user
+InstallModes:
+  - interactive
+  - silent
+UpgradeBehavior: install
+ReleaseDate: @DATE@
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/paintballrefjosh/linecard/releases/download/v@VERSION@/Linecard_@VERSION@_x64-setup.exe
+    InstallerSha256: @EXE_SHA@
+ManifestType: installer
+ManifestVersion: 1.6.0
