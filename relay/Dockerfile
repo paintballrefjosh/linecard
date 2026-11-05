@@ -13,7 +13,7 @@
 # Dependencies build in their own layer (cargo-chef), so a code change only
 # rebuilds the relay itself.
 
-FROM lukemathwalker/cargo-chef:latest-rust-1-alpine AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1-alpine@sha256:000cac9096459ebc31e55e1a99bed090b1ce3511f006b4b101fd2d4f4bcb4d1e AS chef
 # musl-dev and a C compiler: SQLite is compiled in (rusqlite "bundled").
 RUN apk add --no-cache musl-dev gcc
 WORKDIR /src
@@ -31,7 +31,7 @@ COPY . .
 RUN cargo build --release -p linecard-relay \
  && mkdir /data-seed /backups-seed
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 LABEL org.opencontainers.image.title="Linecard relay" \
       org.opencontainers.image.description="Stores and forwards end-to-end encrypted Linecard sync data" \
       org.opencontainers.image.source="https://github.com/paintballrefjosh/linecard" \
