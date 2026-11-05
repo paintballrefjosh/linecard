@@ -1,0 +1,24 @@
+cask "linecard" do
+  version "@VERSION@"
+  sha256 "@DMG_SHA@"
+
+  url "https://github.com/paintballrefjosh/linecard/releases/download/v#{version}/Linecard_#{version}_universal.dmg"
+  name "Linecard"
+  desc "SSH, Telnet, Serial, RDP and VNC client with an end-to-end encrypted, synced connection tree"
+  homepage "https://github.com/paintballrefjosh/linecard"
+
+  livecheck do
+    url :url
+    strategy :github_latest
+  end
+
+  auto_updates true
+
+  app "Linecard.app"
+
+  zap trash: [
+    "~/Library/Application Support/dev.linecard.app",
+    "~/Library/Caches/dev.linecard.app",
+    "~/Library/WebKit/dev.linecard.app",
+  ]
+end

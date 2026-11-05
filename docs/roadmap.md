@@ -49,6 +49,6 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 
 - [ ] Broadcast input, button bar / snippets, SFTP browser
 - [x] Python scripting (runs the user's own Python as a separate process; see docs/scripting.md)
-- [ ] macOS and Linux hardening; winget and Homebrew
+- [ ] macOS and Linux hardening; winget and Homebrew (manifests in packaging/, not yet submitted)
 
 Team sharing follows 1.0.
