@@ -323,8 +323,7 @@ fn zrle_rejects_truncated_data() {
 /// shape from the Cursor pseudo-encoding.
 #[tokio::test]
 async fn apple_remote_desktop_login_and_pointer_shape() {
-    use aes::cipher::generic_array::GenericArray;
-    use aes::cipher::{BlockDecrypt, KeyInit};
+    use aes::cipher::{BlockCipherDecrypt, KeyInit};
     use md5::{Digest, Md5};
     use num_bigint::BigUint;
 
@@ -361,9 +360,9 @@ async fn apple_remote_desktop_login_and_pointer_shape() {
         let mut shared_padded = vec![0u8; 16 - shared.len()];
         shared_padded.extend(&shared);
         let key = Md5::digest(&shared_padded);
-        let cipher = aes::Aes128::new(GenericArray::from_slice(&key));
+        let cipher = aes::Aes128::new_from_slice(&key).unwrap();
         for block in sealed.as_chunks_mut::<16>().0 {
-            cipher.decrypt_block(GenericArray::from_mut_slice(block));
+            cipher.decrypt_block(block.into());
         }
         let text = |b: &[u8]| String::from_utf8_lossy(&b[..b.iter().position(|&c| c == 0).unwrap()]).into_owned();
         *seen_by_server.lock().unwrap() = Some((text(&sealed[..64]), text(&sealed[64..])));

@@ -9,10 +9,10 @@ license.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 # Synced vault: passphrase -> key, then XChaCha20-Poly1305 per password.
-argon2 = "0.5"
-chacha20poly1305 = "0.10"
+argon2 = "0.6"
+chacha20poly1305 = "0.11"
 base64 = "0.23"
-getrandom = "0.2"
+getrandom = "0.4"
 
 # OS keychain: Windows Credential Manager / macOS Keychain / kernel keyutils.
 [target.'cfg(windows)'.dependencies]

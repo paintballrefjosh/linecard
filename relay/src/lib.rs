@@ -213,7 +213,7 @@ fn now_ms() -> i64 {
 /// A fresh account access key: `lcr_` and 48 hex digits.
 fn new_key() -> Result<String> {
     let mut raw = [0u8; 24];
-    getrandom::getrandom(&mut raw).map_err(|e| RelayError::Internal(e.to_string()))?;
+    getrandom::fill(&mut raw).map_err(|e| RelayError::Internal(e.to_string()))?;
     Ok(format!(
         "lcr_{}",
         raw.iter().map(|b| format!("{b:02x}")).collect::<String>()
@@ -817,7 +817,7 @@ pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 /// Give the database a new random epoch (see [`EPOCH_HEADER`]).
 pub fn set_new_epoch(db: &Connection) -> rusqlite::Result<()> {
     let mut raw = [0u8; 12];
-    getrandom::getrandom(&mut raw)
+    getrandom::fill(&mut raw)
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(std::io::Error::other(e.to_string()).into()))?;
     let epoch: String = raw.iter().map(|b| format!("{b:02x}")).collect();
     db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('epoch', ?1)", [epoch])?;

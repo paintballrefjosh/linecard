@@ -24,7 +24,7 @@ use crate::SyncError;
 
 fn random<const N: usize>() -> [u8; N] {
     let mut b = [0u8; N];
-    getrandom::getrandom(&mut b).expect("the OS random number generator failed");
+    getrandom::fill(&mut b).expect("the OS random number generator failed");
     b
 }
 
@@ -150,7 +150,7 @@ pub fn seal<T: Serialize>(group: &GroupKey, device_key: &DeviceKey, device: &str
     let data = group
         .cipher()
         .encrypt(
-            XNonce::from_slice(&nonce),
+            &XNonce::from(nonce),
             Payload {
                 msg: &plain,
                 aad: &aad(&gid, device),
@@ -194,7 +194,7 @@ pub fn open<T: DeserializeOwned>(group: &GroupKey, sealed: &Sealed) -> Result<T,
     let plain = group
         .cipher()
         .decrypt(
-            XNonce::from_slice(&nonce),
+            &XNonce::try_from(nonce.as_slice()).map_err(|_| SyncError::Tampered)?,
             Payload {
                 msg: &data,
                 aad: &aad(&gid, &sealed.device),
