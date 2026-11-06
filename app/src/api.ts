@@ -388,8 +388,14 @@ async function tauriBackend(): Promise<Backend> {
     clipboardRead: async () => (await clipboard).readText().catch(() => ""),
     clipboardWrite: async (text) => (await clipboard).writeText(text),
     async openSession(conn, size, onEvent) {
-      const channel = new Channel<SessionEvent>();
-      channel.onmessage = onEvent;
+      // Output arrives as raw bytes; every other event as JSON.
+      const channel = new Channel<unknown>();
+      channel.onmessage = (m) => {
+        if (m instanceof ArrayBuffer) onEvent({ event: "data", data: new Uint8Array(m) });
+        else if (ArrayBuffer.isView(m))
+          onEvent({ event: "data", data: new Uint8Array(m.buffer, m.byteOffset, m.byteLength) });
+        else onEvent(m as SessionEvent);
+      };
       const sessionId = await invoke<string>("open_session", {
         connectionId: conn.id,
         kind: conn.kind,
@@ -400,7 +406,7 @@ async function tauriBackend(): Promise<Backend> {
       });
       return {
         id: sessionId,
-        write: (data) => void invoke("session_write", { sessionId, data: Array.from(encoder.encode(data)) }),
+        write: (data) => void invoke("session_write", encoder.encode(data), { headers: { "x-session": sessionId } }),
         resize: (cols, rows) => void invoke("session_resize", { sessionId, cols, rows }),
         reply: (reply) => void invoke("session_reply", { sessionId, reply }),
         sendBreak: () => void invoke("session_break", { sessionId }),

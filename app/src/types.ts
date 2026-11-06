@@ -146,7 +146,8 @@ export interface AuthEvent {
 
 export type SessionEvent =
   | { event: "connected" }
-  | { event: "data"; data: number[] }
+  /** Raw bytes as the remote sent them. */
+  | { event: "data"; data: Uint8Array }
   | { event: "title"; title: string }
   | { event: "forwards"; forwards: ForwardState[] }
   | HostKeyEvent

@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use linecard_core_model::{FlowControl, Parity, SerialSettings};
 use serialport::SerialPort;
 
+use crate::queue::WriteQueue;
 use crate::xmodem::{self, Link};
 use crate::{ConnectionKind, EventSink, Session, SessionEvent, TransferRequest, TransferStatus};
 
@@ -92,6 +93,9 @@ fn builder(s: &SerialSettings) -> io::Result<serialport::SerialPortBuilder> {
 
 pub struct SerialSession {
     port: Box<dyn SerialPort>,
+    /// Input and BREAKs, sent in order off the caller's thread: at 9600 baud a
+    /// pasted page takes seconds to go out.
+    out: WriteQueue<Box<dyn SerialPort>>,
     stop: Arc<AtomicBool>,
     events: Arc<Mutex<EventSink>>,
     /// While a transfer runs, received bytes go here instead of the terminal.
@@ -116,6 +120,10 @@ impl SerialSession {
             _ => io::Error::other(format!("{}: {}", settings.port, e.description)),
         })?;
         let mut reader = port.try_clone().map_err(|e| io::Error::other(e.description))?;
+        let out = WriteQueue::spawn(
+            &format!("serial-tx-{}", settings.port),
+            port.try_clone().map_err(|e| io::Error::other(e.description))?,
+        )?;
         let stop = Arc::new(AtomicBool::new(false));
         let events = Arc::new(Mutex::new(events));
         let route: Arc<Mutex<Option<Sender<Vec<u8>>>>> = Arc::default();
@@ -150,6 +158,7 @@ impl SerialSession {
             })?;
         Ok(SerialSession {
             port,
+            out,
             stop,
             events,
             route,
@@ -268,7 +277,8 @@ impl Session for SerialSession {
     }
 
     fn write(&mut self, data: &[u8]) -> io::Result<()> {
-        self.port.write_all(data)
+        let data = data.to_vec();
+        self.out.run(move |p| p.write_all(&data))
     }
 
     fn resize(&mut self, _cols: u16, _rows: u16) -> io::Result<()> {
@@ -276,9 +286,12 @@ impl Session for SerialSession {
     }
 
     fn send_break(&mut self) -> io::Result<()> {
-        self.port.set_break().map_err(|e| io::Error::other(e.description))?;
-        thread::sleep(Duration::from_millis(BREAK_MS));
-        self.port.clear_break().map_err(|e| io::Error::other(e.description))
+        // After any input still going out, as on a real terminal.
+        self.out.run(|p| {
+            p.set_break().map_err(|e| io::Error::other(e.description))?;
+            thread::sleep(Duration::from_millis(BREAK_MS));
+            p.clear_break().map_err(|e| io::Error::other(e.description))
+        })
     }
 
     fn start_transfer(&mut self, req: TransferRequest) -> io::Result<()> {
@@ -292,6 +305,7 @@ impl Session for SerialSession {
     }
 
     fn close(&mut self) -> io::Result<()> {
+        self.out.close();
         self.cancel_transfer();
         self.stop.store(true, Ordering::Relaxed);
         Ok(())

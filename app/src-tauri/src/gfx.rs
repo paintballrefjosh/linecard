@@ -48,7 +48,7 @@ enum GfxEventDto {
     },
 }
 
-fn send_json(ch: &Channel<InvokeResponseBody>, v: &impl Serialize) {
+pub(crate) fn send_json(ch: &Channel<InvokeResponseBody>, v: &impl Serialize) {
     if let Ok(s) = serde_json::to_string(v) {
         let _ = ch.send(InvokeResponseBody::Json(s));
     }
