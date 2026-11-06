@@ -11,7 +11,7 @@
 //! `overrides.tab_color`, …) so concurrent edits to different settings of the
 //! same object merge instead of overwriting each other.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use linecard_core_model::{
@@ -226,10 +226,20 @@ impl Library {
         let out = f(&mut next)?;
         let now = now_ms();
         // Only objects the replica holds count as existing (the global
-        // settings object is implicit until first written).
-        let mut before = snapshot(&self.tree);
-        before.retain(|id, _| self.replica.object(id).is_some_and(|o| !o.is_deleted()));
-        let after = snapshot(&next);
+        // settings object is implicit until first written). Only objects that
+        // differ, or that the replica lacks, are turned into fields: doing the
+        // whole tree took most of an edit's time in a big library.
+        let live = |id: &str| self.replica.object(id).is_some_and(|o| !o.is_deleted());
+        let candidates = changed_ids(&self.tree, &next, live);
+        let before: BTreeMap<String, (&'static str, Fields)> = candidates
+            .iter()
+            .filter(|id| live(id))
+            .filter_map(|id| Some((id.clone(), object_fields(&self.tree, id)?)))
+            .collect();
+        let after: BTreeMap<String, (&'static str, Fields)> = candidates
+            .iter()
+            .filter_map(|id| Some((id.clone(), object_fields(&next, id)?)))
+            .collect();
         // Making each op also applies it to the replica, so a failure part way
         // (or when saving) must put the replica back to what's on disk.
         let mut ops = Vec::new();
@@ -370,7 +380,95 @@ fn kind_name(k: ConnectionKind) -> &'static str {
     }
 }
 
+/// Ids an edit may have to write: objects that differ between `old` and
+/// `new` (added, removed or changed), plus those the replica doesn't hold yet.
+fn changed_ids(old: &Tree, new: &Tree, live: impl Fn(&str) -> bool) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let mut check = |id: &str, same: bool| {
+        if !same || !live(id) {
+            out.insert(id.to_string());
+        }
+    };
+    check(GLOBAL_ID, old.global == new.global);
+    if old.vault.is_some() || new.vault.is_some() {
+        check(VAULT_ID, old.vault == new.vault);
+    }
+    for f in new.folders() {
+        check(&f.id, old.folder(&f.id).ok() == Some(f));
+    }
+    for c in new.connections() {
+        check(&c.id, old.connection(&c.id).ok() == Some(c));
+    }
+    for (id, h) in &new.highlight_profiles {
+        check(id, old.highlight_profiles.get(id) == Some(h));
+    }
+    for (id, s) in &new.snippets {
+        check(id, old.snippets.get(id) == Some(s));
+    }
+    for (id, s) in &new.secrets {
+        check(id, old.secrets.get(id) == Some(s));
+    }
+    // Removed ones.
+    let gone = old
+        .folders()
+        .map(|f| &f.id)
+        .filter(|id| new.folder(id).is_err())
+        .chain(
+            old.connections()
+                .map(|c| &c.id)
+                .filter(|id| new.connection(id).is_err()),
+        )
+        .chain(
+            old.highlight_profiles
+                .keys()
+                .filter(|id| !new.highlight_profiles.contains_key(*id)),
+        )
+        .chain(old.snippets.keys().filter(|id| !new.snippets.contains_key(*id)))
+        .chain(old.secrets.keys().filter(|id| !new.secrets.contains_key(*id)));
+    out.extend(gone.cloned());
+    out
+}
+
+/// One object of the tree as (kind, fields), the same as [`snapshot`] gives
+/// for its id (when ids collide across kinds, the same kind wins).
+fn object_fields(t: &Tree, id: &str) -> Option<(&'static str, Fields)> {
+    if let Some(s) = t.secrets.get(id) {
+        let mut m = Fields::new();
+        m.insert("key".into(), Value::Str(s.key.clone()));
+        m.insert("label".into(), Value::Str(s.label.clone()));
+        m.insert("blob".into(), Value::Str(s.blob.clone()));
+        return Some((KIND_SECRET, m));
+    }
+    if id == VAULT_ID {
+        if let Some(v) = &t.vault {
+            let mut m = Fields::new();
+            m.insert("salt".into(), Value::Str(v.salt.clone()));
+            m.insert("check".into(), Value::Str(v.check.clone()));
+            return Some((KIND_VAULT, m));
+        }
+    }
+    if let Some(s) = t.snippets.get(id) {
+        return Some((KIND_SNIPPET, snippet_fields(s)));
+    }
+    if let Some(h) = t.highlight_profiles.get(id) {
+        return Some((KIND_HIGHLIGHT, highlight_fields(h)));
+    }
+    if let Ok(c) = t.connection(id) {
+        return Some((KIND_CONNECTION, connection_fields(c)));
+    }
+    if let Ok(f) = t.folder(id) {
+        return Some((KIND_FOLDER, folder_fields(f)));
+    }
+    if id == GLOBAL_ID {
+        let mut global = Fields::new();
+        settings_fields("defaults", &t.global, &mut global);
+        return Some((KIND_SETTINGS, global));
+    }
+    None
+}
+
 /// Every object in the tree as (kind, fields), keyed by id.
+#[cfg(test)]
 fn snapshot(t: &Tree) -> BTreeMap<String, (&'static str, Fields)> {
     let mut out = BTreeMap::new();
     let mut global = Fields::new();
@@ -671,6 +769,83 @@ mod tests {
         assert_eq!(r.source_of("username"), Some(&Source::Folder("dc".into())));
         assert_eq!(r.settings.keepalive_secs, Some(30));
         assert!(lib.changes().is_empty(), "own history is not highlighted");
+    }
+
+    /// Edits look only at objects that changed; what they record must still
+    /// be everything that changed, every kind of object included.
+    #[test]
+    fn edits_record_exactly_what_changed() {
+        let mut lib = Library::open_in_memory(sample).unwrap();
+        type Step = Box<dyn Fn(&mut Tree)>;
+        let steps: Vec<Step> = vec![
+            Box::new(|t| t.global.keepalive_secs = Some(60)),
+            Box::new(|t| t.connection_mut("spine01").unwrap().notes = "moved racks".into()),
+            Box::new(|t| t.add_connection(conn("leaf01", Some("dc"))).unwrap()),
+            Box::new(|t| {
+                t.remove_connection("spine01").unwrap();
+                t.add_folder(folder("edge", None)).unwrap();
+            }),
+            Box::new(|t| {
+                t.snippets.insert(
+                    "s1".into(),
+                    Snippet {
+                        id: "s1".into(),
+                        name: "Show run".into(),
+                        text: "show run".into(),
+                        folder: None,
+                        order: 1.0,
+                        enter: true,
+                    },
+                );
+                t.highlight_profiles.insert(
+                    "h1".into(),
+                    HighlightProfile {
+                        id: "h1".into(),
+                        name: "Errors".into(),
+                        ..Default::default()
+                    },
+                );
+            }),
+            Box::new(|t| {
+                t.vault = Some(VaultMeta {
+                    salt: "s".into(),
+                    check: "c".into(),
+                });
+                t.secrets.insert(
+                    "p1".into(),
+                    SyncedSecret {
+                        id: "p1".into(),
+                        key: "k".into(),
+                        label: "admin".into(),
+                        blob: "b".into(),
+                    },
+                );
+            }),
+            Box::new(|t| {
+                t.snippets.clear();
+                t.secrets.clear();
+                t.vault = None;
+                t.remove_folder("spine").unwrap();
+            }),
+        ];
+        for (i, step) in steps.iter().enumerate() {
+            let mut want = lib.tree().clone();
+            step(&mut want);
+            lib.edit(|t| {
+                step(t);
+                Ok(())
+            })
+            .unwrap();
+            // The tree is rebuilt from the recorded ops, so a missed change shows here.
+            assert_eq!(snapshot(lib.tree()), snapshot(&want), "step {i}");
+        }
+        let before = lib.replica.log().len();
+        lib.edit(|_| Ok(())).unwrap();
+        assert_eq!(
+            lib.replica.log().len(),
+            before,
+            "an edit that changes nothing records nothing"
+        );
     }
 
     #[test]

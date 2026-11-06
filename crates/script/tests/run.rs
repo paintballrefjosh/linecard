@@ -195,6 +195,30 @@ fn a_script_prints_and_finishes() {
 }
 
 #[test]
+fn a_line_that_never_ends_comes_through_in_pieces() {
+    if python().is_none() {
+        return;
+    }
+    // 200 000 characters with no newline, then a normal line.
+    let r = run_script(
+        Fake::new(),
+        "import sys\nsys.stdout.write('x' * 200000)\nsys.stdout.flush()\nprint()\nprint('after')\n",
+    );
+    let pieces: Vec<usize> = r.out.iter().map(String::len).collect();
+    assert!(pieces.len() >= 4, "split into 64 KiB pieces: {pieces:?}");
+    assert!(pieces.iter().all(|&n| n <= 64 * 1024), "{pieces:?}");
+    assert_eq!(
+        r.out
+            .iter()
+            .filter(|l| l.starts_with('x'))
+            .map(String::len)
+            .sum::<usize>(),
+        200_000
+    );
+    assert_eq!(r.out.last().map(String::as_str), Some("after"));
+}
+
+#[test]
 fn an_error_in_the_script_is_reported_with_its_exit_code() {
     if python().is_none() {
         return;
