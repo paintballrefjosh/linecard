@@ -500,11 +500,17 @@ import os, socket, json
 sock = socket.create_connection(("127.0.0.1", int(os.environ["LINECARD_SCRIPT_PORT"])))
 f = sock.makefile("rw")
 f.write(json.dumps({"id": 0, "op": "hello", "token": "wrong"}) + "\n"); f.flush()
-print(repr(f.readline()))
+# Turned away: the server hangs up. Windows may report that as a reset
+# rather than a clean end of stream; both mean no reply came.
+try:
+    line = f.readline()
+except ConnectionError:
+    line = ''
+print(repr(line))
 "#,
     );
     drop(dir);
-    assert_eq!(r.out, ["''"]);
+    assert_eq!(r.out, ["''"], "stderr: {:?}", r.err);
 }
 
 #[test]

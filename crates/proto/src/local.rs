@@ -157,7 +157,8 @@ fn unix_shells() -> Vec<LocalShell> {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        out.push(LocalShell::new(p.to_string_lossy(), name, p, &["-l"]));
+        let id = p.to_string_lossy().into_owned();
+        out.push(LocalShell::new(id, name, p, &["-l"]));
     };
     // The user's own shell first.
     if let Some(s) = std::env::var_os("SHELL") {
