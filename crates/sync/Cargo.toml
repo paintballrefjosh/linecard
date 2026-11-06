@@ -14,6 +14,7 @@ getrandom = "0.4"
 hkdf = "0.13"
 linecard-core-sync = { workspace = true, features = ["serde"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+url = "2"
 # WebSocket push from the relay; TLS with the system's trust store, as reqwest does.
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
