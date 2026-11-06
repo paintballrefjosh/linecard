@@ -69,6 +69,17 @@ export function SettingsPage({ theme, onTheme }: Props) {
             onChange={(v) => update({ confirmCloseTab: v })}
           />
         </Row>
+        <Row
+          label="Name tabs after the session's title"
+          hint="Shells and programs like Claude Code set a title, as in SecureCRT. Hover a tab for its connection and host."
+          htmlFor="set-tab-title"
+        >
+          <Toggle
+            id="set-tab-title"
+            checked={prefs.tabTitleFromSession}
+            onChange={(v) => update({ tabTitleFromSession: v })}
+          />
+        </Row>
         <Row label="Ask once before quitting with connections open" htmlFor="set-confirm-quit">
           <Toggle id="set-confirm-quit" checked={prefs.confirmQuit} onChange={(v) => update({ confirmQuit: v })} />
         </Row>

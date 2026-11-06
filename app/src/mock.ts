@@ -937,6 +937,12 @@ export function mockBackend(): Backend {
                 onEvent({ event: "disconnected", reason: null });
                 return;
               }
+              // "title X" sets the tab title, as a shell's OSC 0 would.
+              if (cmd.startsWith("title")) {
+                onEvent({ event: "title", title: cmd.slice(5).trim() });
+                send(prompt);
+                return;
+              }
               // The demo's sz and rz ask the window, as a real server's would.
               if (cmd === "rz" || cmd.startsWith("sz ")) {
                 zmodemFile = cmd === "rz" ? null : cmd.slice(3).trim();
