@@ -34,7 +34,7 @@ use axum::{Json, Router};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::sync::Notify;
+use tokio::sync::watch;
 
 /// Response header naming the database's epoch (see `add_epoch`).
 pub const EPOCH_HEADER: &str = "x-linecard-epoch";
@@ -199,8 +199,9 @@ pub struct Relay {
     metrics: Metrics,
     db: Mutex<Connection>,
     limits: Limits,
-    /// Wakes waiters on a group when something is pushed to it.
-    waiters: Mutex<HashMap<String, Arc<Notify>>>,
+    /// Each group's newest sequence number, for waiters: a push wakes them with
+    /// the value, so they don't each go back to the database.
+    waiters: Mutex<HashMap<String, watch::Sender<i64>>>,
 }
 
 fn now_ms() -> i64 {
@@ -378,9 +379,29 @@ impl Relay {
         }
     }
 
-    fn waiter(&self, group: &str) -> Arc<Notify> {
+    /// Watch a group's newest sequence number. Subscribe before reading the
+    /// database, so a push in between isn't missed. The value only means
+    /// something once it changes; it closes when the group is removed.
+    fn waiter(&self, group: &str) -> watch::Receiver<i64> {
         let mut w = self.waiters.lock().unwrap_or_else(|p| p.into_inner());
-        w.entry(group.to_string()).or_default().clone()
+        w.entry(group.to_string())
+            .or_insert_with(|| watch::channel(0).0)
+            .subscribe()
+    }
+
+    /// Tell a group's waiters its newest sequence number (only ever forward:
+    /// two pushes can announce out of order).
+    fn announce(&self, group: &str, head: i64) {
+        let w = self.waiters.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(tx) = w.get(group) {
+            tx.send_if_modified(|v| {
+                let newer = head > *v;
+                if newer {
+                    *v = head;
+                }
+                newer
+            });
+        }
     }
 
     pub fn push(&self, group: &str, token: &str, account: Option<&str>, device: &str, blob: &str) -> Result<i64> {
@@ -394,10 +415,19 @@ impl Relay {
             let mut db = self.db()?;
             self.authorize(&db, group, token, account, true)?;
             let tx = db.transaction()?;
-            let (count, last): (i64, Option<i64>) =
-                tx.query_row("SELECT COUNT(*), MAX(seq) FROM ops WHERE group_id = ?1", [group], |r| {
+            // A group's batches are always one unbroken run of sequence numbers
+            // (pushes add at the end; compaction swaps a prefix for a run at the
+            // end), so its size is MAX - MIN + 1: two index lookups, where
+            // COUNT(*) read every batch, up to max_ops of them, on every push.
+            // Were there ever a gap, this would overcount: the limit errs early.
+            let (first, last): (Option<i64>, Option<i64>) =
+                tx.query_row("SELECT MIN(seq), MAX(seq) FROM ops WHERE group_id = ?1", [group], |r| {
                     Ok((r.get(0)?, r.get(1)?))
                 })?;
+            let count = match (first, last) {
+                (Some(a), Some(b)) => b - a + 1,
+                _ => 0,
+            };
             if count >= self.limits.max_ops {
                 return Err(RelayError::Full);
             }
@@ -417,7 +447,7 @@ impl Relay {
             tx.commit()?;
             seq
         };
-        self.waiter(group).notify_waiters();
+        self.announce(group, seq);
         Ok(seq)
     }
 
@@ -517,7 +547,7 @@ impl Relay {
                 freed: freed - added,
             }
         };
-        self.waiter(group).notify_waiters();
+        self.announce(group, result.head);
         Ok(result)
     }
 
@@ -535,17 +565,17 @@ impl Relay {
     /// The newest sequence number once it's past `after`, or after `wait`
     /// (whichever is first).
     pub async fn wait(&self, group: &str, token: &str, after: i64, wait: Duration) -> Result<i64> {
-        let notify = self.waiter(group);
-        let changed = notify.notified();
-        tokio::pin!(changed);
-        // Register before checking, so a push in between isn't missed.
-        changed.as_mut().enable();
+        let mut head = self.waiter(group);
         let latest = self.latest(group, token)?;
         if latest > after {
             return Ok(latest);
         }
-        let _ = tokio::time::timeout(wait.min(MAX_WAIT), changed).await;
-        self.latest(group, token)
+        // Woken with the new value: no second trip to the database.
+        match tokio::time::timeout(wait.min(MAX_WAIT), head.changed()).await {
+            Ok(Ok(())) => Ok((*head.borrow()).max(latest)),
+            Ok(Err(_)) => self.latest(group, token), // the group was removed
+            Err(_) => Ok(latest),                    // nothing new in time
+        }
     }
 
     pub fn put_device(&self, group: &str, token: &str, account: Option<&str>, device: &str, blob: &str) -> Result<()> {
@@ -895,19 +925,27 @@ struct DeviceBody {
 
 pub(crate) type Shared = Arc<Relay>;
 
+/// Run database work on the blocking pool: SQLite calls (and waiting for the
+/// one connection) would otherwise hold up the async threads that serve every
+/// other request and WebSocket.
+async fn blocking<T: Send + 'static>(r: &Shared, f: impl FnOnce(&Relay) -> Result<T> + Send + 'static) -> Result<T> {
+    let r = r.clone();
+    tokio::task::spawn_blocking(move || f(&r))
+        .await
+        .map_err(|e| RelayError::Internal(e.to_string()))?
+}
+
 async fn push(
     State(r): State<Shared>,
     UrlPath(group): UrlPath<String>,
     headers: HeaderMap,
     Json(b): Json<PushBody>,
 ) -> Result<Json<serde_json::Value>> {
-    let seq = r.push(
-        &group,
-        &token(&headers),
-        account(&headers).as_deref(),
-        &b.device,
-        &b.blob,
-    )?;
+    let (token, account) = (token(&headers), account(&headers));
+    let seq = blocking(&r, move |r| {
+        r.push(&group, &token, account.as_deref(), &b.device, &b.blob)
+    })
+    .await?;
     Ok(Json(serde_json::json!({ "seq": seq })))
 }
 
@@ -924,13 +962,10 @@ async fn compact(
     headers: HeaderMap,
     Json(b): Json<CompactBody>,
 ) -> Result<Json<Compaction>> {
-    Ok(Json(r.compact(
-        &group,
-        &token(&headers),
-        &b.device,
-        b.up_to,
-        &b.blobs,
-    )?))
+    let token = token(&headers);
+    Ok(Json(
+        blocking(&r, move |r| r.compact(&group, &token, &b.device, b.up_to, &b.blobs)).await?,
+    ))
 }
 
 async fn stats(
@@ -938,7 +973,8 @@ async fn stats(
     UrlPath(group): UrlPath<String>,
     headers: HeaderMap,
 ) -> Result<Json<GroupStats>> {
-    Ok(Json(r.group_stats(&group, &token(&headers))?))
+    let token = token(&headers);
+    Ok(Json(blocking(&r, move |r| r.group_stats(&group, &token)).await?))
 }
 
 async fn pull(
@@ -947,7 +983,8 @@ async fn pull(
     Query(q): Query<PullQuery>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>> {
-    let (ops, more) = r.pull(&group, &token(&headers), q.after)?;
+    let token = token(&headers);
+    let (ops, more) = blocking(&r, move |r| r.pull(&group, &token, q.after)).await?;
     Ok(Json(serde_json::json!({ "ops": ops, "more": more })))
 }
 
@@ -989,29 +1026,36 @@ async fn watch(
 ) {
     use axum::extract::ws::Message;
     r.metrics().wait_started();
-    let notify = r.waiter(&group);
+    let mut head = r.waiter(&group);
+    // The token is checked once here (and again with each ping, so a removed
+    // group or changed token still ends the socket); pushes then arrive
+    // through `head` without a trip to the database each.
+    let mut latest = match r.latest(&group, &token) {
+        Ok(n) => n,
+        Err(_) => {
+            r.metrics().wait_ended();
+            return;
+        }
+    };
     let mut last = -1;
     loop {
-        // Register before looking, so a push in between isn't missed.
-        let changed = notify.notified();
-        tokio::pin!(changed);
-        changed.as_mut().enable();
-        match r.latest(&group, &token) {
-            Ok(n) if n != last => {
-                last = n;
-                if socket
-                    .send(Message::Text(serde_json::json!({ "latest": n }).to_string().into()))
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
+        if latest != last {
+            last = latest;
+            if socket
+                .send(Message::Text(
+                    serde_json::json!({ "latest": latest }).to_string().into(),
+                ))
+                .await
+                .is_err()
+            {
+                break;
             }
-            Ok(_) => {}
-            Err(_) => break, // the group is gone or the token no longer fits
         }
         tokio::select! {
-            () = &mut changed => {}
+            changed = head.changed() => match changed {
+                Ok(()) => latest = latest.max(*head.borrow_and_update()),
+                Err(_) => break, // the group was removed
+            },
             msg = socket.recv() => match msg {
                 None | Some(Err(_) | Ok(Message::Close(_))) => break,
                 Some(Ok(_)) => {}
@@ -1020,6 +1064,10 @@ async fn watch(
             () = tokio::time::sleep(WS_PING) => {
                 if socket.send(Message::Ping(Vec::new().into())).await.is_err() {
                     break;
+                }
+                match r.latest(&group, &token) {
+                    Ok(n) => latest = n,
+                    Err(_) => break, // the group is gone or the token no longer fits
                 }
             }
         }
@@ -1033,7 +1081,11 @@ async fn put_device(
     headers: HeaderMap,
     Json(b): Json<DeviceBody>,
 ) -> Result<StatusCode> {
-    r.put_device(&group, &token(&headers), account(&headers).as_deref(), &device, &b.blob)?;
+    let (token, account) = (token(&headers), account(&headers));
+    blocking(&r, move |r| {
+        r.put_device(&group, &token, account.as_deref(), &device, &b.blob)
+    })
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1042,7 +1094,8 @@ async fn devices(
     UrlPath(group): UrlPath<String>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>> {
-    let devices = r.devices(&group, &token(&headers))?;
+    let token = token(&headers);
+    let devices = blocking(&r, move |r| r.devices(&group, &token)).await?;
     Ok(Json(serde_json::json!({ "devices": devices })))
 }
 
@@ -1517,5 +1570,41 @@ mod tests {
 
         // Nothing arrives: back after the wait.
         assert_eq!(r.wait(G, T, 2, Duration::from_millis(100)).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn removing_a_group_ends_its_waiters() {
+        let r = Arc::new(open_relay(100));
+        r.push(G, T, None, "d", "first").unwrap();
+        let waiting = {
+            let r = r.clone();
+            tokio::spawn(async move { r.wait(G, T, 1, Duration::from_secs(10)).await })
+        };
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        r.remove_group(G).unwrap();
+        let got = tokio::time::timeout(Duration::from_secs(2), waiting)
+            .await
+            .expect("woke on the removal, not the timeout")
+            .unwrap();
+        // A group nobody has written to reads as empty (the first writer claims it).
+        assert_eq!(got, Ok(0), "the group is gone");
+    }
+
+    #[test]
+    fn the_batch_limit_still_counts_right_after_compaction() {
+        let r = open_relay(10);
+        for i in 0..10 {
+            r.push(G, T, None, "d", &format!("batch-{i:02}-with-padding-to-shrink"))
+                .unwrap();
+        }
+        assert_eq!(r.push(G, T, None, "d", "x"), Err(RelayError::Full));
+        // 8 batches become 1: 3 stored (seq 9..=11), so 7 more fit.
+        r.compact(G, T, "laptop", 8, &["snap".to_string()]).unwrap();
+        assert_eq!(r.group_stats(G, T).unwrap().batches, 3);
+        for _ in 0..7 {
+            r.push(G, T, None, "d", "y").unwrap();
+        }
+        assert_eq!(r.push(G, T, None, "d", "z"), Err(RelayError::Full));
+        assert_eq!(r.group_stats(G, T).unwrap().batches, 10);
     }
 }

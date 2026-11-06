@@ -26,6 +26,10 @@ use crate::tap::{Read, Wait};
 /// The module scripts import.
 pub const MODULE: &str = include_str!("linecard.py");
 const PROTOCOL: u32 = 1;
+/// Longest piece of script output passed on as one line.
+const MAX_OUTPUT_LINE: u64 = 64 * 1024;
+/// Longest request a script may send (a `send` of a large file still fits).
+const MAX_REQUEST: u64 = 16 * 1024 * 1024;
 /// A wait is cut into pieces this long so Stop is noticed promptly.
 const SLICE: Duration = Duration::from_millis(200);
 const DEFAULT_OPEN_TIMEOUT: f64 = 60.0;
@@ -130,7 +134,11 @@ impl Run {
                 Some(std::thread::spawn(move || {
                     let mut r = BufReader::new(pipe);
                     let mut line = Vec::new();
-                    while matches!(r.read_until(b'\n', &mut line), Ok(n) if n > 0) {
+                    // A line that never ends (a progress bar redrawn with \r, a
+                    // runaway print) is passed on in pieces rather than held
+                    // in memory until the script exits.
+                    while matches!(io::Read::take(&mut r, MAX_OUTPUT_LINE).read_until(b'\n', &mut line), Ok(n) if n > 0)
+                    {
                         let text = String::from_utf8_lossy(&line)
                             .trim_end_matches(['\r', '\n'])
                             .to_string();
@@ -248,7 +256,9 @@ fn serve(host: Arc<dyn Host>, run: u64, token: &str, listener: TcpListener, exit
     let mut line = String::new();
     loop {
         line.clear();
-        if !matches!(reader.read_line(&mut line), Ok(n) if n > 0) {
+        // A request past the limit arrives cut short, fails to parse, and ends
+        // the connection, instead of growing without end.
+        if !matches!(io::Read::take(&mut reader, MAX_REQUEST).read_line(&mut line), Ok(n) if n > 0) {
             return;
         }
         let Ok(req) = serde_json::from_str::<Value>(&line) else {
