@@ -37,6 +37,17 @@ static CHMODS: Mutex<Vec<(String, u32)>> = Mutex::new(Vec::new());
 /// server could: names a real folder can't hold.
 static FAKE_ENTRIES: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
 
+/// The test server's password: made up afresh each run rather than written
+/// in the source, so there's no fixed credential for anything to pick up.
+fn password() -> &'static str {
+    use std::hash::BuildHasher;
+    static PASSWORD: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    PASSWORD.get_or_init(|| {
+        let seed = std::collections::hash_map::RandomState::new().hash_one(std::process::id());
+        format!("pw-{seed:016x}")
+    })
+}
+
 /// What an open SFTP handle refers to.
 enum Open {
     Dir(Option<Vec<File>>),
@@ -270,7 +281,7 @@ impl server::Handler for Ssh {
     type Error = russh::Error;
 
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
-        Ok(if user == "admin" && password == "secret" {
+        Ok(if user == "admin" && password == crate::password() {
             Auth::Accept
         } else {
             Auth::Reject {
@@ -404,7 +415,7 @@ async fn browse_download_upload_rename_and_delete() {
     std::fs::write(root.join("docs/notes.txt"), "remote notes").unwrap();
     std::fs::write(root.join("readme.md"), vec![b'x'; 100_000]).unwrap(); // several chunks
     let port = start_server(root.clone()).await;
-    let sftp = connect(port, "secret").await.expect("login");
+    let sftp = connect(port, password()).await.expect("login");
 
     // Browsing: the login directory, then folders before files.
     assert_eq!(sftp.home().await.unwrap(), "/");
@@ -476,7 +487,7 @@ async fn a_folder_download_refuses_names_that_escape_the_destination() {
         .unwrap()
         .push(("/pub".into(), "../payload.txt".into()));
     let port = start_server(root).await;
-    let sftp = connect(port, "secret").await.expect("login");
+    let sftp = connect(port, password()).await.expect("login");
 
     let out = temp_dir("evil-out");
     let dest = out.join("inner").join("pub");
@@ -496,7 +507,10 @@ async fn a_folder_download_refuses_names_that_escape_the_destination() {
 async fn a_wrong_password_fails_to_connect() {
     let root = temp_dir("root");
     let port = start_server(root).await;
-    let err = connect(port, "wrong").await.err().expect("login should fail");
+    let err = connect(port, &format!("not-{}", password()))
+        .await
+        .err()
+        .expect("login should fail");
     assert!(!err.to_string().is_empty());
 }
 
@@ -530,7 +544,7 @@ async fn a_canceled_download_stops_and_can_be_resumed() {
     let data = pattern(300_000);
     std::fs::write(root.join("big.bin"), &data).unwrap();
     let port = start_server(root).await;
-    let sftp = connect(port, "secret").await.expect("login");
+    let sftp = connect(port, password()).await.expect("login");
     let out = temp_dir("out");
     let dest = out.join("big.bin");
 
@@ -579,7 +593,7 @@ async fn a_canceled_upload_stops_and_can_be_resumed() {
     let data = pattern(300_000);
     std::fs::write(local.join("big.bin"), &data).unwrap();
     let port = start_server(root.clone()).await;
-    let sftp = connect(port, "secret").await.expect("login");
+    let sftp = connect(port, password()).await.expect("login");
 
     let cancel = AtomicBool::new(false);
     let opts = Transfer {
@@ -621,7 +635,7 @@ async fn permissions_can_be_set_on_one_item_or_a_whole_folder() {
     std::fs::write(root.join("site/a.txt"), "a").unwrap();
     std::fs::write(root.join("site/sub/b.txt"), "b").unwrap();
     let port = start_server(root).await;
-    let sftp = connect(port, "secret").await.expect("login");
+    let sftp = connect(port, password()).await.expect("login");
 
     sftp.chmod("/site/a.txt", 0o600, false).await.unwrap();
     sftp.chmod("/site", 0o755, true).await.unwrap();
