@@ -239,15 +239,20 @@ async fn a_compaction_may_be_bigger_than_an_ordinary_request() {
         .unwrap();
     assert_eq!(stats["batches"], 3);
     assert_eq!(stats["head"], 13);
-    // Ordinary pushes still obey the 1 MiB limit.
+    // Ordinary pushes still obey the 1 MiB limit. The relay answers 413 and
+    // closes without reading the rest of the body, so the client may instead
+    // see the connection reset while still sending (macOS often does):
+    // either way the push was refused.
     let too_big = c
         .post(format!("{base}{path}"))
         .bearer_auth(TOKEN)
         .json(&serde_json::json!({ "device": "laptop", "blob": "a".repeat(2_000_000) }))
         .send()
-        .await
-        .unwrap();
-    assert_eq!(too_big.status(), 413);
+        .await;
+    match too_big {
+        Ok(r) => assert_eq!(r.status(), 413),
+        Err(e) => assert!(e.is_request(), "unexpected error: {e}"),
+    }
 }
 
 #[tokio::test]
