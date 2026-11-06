@@ -223,10 +223,21 @@ mod tests {
         assert_eq!(GroupKey::from_phrase(&phrase).unwrap(), k);
         let messy = format!("  {}\n", phrase.to_uppercase().replace(' ', "  \t"));
         assert_eq!(GroupKey::from_phrase(&messy).unwrap(), k);
-        // One wrong word fails the checksum.
-        let mut words: Vec<&str> = phrase.split(' ').collect();
-        words[3] = if words[3] == "abandon" { "ability" } else { "abandon" };
-        assert!(GroupKey::from_phrase(&words.join(" ")).is_err());
+        // A wrong word is caught by the checksum. It is only 8 bits, so about
+        // 1 swap in 256 still passes (checking a single swap failed that
+        // often); try every word in one place instead: nearly all must fail,
+        // and none that passes may give back this key.
+        let words: Vec<&str> = phrase.split(' ').collect();
+        let mut passed = 0;
+        for &w in bip39::Language::English.word_list().iter().filter(|&&w| w != words[3]) {
+            let mut typo = words.clone();
+            typo[3] = w;
+            if let Ok(other) = GroupKey::from_phrase(&typo.join(" ")) {
+                assert_ne!(other, k, "a different phrase gave the same key");
+                passed += 1;
+            }
+        }
+        assert!(passed < 64, "{passed} of 2047 wrong words passed the checksum");
         assert!(GroupKey::from_phrase("too short").is_err());
     }
 
