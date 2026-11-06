@@ -343,7 +343,12 @@ pub enum SessionEventDto {
         /// Offer "Save password" with this initial state; null = don't offer.
         remember: Option<bool>,
     },
-    /// XMODEM/YMODEM progress; `error` is set when it failed, `finished` when done.
+    /// The server started `rz` (`upload`: pick a file to send) or `sz`
+    /// (pick a folder to save into). Answer with session_zmodem.
+    Zmodem {
+        upload: bool,
+    },
+    /// XMODEM/YMODEM/ZMODEM progress; `error` is set when it failed, `finished` when done.
     Transfer {
         file: String,
         sending: bool,
@@ -407,6 +412,7 @@ impl From<linecard_proto::SessionEvent> for SessionEventDto {
                 finished: t.result.is_some(),
                 error: t.result.and_then(|r| r.err()),
             },
+            E::Zmodem { upload } => SessionEventDto::Zmodem { upload },
             E::Disconnected { reason } => SessionEventDto::Disconnected { reason },
         }
     }

@@ -59,5 +59,6 @@ ironrdp-rdpdr-native = "0.9"
 ironrdp-tls = { version = "0.3", features = ["rustls-ring"] }
 
 [dev-dependencies]
+tempfile = "3"
 ironrdp-svc = "0.10"
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }

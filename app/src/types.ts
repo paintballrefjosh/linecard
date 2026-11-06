@@ -164,6 +164,7 @@ export type SessionEvent =
   | HostKeyEvent
   | AuthEvent
   | TransferEvent
+  | ZmodemEvent
   | { event: "disconnected"; reason: string | null };
 
 export interface PasswordSync {
@@ -227,7 +228,13 @@ export type GfxEvent =
 
 export type TransferProtocol = "xmodem" | "xmodem1k" | "ymodem";
 
-/** XMODEM/YMODEM progress on a serial line. */
+/** The server started `rz` (upload: we pick a file to send) or `sz` (we pick where to save). */
+export interface ZmodemEvent {
+  event: "zmodem";
+  upload: boolean;
+}
+
+/** XMODEM/YMODEM/ZMODEM progress. */
 export interface TransferEvent {
   event: "transfer";
   file: string;

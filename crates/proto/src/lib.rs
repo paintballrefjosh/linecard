@@ -26,6 +26,8 @@ pub mod telnet;
 mod tight;
 pub mod vnc;
 pub mod xmodem;
+pub mod zgate;
+pub mod zmodem;
 
 /// Something the session reports back to the UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +47,11 @@ pub enum SessionEvent {
     Auth(AuthPrompt),
     /// Progress of a file transfer (XMODEM/YMODEM on serial lines).
     Transfer(TransferStatus),
+    /// A remote `rz` (`upload`: it waits for a file from us) or `sz` (it
+    /// wants to send) started. Answer with [`TransferRequest::Zmodem`].
+    Zmodem {
+        upload: bool,
+    },
     /// Session ended. `reason` is `None` for a clean close.
     Disconnected {
         reason: Option<String>,
@@ -120,6 +127,9 @@ pub enum TransferRequest {
     Send { path: PathBuf, protocol: xmodem::Protocol },
     /// Receive into this file.
     Receive { path: PathBuf, protocol: xmodem::Protocol },
+    /// Answer a ZMODEM offer: the file to send (after `rz`) or the folder to
+    /// save into (after `sz`); `None` declines.
+    Zmodem { path: Option<PathBuf> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

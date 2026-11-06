@@ -818,6 +818,18 @@ fn session_transfer(
     s.start_transfer(req).map_err(err)
 }
 
+/// Answer a ZMODEM offer: the file to send (the server ran `rz`), the folder
+/// to save into (it ran `sz`), or nothing to decline.
+#[tauri::command]
+fn session_zmodem(state: State<AppState>, session_id: String, path: Option<String>) -> CmdResult<()> {
+    let mut sessions = state.sessions.lock().map_err(err)?;
+    let s = sessions.get_mut(&session_id).ok_or("session closed")?;
+    s.start_transfer(linecard_proto::TransferRequest::Zmodem {
+        path: path.filter(|p| !p.is_empty()).map(std::path::PathBuf::from),
+    })
+    .map_err(err)
+}
+
 #[tauri::command]
 fn session_cancel_transfer(state: State<AppState>, session_id: String) -> CmdResult<()> {
     if let Some(s) = state.sessions.lock().map_err(err)?.get_mut(&session_id) {
@@ -985,6 +997,9 @@ async fn open_session(
     });
     // Telnet and serial connect before returning; SSH returns at once and
     // reports progress as events.
+    // A remote `sz` or `rz` is noticed here. Telnet isn't 8-bit clean unless
+    // the server agrees to binary mode, so there every control byte is escaped.
+    let (gate, sink) = linecard_proto::zgate::Gate::new(sink, kind == ConnectionKind::Telnet);
     let session = tauri::async_runtime::spawn_blocking(move || match plan {
         Plan::Serial(s) => linecard_proto::connect_serial(&s, sink),
         Plan::Network(kind, mut target) => {
@@ -996,6 +1011,7 @@ async fn open_session(
     .await
     .map_err(err)?
     .map_err(err)?;
+    let session = gate.wrap(session);
 
     let id = new_id();
     state.sessions.lock().map_err(err)?.insert(id.clone(), session);
@@ -1283,6 +1299,7 @@ pub fn run() {
             session_break,
             session_transfer,
             session_cancel_transfer,
+            session_zmodem,
             list_serial_ports,
             session_close,
         ])

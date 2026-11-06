@@ -908,6 +908,8 @@ export function mockBackend(): Backend {
       } else setTimeout(connect, 250);
       let closed = false;
       let transferCanceled = false;
+      /** The file a demo `sz` is offering; null after `rz`. */
+      let zmodemFile: string | null = null;
       return {
         reply(r) {
           if (closed) return;
@@ -933,6 +935,13 @@ export function mockBackend(): Backend {
               send("\r\n");
               if (cmd === "exit") {
                 onEvent({ event: "disconnected", reason: null });
+                return;
+              }
+              // The demo's sz and rz ask the window, as a real server's would.
+              if (cmd === "rz" || cmd.startsWith("sz ")) {
+                zmodemFile = cmd === "rz" ? null : cmd.slice(3).trim();
+                if (cmd === "rz") send("rz waiting to receive.");
+                onEvent({ event: "zmodem", upload: cmd === "rz" });
                 return;
               }
               if (cmd === "show version") send("Linecard demo OS, Version 0.1.0\r\nUptime is 42 days\r\n");
@@ -976,6 +985,30 @@ export function mockBackend(): Backend {
         focus() {},
         cancelTransfer() {
           transferCanceled = true;
+        },
+        async zmodem(path) {
+          if (!path) {
+            send(`\r\n${prompt}`);
+            return;
+          }
+          const upload = zmodemFile === null;
+          const file = upload ? (path.split(/[\\/]/).pop() ?? path) : zmodemFile!;
+          const total = 2_400_000;
+          let done = 0;
+          transferCanceled = false;
+          const tick = () => {
+            if (transferCanceled) {
+              onEvent({ event: "transfer", file, sending: upload, done: 0, total, finished: true, error: "canceled" });
+              send(prompt);
+              return;
+            }
+            done = Math.min(total, done + 300_000);
+            const finished = done >= total;
+            onEvent({ event: "transfer", file, sending: upload, done, total, finished, error: null });
+            if (finished) send(prompt);
+            else setTimeout(tick, 120);
+          };
+          setTimeout(tick, 200);
         },
         sendBreak() {
           send("\r\n\x1b[2m[BREAK]\x1b[0m\r\nrommon 1 > ");

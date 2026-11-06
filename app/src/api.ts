@@ -44,6 +44,8 @@ export interface SessionHandle {
   /** XMODEM/YMODEM on serial lines; progress arrives as transfer events. */
   startTransfer(send: boolean, protocol: TransferProtocol, path: string): Promise<void>;
   cancelTransfer(): void;
+  /** Answer a zmodem event: the file to send, the folder to save into, or null to decline. */
+  zmodem(path: string | null): Promise<void>;
   /** The backend's id for this session. */
   readonly id: string;
   /** This tab is the one in use now (scripts act on it by default). */
@@ -438,6 +440,7 @@ async function tauriBackend(): Promise<Backend> {
         sendBreak: () => void invoke("session_break", { sessionId }),
         startTransfer: (send, protocol, path) => invoke("session_transfer", { sessionId, send, protocol, path }),
         cancelTransfer: () => void invoke("session_cancel_transfer", { sessionId }),
+        zmodem: (path) => invoke("session_zmodem", { sessionId, path }),
         focus: () => void invoke("session_focus", { sessionId }),
         close: () => void invoke("session_close", { sessionId }),
       };

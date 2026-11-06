@@ -126,6 +126,23 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
       term.current?.write(`\r\n\x1b[31m[${err}]\x1b[0m\r\n`);
     }
   };
+  /** The server ran rz (send it a file) or sz (save its files): ask where, then answer. */
+  const answerZmodem = async (upload: boolean) => {
+    const b = await getBackend();
+    term.current?.write(
+      `\r\n\x1b[2m[${upload ? "The server is waiting for a file (rz)" : "The server wants to send files (sz)"}…]\x1b[0m\r\n`,
+    );
+    const path = upload
+      ? await b.pickFile("open", "File to send to the server")
+      : await b.pickFolder("Folder to save the server's files in");
+    try {
+      await sessionRef.current?.zmodem(path);
+    } catch (err) {
+      term.current?.write(`\r\n\x1b[31m[${err}]\x1b[0m\r\n`);
+    }
+  };
+  const answerZmodemRef = useRef(answerZmodem);
+  answerZmodemRef.current = answerZmodem;
   const { on: casting, members } = useBroadcast();
   const [status, setStatus] = useState<SessionStatus>("connecting");
   const report = (st: SessionStatus) => {
@@ -240,6 +257,8 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
             } else if (e.event === "hostKey" || e.event === "auth") {
               setPrompt(e);
               outputRef.current?.();
+            } else if (e.event === "zmodem") {
+              void answerZmodemRef.current(e.upload);
             } else if (e.event === "transfer") {
               setTransfer(e.finished ? null : e);
               if (e.finished) {
