@@ -107,7 +107,7 @@ impl Transport {
                     .data_dir
                     .join(format!("lan-{}.db", group.group_id()));
                 Ok(Transport::Lan(Arc::new(
-                    LanTransport::start(Some(&store), &group.group_id(), &group.relay_token(), device, true).await?,
+                    LanTransport::start(Some(&store), group, device, true).await?,
                 )))
             }
             other => Err(SyncError::Storage(format!("unknown sync transport {other}"))),
@@ -665,6 +665,7 @@ pub fn unpushed(app: &AppHandle) -> Option<usize> {
 
 /// Accept a sealed item only if its sender's key matches the one first seen
 /// for that device (so a member can't later impersonate another device).
+/// Call only after `open` succeeded, so only verified keys get pinned.
 fn pinned_ok(app: &AppHandle, sealed: &Sealed) -> bool {
     let state = app.state::<AppState>();
     let Ok(lib) = state.lib.lock() else { return false };
@@ -834,16 +835,18 @@ async fn round(
         if r.sealed.device == device {
             continue; // the relay returns our own pushes too
         }
-        if !pinned_ok(app, &r.sealed) {
-            problem = Some(SyncError::Tampered);
-            continue;
-        }
-        match open::<Batch>(group, &r.sealed) {
-            Ok(b) => incoming.extend(b.ops),
-            Err(e) => match open::<Notice>(group, &r.sealed) {
-                Ok(n) => closed = Some(n),
-                Err(_) => problem = Some(e),
-            },
+        // Verify first, pin after: pinning an unverified key would let anyone
+        // who can write to the storage (without the phrase) claim a device's
+        // name before that device first syncs, and lock it out for good.
+        let opened = match open::<Batch>(group, &r.sealed) {
+            Ok(b) => Ok(Ok(b)),
+            Err(e) => open::<Notice>(group, &r.sealed).map(Err).map_err(|_| e),
+        };
+        match opened {
+            Err(e) => problem = Some(e),
+            Ok(_) if !pinned_ok(app, &r.sealed) => problem = Some(SyncError::Tampered),
+            Ok(Ok(b)) => incoming.extend(b.ops),
+            Ok(Err(n)) => closed = Some(n),
         }
     }
     let fresh = {
@@ -875,7 +878,10 @@ async fn round(
         .await?
         .into_iter()
         .filter(|r| r.sealed.device != device)
-        .filter_map(|r| Some((open::<DeviceInfo>(group, &r.sealed).ok()?, r.sealed.device)))
+        .filter_map(|r| {
+            let info = open::<DeviceInfo>(group, &r.sealed).ok()?;
+            pinned_ok(app, &r.sealed).then_some((info, r.sealed.device))
+        })
         .collect();
     if let Ok(mut p) = state.sync.peers.lock() {
         *p = peers;
