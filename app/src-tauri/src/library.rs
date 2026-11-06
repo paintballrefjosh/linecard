@@ -180,11 +180,8 @@ impl Library {
             .into_iter()
             .filter(|op| self.replica.apply_remote(op.clone(), now))
             .collect();
-        if fresh.is_empty() {
-            return Ok(0);
-        }
-        self.store.append_ops(&fresh).map_err(err)?;
-        self.tree = project(&self.replica);
+        // The cursor doesn't move if this fails, so they're pulled again.
+        self.commit(&fresh)?;
         Ok(fresh.len())
     }
 
@@ -233,24 +230,33 @@ impl Library {
         let mut before = snapshot(&self.tree);
         before.retain(|id, _| self.replica.object(id).is_some_and(|o| !o.is_deleted()));
         let after = snapshot(&next);
+        // Making each op also applies it to the replica, so a failure part way
+        // (or when saving) must put the replica back to what's on disk.
         let mut ops = Vec::new();
-        for (id, (kind, fields)) in &after {
-            match before.get(id) {
-                None => ops.push(self.replica.create(id, kind, fields.clone(), now)),
-                Some((_, old)) => {
-                    let changed: BTreeMap<String, Value> = fields
-                        .iter()
-                        .filter(|(k, v)| old.get(*k) != Some(*v))
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect();
-                    if !changed.is_empty() {
-                        ops.push(self.replica.update(id, changed, now).map_err(err)?);
+        let made: Result<()> = (|| {
+            for (id, (kind, fields)) in &after {
+                match before.get(id) {
+                    None => ops.push(self.replica.create(id, kind, fields.clone(), now)),
+                    Some((_, old)) => {
+                        let changed: BTreeMap<String, Value> = fields
+                            .iter()
+                            .filter(|(k, v)| old.get(*k) != Some(*v))
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect();
+                        if !changed.is_empty() {
+                            ops.push(self.replica.update(id, changed, now).map_err(err)?);
+                        }
                     }
                 }
             }
-        }
-        for id in before.keys().filter(|id| !after.contains_key(*id)) {
-            ops.push(self.replica.delete(id, now).map_err(err)?);
+            for id in before.keys().filter(|id| !after.contains_key(*id)) {
+                ops.push(self.replica.delete(id, now).map_err(err)?);
+            }
+            Ok(())
+        })();
+        if let Err(e) = made {
+            self.rollback();
+            return Err(e);
         }
         self.commit(&ops)?;
         Ok(out)
@@ -262,13 +268,29 @@ impl Library {
         self.commit(&[op])
     }
 
+    /// Save ops already applied to the replica. If saving fails, the replica
+    /// goes back to what's on disk, so it never holds changes that would be
+    /// lost on restart (and sent to other computers meanwhile).
     fn commit(&mut self, ops: &[Op]) -> Result<()> {
         if ops.is_empty() {
             return Ok(());
         }
-        self.store.append_ops(ops).map_err(err)?;
+        if let Err(e) = self.store.append_ops(ops) {
+            self.rollback();
+            return Err(err(e));
+        }
         self.tree = project(&self.replica);
         Ok(())
+    }
+
+    /// Rebuild the replica from the saved ops, keeping unacknowledged changes.
+    /// If even that fails, the in-memory replica is left as it is.
+    fn rollback(&mut self) {
+        let device = self.replica.device().to_string();
+        if let Ok(mut saved) = self.store.load_replica(&device, now_ms()) {
+            saved.changes = std::mem::take(&mut self.replica.changes);
+            self.replica = saved;
+        }
     }
 }
 
@@ -649,6 +671,38 @@ mod tests {
         assert_eq!(r.source_of("username"), Some(&Source::Folder("dc".into())));
         assert_eq!(r.settings.keepalive_secs, Some(30));
         assert!(lib.changes().is_empty(), "own history is not highlighted");
+    }
+
+    #[test]
+    fn a_save_that_fails_leaves_nothing_behind() {
+        let path = temp_db();
+        let mut lib = Library::open(&path, sample).unwrap();
+        let ops_before = lib.replica.log().len();
+        let pending_before = lib.own_ops_after(None).len();
+
+        // Make every save fail, the way a full or locked disk would.
+        let other = rusqlite::Connection::open(&path).unwrap();
+        other
+            .execute_batch("CREATE TRIGGER fail_saves BEFORE INSERT ON ops BEGIN SELECT RAISE(FAIL, 'disk full'); END;")
+            .unwrap();
+        let renamed = lib.edit(|t| {
+            t.connection_mut("spine01").unwrap().name = "renamed".into();
+            t.add_connection(conn("leaf01", Some("spine"))).map_err(err)
+        });
+        assert!(renamed.is_err());
+        assert_eq!(lib.replica.log().len(), ops_before, "no unsaved ops left in memory");
+        assert_eq!(lib.own_ops_after(None).len(), pending_before, "nothing unsaved to send");
+        assert_eq!(lib.tree().connection("spine01").unwrap().name, "spine01");
+        assert!(lib.tree().connection("leaf01").is_err());
+
+        // Once saving works again, so does editing.
+        other.execute_batch("DROP TRIGGER fail_saves;").unwrap();
+        lib.edit(|t| t.add_connection(conn("leaf01", Some("spine"))).map_err(err))
+            .unwrap();
+        drop(lib);
+        let lib = Library::open(&path, sample).unwrap();
+        assert!(lib.tree().connection("leaf01").is_ok());
+        assert_eq!(lib.tree().connection("spine01").unwrap().name, "spine01");
     }
 
     #[test]

@@ -220,9 +220,9 @@ fn lookup(host: &str, port: u16, key: &PublicKey, opts: &SshOptions) -> Known {
             Ok(true) => return Known::Match,
             Ok(false) => {}
             Err(keys::Error::KeyChanged { line }) => {
-                changed.get_or_insert(Known::Changed {
+                changed.get_or_insert_with(|| Known::Changed {
                     path: path.clone(),
-                    line,
+                    line: real_line(path, line),
                 });
             }
             Err(_) => {} // missing or unreadable file
@@ -231,16 +231,91 @@ fn lookup(host: &str, port: u16, key: &PublicKey, opts: &SshOptions) -> Known {
     changed.unwrap_or(Known::Unknown)
 }
 
-/// Remove one (1-based) line from a known_hosts file.
-fn forget_line(path: &Path, line: usize) -> io::Result<()> {
-    let text = std::fs::read_to_string(path)?;
-    let kept: Vec<&str> = text
-        .lines()
-        .enumerate()
-        .filter(|(i, _)| i + 1 != line)
-        .map(|(_, l)| l)
-        .collect();
-    std::fs::write(path, kept.join("\n") + "\n")
+/// russh numbers known_hosts lines without counting `#` comments; turn its
+/// number into the real line, which is what the user sees and can look up.
+fn real_line(path: &Path, russh_line: usize) -> usize {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return russh_line;
+    };
+    let mut counted = 0;
+    for (i, l) in text.split_inclusive('\n').enumerate() {
+        if !l.starts_with('#') {
+            counted += 1;
+            if counted == russh_line {
+                return i + 1;
+            }
+        }
+    }
+    russh_line
+}
+
+/// Whether a known_hosts host pattern (plain or `|1|salt|hash`) names `host_port`.
+fn names_host(pattern: &str, host_port: &str) -> bool {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let Some(hashed) = pattern.strip_prefix("|1|") else {
+        return pattern == host_port;
+    };
+    let Some((salt, hash)) = hashed.split_once('|') else {
+        return false;
+    };
+    let (Ok(salt), Ok(hash)) = (STANDARD.decode(salt), STANDARD.decode(hash)) else {
+        return false;
+    };
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, &salt);
+    ring::hmac::verify(&key, host_port.as_bytes(), &hash).is_ok()
+}
+
+/// Forget the keys recorded for `host`:`port` that `key` replaces (same
+/// algorithm, different key). Only that host's name is taken off a line that
+/// names others too; comments, other lines and line endings stay as they were.
+/// The new file is written beside the old one and renamed over it, so a crash
+/// can't leave it half-written.
+fn forget_replaced_keys(path: &Path, host: &str, port: u16, key: &PublicKey) -> io::Result<()> {
+    let host_port = if port == 22 {
+        host.to_string()
+    } else {
+        format!("[{host}]:{port}")
+    };
+    // Through a symlink (a dotfiles repo, say), edit the file it points to.
+    let path = std::fs::canonicalize(path)?;
+    let text = std::fs::read_to_string(&path)?;
+    let mut out = String::with_capacity(text.len());
+    let mut changed = false;
+    for line in text.split_inclusive('\n') {
+        let body = line.trim_end_matches(['\r', '\n']);
+        // The same fields russh reads: hosts, algorithm, key.
+        let mut fields = body.split(' ');
+        let (Some(hosts), Some(_), Some(recorded)) = (fields.next(), fields.next(), fields.next()) else {
+            out.push_str(line);
+            continue;
+        };
+        let replaced = !body.starts_with('#')
+            && keys::parse_public_key_base64(recorded).is_ok_and(|r| r.algorithm() == key.algorithm() && r != *key);
+        let (named, others): (Vec<&str>, Vec<&str>) =
+            hosts.split(',').partition(|p| replaced && names_host(p, &host_port));
+        if named.is_empty() {
+            out.push_str(line);
+        } else {
+            changed = true;
+            if !others.is_empty() {
+                out.push_str(&others.join(","));
+                out.push_str(&line[hosts.len()..]);
+            }
+        }
+    }
+    if !changed {
+        return Ok(());
+    }
+    let mut tmp = path.clone().into_os_string();
+    tmp.push(".linecard-tmp");
+    let tmp = PathBuf::from(tmp);
+    std::fs::write(&tmp, out)?;
+    if let Ok(meta) = std::fs::metadata(&path) {
+        let _ = std::fs::set_permissions(&tmp, meta.permissions());
+    }
+    std::fs::rename(&tmp, &path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
 pub(crate) struct Client {
@@ -304,9 +379,9 @@ impl client::Handler for Client {
             HostKeyDecision::AcceptAndSave => {
                 let ours = &self.opts.known_hosts;
                 let saved = (|| -> Result<(), keys::Error> {
-                    if let HostKeyStatus::Changed { known_hosts, line } = &status {
+                    if let HostKeyStatus::Changed { known_hosts, .. } = &status {
                         if known_hosts == ours {
-                            forget_line(ours, *line)?;
+                            forget_replaced_keys(ours, &self.host, self.port, &key)?;
                         }
                     }
                     keys::known_hosts::learn_known_hosts_path(&self.host, self.port, &key, ours)

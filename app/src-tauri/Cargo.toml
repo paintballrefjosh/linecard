@@ -42,3 +42,6 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_Wind
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"   # Launch Services: default handler for ssh:// links
+
+[dev-dependencies]
+rusqlite = { workspace = true }   # a test makes saving fail on purpose

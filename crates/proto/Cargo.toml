@@ -39,6 +39,8 @@ sha2 = "0.11"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 base64 = "0.23"
+# HMAC-SHA1 for hashed known_hosts names (ring is already in the tree).
+ring = "0.17"
 # SFTP client (independent of russh; works over any stream).
 russh-sftp = "3"
 

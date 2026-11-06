@@ -519,6 +519,66 @@ async fn changed_host_key_warns_and_can_be_replaced() {
     c.session.close().unwrap();
 }
 
+/// `|1|salt|hash`, the way `HashKnownHosts yes` writes a host name.
+fn hashed(host_port: &str) -> String {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let salt = [7u8; 20];
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, &salt);
+    let hash = ring::hmac::sign(&key, host_port.as_bytes());
+    format!("|1|{}|{}", STANDARD.encode(salt), STANDARD.encode(hash.as_ref()))
+}
+
+#[tokio::test]
+async fn replacing_a_key_keeps_the_rest_of_the_file() {
+    let port = start_server(Mode::Password).await;
+    let known = temp_known_hosts();
+    let me = format!("[127.0.0.1]:{port}");
+    let original = format!(
+        "# kept by hand\r\n\
+         other.lab {HOST_PUBLIC}\r\n\
+         {me},router.lab {OTHER_PUBLIC}\r\n\
+         {} {OTHER_PUBLIC}\r\n",
+        hashed(&me)
+    );
+    std::fs::write(&known, &original).unwrap();
+    let opts = options(known.clone());
+
+    let mut c = connect(port, Some("admin"), &opts);
+    match c.event().await {
+        // The real line, counting the comment.
+        SessionEvent::HostKey(k) => assert_eq!(
+            k.status,
+            HostKeyStatus::Changed {
+                known_hosts: known.clone(),
+                line: 3
+            }
+        ),
+        other => panic!("expected a changed-key prompt, got {other:?}"),
+    }
+    c.reply(PromptReply::HostKey(HostKeyDecision::AcceptAndSave));
+    assert!(matches!(c.event().await, SessionEvent::Auth(_)));
+    c.session.close().unwrap();
+
+    let saved = std::fs::read_to_string(&known).unwrap();
+    // Comment, other hosts, the alias and CRLF kept; both old entries for
+    // this host (plain and hashed) gone; the new key added once at the end.
+    let expected = format!(
+        "# kept by hand\r\n\
+         other.lab {HOST_PUBLIC}\r\n\
+         router.lab {OTHER_PUBLIC}\r\n\
+         {me} {HOST_PUBLIC}\n"
+    );
+    assert_eq!(saved, expected);
+    assert!(!known.with_file_name("known_hosts.linecard-tmp").exists());
+
+    let mut c = connect(port, Some("admin"), &opts);
+    assert!(
+        matches!(c.event().await, SessionEvent::Auth(_)),
+        "no prompt after replacing"
+    );
+    c.session.close().unwrap();
+}
+
 #[tokio::test]
 async fn saved_passwords_are_offered_used_and_updated() {
     for mode in [Mode::Password, Mode::KeyboardInteractive] {
