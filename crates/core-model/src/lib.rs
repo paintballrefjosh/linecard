@@ -8,6 +8,7 @@
 //!
 //! This crate has no required dependencies so its logic is easy to test.
 
+mod credential;
 mod forward;
 mod highlight;
 mod kind;
@@ -16,6 +17,7 @@ mod settings;
 mod snippet;
 mod tree;
 
+pub use credential::{Credential, LogonStep};
 pub use forward::{ForwardKind, PortForward};
 pub use highlight::{HighlightProfile, HighlightRule};
 pub use kind::{ConnectionKind, Endpoint, FlowControl, Parity, SerialSettings};

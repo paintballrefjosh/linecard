@@ -3723,6 +3723,7 @@ dependencies = [
  "rustls",
  "serialport",
  "sha2 0.11.1",
+ "tempfile",
  "tokio",
  "tokio-rustls",
  "x509-cert",

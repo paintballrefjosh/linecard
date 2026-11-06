@@ -13,10 +13,19 @@ import {
 } from "../highlight";
 import type { ThemePref } from "../theme";
 import { usePrefs } from "../prefs";
-import type { LoggingSettings, PasswordSync, SavedPassword, SyncConfig, SyncState, SyncTransport } from "../types";
+import type {
+  Credential,
+  LoggingSettings,
+  PasswordSync,
+  SavedPassword,
+  SyncConfig,
+  SyncState,
+  SyncTransport,
+} from "../types";
 import { ConfirmDialog, Modal } from "./Dialog";
 import { relativeTime } from "./ConnectionTree";
 import { QrCode } from "./QrCode";
+import { CredentialDialog, useCredentials } from "./LoginFields";
 
 interface Props {
   theme: ThemePref;
@@ -58,6 +67,17 @@ export function SettingsPage({ theme, onTheme }: Props) {
             id="set-confirm-close"
             checked={prefs.confirmCloseTab}
             onChange={(v) => update({ confirmCloseTab: v })}
+          />
+        </Row>
+        <Row
+          label="Name tabs after the session's title"
+          hint="Shells and programs like Claude Code set a title, as in SecureCRT. Hover a tab for its connection and host."
+          htmlFor="set-tab-title"
+        >
+          <Toggle
+            id="set-tab-title"
+            checked={prefs.tabTitleFromSession}
+            onChange={(v) => update({ tabTitleFromSession: v })}
           />
         </Row>
         <Row label="Ask once before quitting with connections open" htmlFor="set-confirm-quit">
@@ -109,6 +129,7 @@ export function SettingsPage({ theme, onTheme }: Props) {
 
       <Scripting />
 
+      <Credentials />
       <SavedPasswords />
 
       <DebugLog />
@@ -488,8 +509,8 @@ export function PhraseWords({ phrase, onHide }: { phrase: string; onHide(): void
         <div className="qr-box">
           <QrCode text={phrase} label="The sync phrase as a QR code" />
           <p>
-            Scan it into your phone's password manager to keep a copy. It is the whole phrase: anyone who sees this
-            code can read and change your connections.
+            Scan it into your phone's password manager to keep a copy. It is the whole phrase: anyone who sees this code
+            can read and change your connections.
           </p>
         </div>
       )}
@@ -909,6 +930,78 @@ function SessionLogging() {
 
 /** Passwords saved from login prompts. Secrets stay in the OS keychain;
  *  only labels are listed here. */
+/** Named credentials: one user name and password for many connections. */
+function Credentials() {
+  const [items, reload] = useCredentials();
+  const [editing, setEditing] = useState<Credential | "new" | null>(null);
+  const [deleting, setDeleting] = useState<Credential | null>(null);
+  return (
+    <Section title="Credentials">
+      <div className="settings-row">
+        <div className="settings-text">
+          <span>Shared logins</span>
+          <p>
+            A user name and password that folders and connections pick by name. Change the password here and every
+            device that uses it logs in with the new one.
+          </p>
+        </div>
+        <div className="settings-control">
+          <button className="btn" onClick={() => setEditing("new")}>
+            New credential…
+          </button>
+        </div>
+      </div>
+      {items.map((c) => (
+        <div className="settings-row" key={c.id}>
+          <div className="settings-text">
+            <span className="saved-label">{c.username ? `${c.name} (${c.username})` : c.name}</span>
+            <p>
+              {c.usedBy === 0 ? "Not used yet" : `Used by ${c.usedBy} connection${c.usedBy === 1 ? "" : "s"}`}
+              {" · "}
+              {c.saved ? "password saved" : "no password saved on this computer"}
+            </p>
+          </div>
+          <div className="settings-control">
+            <button className="btn" onClick={() => setEditing(c)}>
+              Edit…
+            </button>
+            <button className="btn" onClick={() => setDeleting(c)} aria-label={`Delete credential ${c.name}`}>
+              Delete
+            </button>
+          </div>
+        </div>
+      ))}
+      {editing && (
+        <CredentialDialog
+          initial={editing === "new" ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            reload();
+          }}
+        />
+      )}
+      {deleting && (
+        <ConfirmDialog
+          title={`Delete ${deleting.name}?`}
+          message={
+            (deleting.usedBy
+              ? `The ${deleting.usedBy} connection${deleting.usedBy === 1 ? " that uses" : "s that use"} it go back to their own user name and saved password. `
+              : "") + "Its saved password is forgotten on this computer."
+          }
+          confirmLabel="Delete"
+          danger
+          onConfirm={async () => {
+            await (await getBackend()).deleteCredential(deleting.id);
+            reload();
+          }}
+          onClose={() => setDeleting(null)}
+        />
+      )}
+    </Section>
+  );
+}
+
 function SavedPasswords() {
   const [items, setItems] = useState<SavedPassword[] | null>(null);
   const load = () => void getBackend().then((b) => b.listSavedPasswords().then(setItems));

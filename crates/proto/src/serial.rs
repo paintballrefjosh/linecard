@@ -189,6 +189,13 @@ impl Link for PortLink {
         }
         Ok(self.pending.pop_front())
     }
+
+    fn pending(&mut self) -> io::Result<bool> {
+        while let Ok(chunk) = self.rx.try_recv() {
+            self.pending.extend(chunk);
+        }
+        Ok(!self.pending.is_empty())
+    }
 }
 
 impl SerialSession {
@@ -203,6 +210,7 @@ impl SerialSession {
         let (path, protocol, sending) = match &req {
             TransferRequest::Send { path, protocol } => (path.clone(), *protocol, true),
             TransferRequest::Receive { path, protocol } => (path.clone(), *protocol, false),
+            TransferRequest::Zmodem { .. } => return Err(io::Error::other("no ZMODEM transfer is waiting")),
         };
         let file = path
             .file_name()
