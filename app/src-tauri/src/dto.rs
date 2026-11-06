@@ -495,3 +495,10 @@ impl FolderSettingsDto {
         s.highlight_rules = non_empty(&self.highlight);
     }
 }
+
+/// A shell this computer can open in a tab.
+#[derive(Clone, Serialize)]
+pub struct LocalShellDto {
+    pub id: String,
+    pub name: String,
+}

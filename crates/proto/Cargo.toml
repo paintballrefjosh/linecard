@@ -43,6 +43,8 @@ base64 = "0.23"
 ring = "0.17"
 # SFTP client (independent of russh; works over any stream).
 russh-sftp = "3"
+# Local shell tabs: ConPTY on Windows, a pseudo-terminal elsewhere (from WezTerm).
+portable-pty = "0.9"
 
 
 # RDP's TLS. On Windows, the system's (SChannel, as mstsc uses): older hosts

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import { getBackend, type SessionHandle } from "../api";
 import { terminalThemes, type Theme } from "../theme";
@@ -22,6 +23,7 @@ import {
   Download,
   Eraser,
   RotateCw,
+  Search,
   TextSelect,
   Upload,
   Zap,
@@ -34,6 +36,7 @@ import { scripts } from "../scripts";
 import { screens } from "../screens";
 import { ContextMenu } from "./ContextMenu";
 import { PasteConfirm, SessionPrompt } from "./SessionPrompt";
+import { TerminalSearch } from "./TerminalSearch";
 
 export type SessionStatus = "connecting" | "connected" | "disconnected";
 
@@ -92,6 +95,21 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
   /** This session's port forwards (SSH). */
   const [forwards, setForwards] = useState<ForwardState[]>([]);
   const [showForwards, setShowForwards] = useState(false);
+  const searchRef = useRef<SearchAddon | null>(null);
+  /** The find bar, with the text it opened with. */
+  const [finding, setFinding] = useState<{ initial: string } | null>(null);
+  const openFind = () => {
+    const sel = term.current?.getSelection() ?? "";
+    // A selection on one line seeds the search; anything else starts empty.
+    setFinding({ initial: sel.includes(NEWLINE) ? "" : sel });
+  };
+  const closeFind = () => {
+    setFinding(null);
+    term.current?.focus();
+  };
+  /** For the key handler, which is set up once. */
+  const openFindRef = useRef(openFind);
+  openFindRef.current = openFind;
 
   /** Pick a file and start an XMODEM/YMODEM transfer on this serial line. */
   const startTransfer = async (send: boolean, protocol: TransferProtocol) => {
@@ -153,6 +171,9 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
     });
     const fit = new FitAddon();
     t.loadAddon(fit);
+    const search = new SearchAddon({ highlightLimit: 2000 });
+    t.loadAddon(search);
+    searchRef.current = search;
     t.open(host.current);
     try {
       const webgl = new WebglAddon();
@@ -180,7 +201,11 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
       setPrompt(null);
       report("disconnected");
       const why = reason ? `: ${reason}` : "";
-      t.write(`\r\n\x1b[2m[Disconnected${why}] Press Enter to reconnect.\x1b[0m\r\n`);
+      t.write(
+        conn.kind === "local"
+          ? `\r\n\x1b[2m[Shell ended${why}] Press Enter to start it again.\x1b[0m\r\n`
+          : `\r\n\x1b[2m[Disconnected${why}] Press Enter to reconnect.\x1b[0m\r\n`,
+      );
     };
 
     /** "Run on connect": once the login is done and the handle exists. */
@@ -203,7 +228,8 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
       loggedIn = false;
       autoRan = false;
       report("connecting");
-      t.write(`\x1b[2mConnecting to ${conn.endpoint}…\x1b[0m\r\n`);
+      // A local shell prints its own banner.
+      if (conn.kind !== "local") t.write(`\x1b[2mConnecting to ${conn.endpoint}…\x1b[0m\r\n`);
       getBackend()
         .then((b) =>
           b.openSession(conn, { cols: t.cols, rows: t.rows }, (e) => {
@@ -299,10 +325,16 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
       const copyKey = (e.ctrlKey && e.shiftKey && e.code === "KeyC") || (e.ctrlKey && e.key === "Insert");
       const pasteKey = (e.ctrlKey && e.shiftKey && e.code === "KeyV") || (e.shiftKey && e.key === "Insert");
       const breakKey = conn.kind === "serial" && e.ctrlKey && e.shiftKey && e.code === "KeyB";
-      if (!copyKey && !pasteKey && !breakKey) return true;
+      const findKey = e.ctrlKey && e.shiftKey && e.code === "KeyF";
+      // The command palette's key: leave it to the window rather than send ^P.
+      if (e.ctrlKey && e.shiftKey && e.code === "KeyP") return false;
+      // So is a new local shell's.
+      if (e.ctrlKey && e.shiftKey && e.code === "KeyT") return false;
+      if (!copyKey && !pasteKey && !breakKey && !findKey) return true;
       if (e.type === "keydown") {
         e.preventDefault();
         if (copyKey) copySelection();
+        else if (findKey) openFindRef.current();
         else if (breakKey) session?.sendBreak();
         else pasteClipboard();
       }
@@ -352,6 +384,7 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
       if (panelId) reconnect.register(panelId, null);
       resize.dispose();
       session?.close();
+      searchRef.current = null;
       t.dispose();
       term.current = null;
     };
@@ -375,8 +408,11 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
       )}
       <div className="terminal-host" ref={host} />
       {prompt && <SessionPrompt prompt={prompt} onReply={reply} />}
+      {finding && searchRef.current && (
+        <TerminalSearch search={searchRef.current} initial={finding.initial} onClose={closeFind} />
+      )}
       {forwards.length > 0 && (
-        <div className="forward-chip-wrap">
+        <div className={`forward-chip-wrap ${finding ? "below-search" : ""}`}>
           <button
             className={`forward-chip ${forwards.some((f) => f.error) ? "has-error" : ""}`}
             aria-expanded={showForwards}
@@ -437,6 +473,7 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
               onSelect: copySelection,
             },
             { label: "Paste", icon: <ClipboardPaste size={15} />, shortcut: "Ctrl+Shift+V", onSelect: pasteClipboard },
+            { label: "Find…", icon: <Search size={15} />, shortcut: "Ctrl+Shift+F", onSelect: openFind },
             "separator",
             ...(conn.kind === "serial"
               ? [
