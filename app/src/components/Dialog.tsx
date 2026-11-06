@@ -24,7 +24,10 @@ export function Modal({ title, children, actions, onSubmit, onClose, className }
   }, []);
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    onSubmit();
+    // A dialog opened from inside this one (through a portal) submits its own
+    // form; React would still pass that submit up to this one.
+    e.stopPropagation();
+    if (e.target === e.currentTarget) onSubmit();
   };
   return (
     <dialog
@@ -33,7 +36,9 @@ export function Modal({ title, children, actions, onSubmit, onClose, className }
       aria-label={title}
       onCancel={(e) => {
         e.preventDefault();
-        onClose();
+        e.stopPropagation();
+        // Escape in a dialog opened from inside this one closes only that one.
+        if (e.target === e.currentTarget) onClose();
       }}
       onMouseDown={(e) => {
         // Click on the backdrop (the dialog element itself, outside the form).

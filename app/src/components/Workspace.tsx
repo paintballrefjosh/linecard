@@ -39,6 +39,9 @@ interface Shared {
   /** Close a tab, asking first if its session is open. */
   askClose(panelId: string): void;
   setActivity(panelId: string, on: boolean): void;
+  /** Titles sessions set for themselves (OSC 0/2), by panel. */
+  titles: Record<string, string>;
+  setTitle(panelId: string, title: string): void;
 }
 
 const SharedCtx = createContext<Shared>({
@@ -48,10 +51,12 @@ const SharedCtx = createContext<Shared>({
   activity: {},
   setActivity: () => {},
   askClose: () => {},
+  titles: {},
+  setTitle: () => {},
 });
 
 function SessionPanel({ api, params }: IDockviewPanelProps<PanelParams>) {
-  const { theme, setStatus, setActivity } = useContext(SharedCtx);
+  const { theme, setStatus, setActivity, setTitle } = useContext(SharedCtx);
   const { conn } = params;
   useEffect(() => {
     const sub = api.onDidVisibilityChange((e) => e.isVisible && setActivity(api.id, false));
@@ -73,6 +78,7 @@ function SessionPanel({ api, params }: IDockviewPanelProps<PanelParams>) {
       conn={conn}
       theme={theme}
       onStatus={(s) => setStatus(api.id, s)}
+      onTitle={(t) => setTitle(api.id, t)}
       onOutput={() => !api.isVisible && setActivity(api.id, true)}
     />
   );
@@ -91,8 +97,13 @@ function focusSession(dock: DockviewApi, id: string) {
 }
 
 function SessionTab({ api, containerApi, params }: IDockviewPanelHeaderProps<PanelParams>) {
-  const { status, activity, askClose } = useContext(SharedCtx);
+  const { status, activity, askClose, titles } = useContext(SharedCtx);
+  const { prefs } = usePrefs();
   const conn = params.conn;
+  // The session's own title (e.g. "user@host: ~/src" or what Claude Code
+  // sets), if it set one; the connection's name otherwise.
+  const sessionTitle = prefs.tabTitleFromSession ? titles[api.id] : undefined;
+  const label = sessionTitle || api.title;
   const s = status[api.id] ?? "connecting";
   const active = activity[api.id];
   const { on: casting, members } = useBroadcast();
@@ -124,7 +135,13 @@ function SessionTab({ api, containerApi, params }: IDockviewPanelHeaderProps<Pan
       ref={root}
       className={`session-tab ${active ? "has-activity" : ""}`}
       style={conn.tabColor ? ({ "--tab-color": conn.tabColor } as CSSProperties) : undefined}
-      title={`${api.title} · ${conn.endpoint}${active ? " · new output" : ""}`}
+      title={[
+        sessionTitle,
+        `${api.title} · ${conn.kind === "local" ? "this computer" : conn.endpoint}`,
+        active ? "New output" : "",
+      ]
+        .filter(Boolean)
+        .join("\n")}
       // Clicking a tab leaves focus on the tab; the keyboard belongs to the session.
       onClick={() => focusSession(containerApi, api.id)}
       onContextMenu={(e) => {
@@ -142,7 +159,7 @@ function SessionTab({ api, containerApi, params }: IDockviewPanelHeaderProps<Pan
     >
       <span className={`led led-${s}`} aria-label={s} />
       {params.files ? <FolderOpen size={14} style={{ color: "var(--tab-color, var(--kind-ssh))" }} /> : <KindIcon kind={conn.kind} size={14} />}
-      <span className="session-tab-title">{api.title}</span>
+      <span className="session-tab-title">{label}</span>
       {active && <span className="activity-dot" aria-label="New output" />}
       {casting && !params.files && conn.kind !== "rdp" && conn.kind !== "vnc" && (
         <button
@@ -335,6 +352,11 @@ export function Workspace({
     (id: string, on: boolean) => setActivityMap((m) => (!!m[id] === on ? m : { ...m, [id]: on })),
     [],
   );
+  const [titles, setTitles] = useState<Record<string, string>>({});
+  const setTitle = useCallback(
+    (id: string, t: string) => setTitles((m) => ((m[id] ?? "") === t ? m : { ...m, [id]: t })),
+    [],
+  );
   const statusRef = useRef(status);
   statusRef.current = status;
   const askClose = useCallback(
@@ -378,7 +400,7 @@ export function Workspace({
 
   const closingPanel = closing ? api.current?.getPanel(closing) : undefined;
   return (
-    <SharedCtx.Provider value={{ theme, status, setStatus, activity, setActivity, askClose }}>
+    <SharedCtx.Provider value={{ theme, status, setStatus, activity, setActivity, askClose, titles, setTitle }}>
       <DockviewReact
         className={`workspace ${theme === "dark" ? "dockview-theme-dark" : "dockview-theme-light"}`}
         components={{ session: SessionPanel }}

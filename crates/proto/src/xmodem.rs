@@ -42,6 +42,12 @@ pub trait Link {
     fn send(&mut self, data: &[u8]) -> io::Result<()>;
     /// The next byte, or `None` if nothing arrived within `timeout`.
     fn recv(&mut self, timeout: Duration) -> io::Result<Option<u8>>;
+    /// Whether a byte has arrived that hasn't been read yet (without
+    /// waiting). Links that can't tell say no; ZMODEM then only listens when
+    /// it has to.
+    fn pending(&mut self) -> io::Result<bool> {
+        Ok(false)
+    }
 }
 
 #[derive(Debug)]

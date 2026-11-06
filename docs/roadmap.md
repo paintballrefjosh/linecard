@@ -50,6 +50,7 @@ Full plan: the "Linecard — Project Plan" doc. Each phase ends in a usable rele
 - [x] Broadcast input, button bar / snippets (synced, per folder), SFTP file browser (upload, download, resume, permissions, drag in)
 - [x] Python scripting (runs the user's own Python as a separate process; see docs/scripting.md)
 - [x] Find in the scrollback (Ctrl+Shift+F), a command palette with recent connections (Ctrl+Shift+P), local shell tabs (PowerShell, cmd, WSL, Git Bash; bash, zsh, fish; Ctrl+Shift+T)
+- [x] Named credentials, logon actions (expect/send, with keychain passwords), ZMODEM (sz/rz) over SSH, Telnet and serial; text zoom; tabs titled by the session
 - [ ] macOS and Linux hardening; winget and Homebrew (manifests in packaging/, not yet submitted)
 
 Team sharing follows 1.0.

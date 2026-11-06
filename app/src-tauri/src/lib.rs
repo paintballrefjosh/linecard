@@ -4,6 +4,7 @@
 //! next); SSH and Telnet sessions are real; Serial is next (see
 //! docs/roadmap.md).
 
+mod credentials;
 mod debuglog;
 mod dto;
 mod gfx;
@@ -12,6 +13,7 @@ mod import;
 mod launch;
 mod library;
 mod logging;
+mod logon;
 mod scripting;
 mod secrets;
 mod sftp;
@@ -283,6 +285,34 @@ fn inherited_settings(state: State<AppState>, folder_id: Option<String>) -> CmdR
                 from: "Settings".into(),
             })
         }),
+        credential: item(
+            "credential_id",
+            r.settings
+                .credential_id
+                .as_deref()
+                .and_then(|id| tree.credentials.get(id))
+                .map(|c| c.name.clone()),
+        ),
+        logon_actions: item(
+            "logon_actions",
+            r.settings
+                .logon_actions
+                .as_ref()
+                .filter(|s| !s.is_empty())
+                .map(|steps| {
+                    steps
+                        .iter()
+                        .map(|s| match &s.password_of {
+                            Some(id) => tree
+                                .credentials
+                                .get(id)
+                                .map_or("a password".to_string(), |c| format!("{}'s password", c.name)),
+                            None => s.send.clone(),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }),
+        ),
     })
 }
 
@@ -788,6 +818,18 @@ fn session_transfer(
     s.start_transfer(req).map_err(err)
 }
 
+/// Answer a ZMODEM offer: the file to send (the server ran `rz`), the folder
+/// to save into (it ran `sz`), or nothing to decline.
+#[tauri::command]
+fn session_zmodem(state: State<AppState>, session_id: String, path: Option<String>) -> CmdResult<()> {
+    let mut sessions = state.sessions.lock().map_err(err)?;
+    let s = sessions.get_mut(&session_id).ok_or("session closed")?;
+    s.start_transfer(linecard_proto::TransferRequest::Zmodem {
+        path: path.filter(|p| !p.is_empty()).map(std::path::PathBuf::from),
+    })
+    .map_err(err)
+}
+
 #[tauri::command]
 fn session_cancel_transfer(state: State<AppState>, session_id: String) -> CmdResult<()> {
     if let Some(s) = state.sessions.lock().map_err(err)?.get_mut(&session_id) {
@@ -816,10 +858,19 @@ fn network_target(tree: &Tree, id: &str, depth: usize) -> CmdResult<TerminalTarg
     };
     let settings = tree.resolve(&c.id).map_err(err)?.settings;
     let mut t = TerminalTarget::new(host.clone(), *port);
-    t.username = settings.username;
     t.keepalive_secs = settings.keepalive_secs;
-    // A shared credential (e.g. set on a folder) pools the saved password.
-    t.credential_key = settings.credential_id.map(|id| format!("cred:{id}"));
+    // A named credential (often set on a folder) supplies the user name and
+    // pools the saved password, unless the connection names another user.
+    let cred = settings
+        .credential_id
+        .as_deref()
+        .and_then(|cid| tree.credentials.get(cid))
+        .filter(|cr| cr.username.is_empty() || c.overrides.username.as_ref().is_none_or(|own| *own == cr.username));
+    t.username = match cred {
+        Some(cr) if !cr.username.is_empty() => Some(cr.username.clone()),
+        _ => settings.username,
+    };
+    t.credential_key = cred.map(|cr| linecard_core_model::Credential::slot(&cr.id));
     if let Some(jump) = settings.jump_host.filter(|j| j != id) {
         let hop = tree
             .connection(&jump)
@@ -835,6 +886,7 @@ fn network_target(tree: &Tree, id: &str, depth: usize) -> CmdResult<TerminalTarg
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn open_session(
+    app: AppHandle,
     state: State<'_, AppState>,
     connection_id: String,
     kind: ConnectionKind,
@@ -909,6 +961,8 @@ async fn open_session(
 
     let ssh = state.ssh.clone();
     let who = format!("{kind:?} {endpoint}");
+    let logon_steps = settings.logon_actions.clone().unwrap_or_default();
+    let logon_channel = on_event.clone();
     // Scripts read the session's output from this.
     let tap = Arc::new(linecard_script::Tap::default());
     let sink_tap = tap.clone();
@@ -943,6 +997,9 @@ async fn open_session(
     });
     // Telnet and serial connect before returning; SSH returns at once and
     // reports progress as events.
+    // A remote `sz` or `rz` is noticed here. Telnet isn't 8-bit clean unless
+    // the server agrees to binary mode, so there every control byte is escaped.
+    let (gate, sink) = linecard_proto::zgate::Gate::new(sink, kind == ConnectionKind::Telnet);
     let session = tauri::async_runtime::spawn_blocking(move || match plan {
         Plan::Serial(s) => linecard_proto::connect_serial(&s, sink),
         Plan::Network(kind, mut target) => {
@@ -954,9 +1011,19 @@ async fn open_session(
     .await
     .map_err(err)?
     .map_err(err)?;
+    let session = gate.wrap(session);
 
     let id = new_id();
     state.sessions.lock().map_err(err)?.insert(id.clone(), session);
+    logon::spawn(
+        tap.clone(),
+        logon_steps,
+        logon::AppIo {
+            app,
+            session: id.clone(),
+            channel: logon_channel,
+        },
+    );
     state.scripting.register(
         &id,
         scripting::Entry {
@@ -1211,6 +1278,9 @@ pub fn run() {
             stage::stage_end,
             highlight::save_highlight_profile,
             highlight::delete_highlight_profile,
+            credentials::list_credentials,
+            credentials::save_credential,
+            credentials::delete_credential,
             highlight::set_default_highlight,
             highlight::securecrt_keyword_files,
             highlight::import_highlight,
@@ -1229,6 +1299,7 @@ pub fn run() {
             session_break,
             session_transfer,
             session_cancel_transfer,
+            session_zmodem,
             list_serial_ports,
             session_close,
         ])
@@ -1291,6 +1362,8 @@ mod tests {
             jump_host: None,
             log: None,
             highlight: None,
+            credential: None,
+            logon_actions: None,
             forwards: vec![],
             notes: String::new(),
         }
@@ -1392,7 +1465,21 @@ mod tests {
             .unwrap();
         tree.add_connection(conn("screen", ConnectionKind::Vnc, None, None))
             .unwrap();
-        tree.add_connection(conn("shared", ConnectionKind::Ssh, Some("admin"), Some("c1")))
+        tree.credentials.insert(
+            "c1".into(),
+            linecard_core_model::Credential {
+                id: "c1".into(),
+                name: "NetOps".into(),
+                username: "netops".into(),
+            },
+        );
+        tree.add_connection(conn("shared", ConnectionKind::Ssh, None, Some("c1")))
+            .unwrap();
+        tree.add_connection(conn("same", ConnectionKind::Ssh, Some("netops"), Some("c1")))
+            .unwrap();
+        tree.add_connection(conn("other", ConnectionKind::Ssh, Some("root"), Some("c1")))
+            .unwrap();
+        tree.add_connection(conn("gone", ConnectionKind::Ssh, Some("admin"), Some("deleted")))
             .unwrap();
 
         let slot = |id: &str, user: Option<&str>| password_slot(&tree, id, user);
@@ -1408,7 +1495,17 @@ mod tests {
             slot("screen", None).unwrap(),
             ("vnc:screen.lab:5900".into(), "VNC screen.lab".into())
         );
+        // A credential supplies the user name and pools the password...
         assert_eq!(slot("shared", None).unwrap().0, "cred:c1");
+        assert_eq!(
+            network_target(&tree, "shared", 0).unwrap().username.as_deref(),
+            Some("netops")
+        );
+        assert_eq!(slot("same", None).unwrap().0, "cred:c1");
+        // ...unless the connection logs in as someone else.
+        assert_eq!(slot("other", None).unwrap().0, "ssh:root@other.lab:22");
+        // A deleted credential is ignored.
+        assert_eq!(slot("gone", None).unwrap().0, "ssh:admin@gone.lab:22");
     }
 
     #[test]

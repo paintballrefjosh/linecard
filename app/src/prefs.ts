@@ -37,6 +37,10 @@ export interface Preferences {
   confirmQuit: boolean;
   /** Connections opened lately, newest first (ids; "quick-…" for quick connects). */
   recent: string[];
+  /** Terminal text size in points (Ctrl+scroll wheel or pinch changes it). */
+  fontSize: number;
+  /** Tabs show the title the session sets (as SecureCRT does) instead of the connection's name. */
+  tabTitleFromSession: boolean;
 }
 
 export const defaultPrefs: Preferences = {
@@ -53,6 +57,8 @@ export const defaultPrefs: Preferences = {
   onConnect: [],
   schedules: [],
   recent: [],
+  fontSize: 13,
+  tabTitleFromSession: true,
 };
 
 export function withDefaults(stored: Partial<Preferences> | null | undefined): Preferences {

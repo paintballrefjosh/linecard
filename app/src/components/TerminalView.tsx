@@ -27,9 +27,11 @@ import {
   TextSelect,
   Upload,
   Zap,
+  ZoomOut,
 } from "lucide-react";
 import { attachHighlighter, highlightStore } from "../highlight";
 import { pasteLineCount, usePrefs } from "../prefs";
+import { clampFont, FONT_DEFAULT, WheelZoom } from "../zoom";
 import { broadcast, useBroadcast } from "../broadcast";
 import { reconnect } from "../reconnect";
 import { scripts } from "../scripts";
@@ -48,6 +50,8 @@ interface Props {
   conn: ConnectionNode;
   theme: Theme;
   onStatus(status: SessionStatus): void;
+  /** The session set a title (OSC 0/2); empty when it cleared it. */
+  onTitle?(title: string): void;
   /** Called whenever the remote side sends output. */
   onOutput?(): void;
 }
@@ -59,13 +63,15 @@ const NEWLINE = String.fromCharCode(10);
 /** Shown instead of starting an on-connect script while another script runs. */
 const MSG_SCRIPT_BUSY = "\r\n\x1b[2m[Too many scripts are running; not starting the on-connect script.]\x1b[0m\r\n";
 
-export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput }: Props) {
+export function TerminalView({ panelId, active, conn, theme, onStatus, onTitle, onOutput }: Props) {
   const activeRef = useRef(active);
   activeRef.current = active;
   const host = useRef<HTMLDivElement>(null);
   const term = useRef<Terminal | null>(null);
   const statusRef = useRef(onStatus);
   statusRef.current = onStatus;
+  const titleRef = useRef(onTitle);
+  titleRef.current = onTitle;
   const outputRef = useRef(onOutput);
   outputRef.current = onOutput;
   const [prompt, setPrompt] = useState<HostKeyEvent | AuthEvent | null>(null);
@@ -73,9 +79,41 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
   /** An answer given before openSession resolved; sent once it does. */
   const pendingReply = useRef<PromptReply | null>(null);
 
-  const { prefs } = usePrefs();
+  const { prefs, update: updatePrefs } = usePrefs();
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
+  const updatePrefsRef = useRef(updatePrefs);
+  updatePrefsRef.current = updatePrefs;
+  const fitRef = useRef<FitAddon | null>(null);
+  /** Saving the new size waits until the wheel or pinch stops. */
+  const fontSaveTimer = useRef(0);
+  /** Show text at `size` here now, and keep it as the size for every terminal. */
+  const setFontSize = (size: number) => {
+    const t = term.current;
+    const next = clampFont(size);
+    if (!t || t.options.fontSize === next) return;
+    t.options.fontSize = next;
+    try {
+      fitRef.current?.fit();
+    } catch {
+      /* hidden */
+    }
+    window.clearTimeout(fontSaveTimer.current);
+    fontSaveTimer.current = window.setTimeout(() => updatePrefsRef.current({ fontSize: next }), 300);
+  };
+  const setFontSizeRef = useRef(setFontSize);
+  setFontSizeRef.current = setFontSize;
+  // Another terminal changed the size (or Settings did): follow it.
+  useEffect(() => {
+    const t = term.current;
+    if (!t || t.options.fontSize === prefs.fontSize) return;
+    t.options.fontSize = clampFont(prefs.fontSize);
+    try {
+      fitRef.current?.fit();
+    } catch {
+      /* hidden */
+    }
+  }, [prefs.fontSize]);
   const themeRef = useRef(theme);
   themeRef.current = theme;
   /** This connection's keyword-highlight profile (follows folder and Settings changes). */
@@ -126,6 +164,23 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
       term.current?.write(`\r\n\x1b[31m[${err}]\x1b[0m\r\n`);
     }
   };
+  /** The server ran rz (send it a file) or sz (save its files): ask where, then answer. */
+  const answerZmodem = async (upload: boolean) => {
+    const b = await getBackend();
+    term.current?.write(
+      `\r\n\x1b[2m[${upload ? "The server is waiting for a file (rz)" : "The server wants to send files (sz)"}…]\x1b[0m\r\n`,
+    );
+    const path = upload
+      ? await b.pickFile("open", "File to send to the server")
+      : await b.pickFolder("Folder to save the server's files in");
+    try {
+      await sessionRef.current?.zmodem(path);
+    } catch (err) {
+      term.current?.write(`\r\n\x1b[31m[${err}]\x1b[0m\r\n`);
+    }
+  };
+  const answerZmodemRef = useRef(answerZmodem);
+  answerZmodemRef.current = answerZmodem;
   const { on: casting, members } = useBroadcast();
   const [status, setStatus] = useState<SessionStatus>("connecting");
   const report = (st: SessionStatus) => {
@@ -163,7 +218,7 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
     if (!host.current) return;
     const t = new Terminal({
       fontFamily: FONT,
-      fontSize: 13,
+      fontSize: clampFont(prefsRef.current.fontSize),
       cursorBlink: true,
       scrollback: 10_000,
       allowProposedApi: true,
@@ -171,6 +226,7 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
     });
     const fit = new FitAddon();
     t.loadAddon(fit);
+    fitRef.current = fit;
     const search = new SearchAddon({ highlightLimit: 2000 });
     t.loadAddon(search);
     searchRef.current = search;
@@ -240,6 +296,8 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
             } else if (e.event === "hostKey" || e.event === "auth") {
               setPrompt(e);
               outputRef.current?.();
+            } else if (e.event === "zmodem") {
+              void answerZmodemRef.current(e.upload);
             } else if (e.event === "transfer") {
               setTransfer(e.finished ? null : e);
               if (e.finished) {
@@ -256,7 +314,7 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
               loggedIn = true;
               autoRun();
             } else if (e.event === "forwards") setForwards(e.forwards);
-            else if (e.event === "title") document.title = `${e.title} · Linecard`;
+            else if (e.event === "title") titleRef.current?.(e.title.trim());
             else if (e.event === "disconnected") {
               setForwards([]);
               // Free the backend's handle; this attempt is over.
@@ -354,6 +412,30 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
     };
     el.addEventListener("paste", onPaste, true);
     el.addEventListener("contextmenu", onContextMenu);
+    // Ctrl+scroll wheel, and a touchpad pinch (which browsers send as
+    // Ctrl+wheel), change the text size instead of scrolling or zooming the page.
+    const wheelZoom = new WheelZoom();
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const steps = wheelZoom.steps(e.deltaY, e.deltaMode);
+      if (steps) setFontSizeRef.current((t.options.fontSize ?? FONT_DEFAULT) + steps);
+    };
+    // macOS (WebKit) reports a trackpad pinch as gesture events with a scale.
+    let pinchFrom = 0;
+    const onGestureStart = (e: Event) => {
+      e.preventDefault();
+      pinchFrom = t.options.fontSize ?? FONT_DEFAULT;
+    };
+    const onGestureChange = (e: Event) => {
+      e.preventDefault();
+      const scale = (e as Event & { scale?: number }).scale ?? 1;
+      if (pinchFrom) setFontSizeRef.current(pinchFrom * scale);
+    };
+    el.addEventListener("wheel", onWheel, { capture: true, passive: false });
+    el.addEventListener("gesturestart", onGestureStart);
+    el.addEventListener("gesturechange", onGestureChange);
     const resize = t.onResize(({ cols, rows }) => session?.resize(cols, rows));
     // Refit once per frame, never synchronously inside the observer callback.
     let frame = 0;
@@ -377,6 +459,10 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
       ro.disconnect();
       el.removeEventListener("paste", onPaste, true);
       el.removeEventListener("contextmenu", onContextMenu);
+      el.removeEventListener("wheel", onWheel, { capture: true });
+      el.removeEventListener("gesturestart", onGestureStart);
+      el.removeEventListener("gesturechange", onGestureChange);
+      fitRef.current = null;
       selection.dispose();
       highlighter.dispose();
       input.dispose();
@@ -474,6 +560,16 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
             },
             { label: "Paste", icon: <ClipboardPaste size={15} />, shortcut: "Ctrl+Shift+V", onSelect: pasteClipboard },
             { label: "Find…", icon: <Search size={15} />, shortcut: "Ctrl+Shift+F", onSelect: openFind },
+            ...(prefs.fontSize !== FONT_DEFAULT
+              ? [
+                  {
+                    label: `Reset text size (now ${prefs.fontSize} pt)`,
+                    icon: <ZoomOut size={15} />,
+                    shortcut: "Ctrl+scroll",
+                    onSelect: () => setFontSize(FONT_DEFAULT),
+                  },
+                ]
+              : []),
             "separator",
             ...(conn.kind === "serial"
               ? [
