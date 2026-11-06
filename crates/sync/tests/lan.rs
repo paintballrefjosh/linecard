@@ -1,16 +1,17 @@
 //! LAN sync between transports in one process.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
+use linecard_relay::{router, Limits, Relay};
 use linecard_sync::crypto::{open, seal};
 use linecard_sync::lan::LanTransport;
+use linecard_sync::relay::RelayTransport;
 use linecard_sync::{DeviceKey, GroupKey};
 
 async fn node(group: &GroupKey, device: &str, discover: bool) -> LanTransport {
-    LanTransport::start(None, &group.group_id(), &group.relay_token(), device, discover)
-        .await
-        .unwrap()
+    LanTransport::start(None, group, device, discover).await.unwrap()
 }
 
 fn at(t: &LanTransport) -> SocketAddr {
@@ -64,11 +65,76 @@ async fn other_groups_cant_read() {
     let k = DeviceKey::generate();
     let a = node(&group, "a", false).await;
     a.push(&seal(&group, &k, "a", &1)).unwrap();
-    let stranger = LanTransport::start(None, &group.group_id(), &other.relay_token(), "x", false)
-        .await
-        .unwrap();
+    let stranger = node(&other, "x", false).await;
     stranger.add_peer("a", at(&a));
     assert!(stranger.pull(&Default::default()).await.unwrap().0.is_empty());
+
+    // Knowing the group id but not a token gets nothing either.
+    let url = format!("http://{}", at(&a));
+    let guess = RelayTransport::new(&url, &group.group_id(), &other.lan_token(), "x").unwrap();
+    assert!(guess.pull(0).await.is_err());
+}
+
+#[tokio::test]
+async fn the_network_side_is_read_only_and_old_peers_can_still_read() {
+    let group = GroupKey::generate();
+    let k = DeviceKey::generate();
+    let a = node(&group, "a", false).await;
+    a.push(&seal(&group, &k, "a", &1)).unwrap();
+    let url = format!("http://{}", at(&a));
+
+    // A computer on an older Linecard presents the relay token: it may read.
+    let old = RelayTransport::new(&url, &group.group_id(), &group.relay_token(), "old").unwrap();
+    assert_eq!(old.pull(0).await.unwrap().0.len(), 1);
+
+    // Nobody can write, whatever token they have.
+    for token in [group.lan_token(), group.relay_token()] {
+        let peer = RelayTransport::new(&url, &group.group_id(), &token, "w").unwrap();
+        assert!(peer.push(&seal(&group, &k, "w", &2)).await.is_err());
+        assert!(peer.put_device(&seal(&group, &k, "w", &"hi")).await.is_err());
+    }
+    assert_eq!(old.pull(0).await.unwrap().0.len(), 1, "still only the one item");
+}
+
+#[tokio::test]
+async fn items_a_peer_serves_are_kept_only_if_they_open_with_the_group_key() {
+    let group = GroupKey::generate();
+    let other = GroupKey::generate();
+    let k = DeviceKey::generate();
+
+    // A fake peer (anyone who heard a beacon) serving one forged item and one real one.
+    let fake = Arc::new(
+        Relay::in_memory(Limits {
+            open: true,
+            ..Default::default()
+        })
+        .unwrap(),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let fake_at = listener.local_addr().unwrap();
+    tokio::spawn({
+        let fake = fake.clone();
+        async move { axum::serve(listener, router(fake)).await.unwrap() }
+    });
+    for (sealed, device) in [
+        (seal(&other, &k, "laptop", &666), "laptop"),
+        (seal(&group, &k, "a", &1), "a"),
+    ] {
+        let blob = serde_json::to_string(&sealed).unwrap();
+        fake.push(&group.group_id(), &group.lan_token(), None, device, &blob)
+            .unwrap();
+    }
+
+    let b = node(&group, "b", false).await;
+    b.add_peer("fake", fake_at);
+    let (got, _) = b.pull(&Default::default()).await.unwrap();
+    assert_eq!(nums(&group, &got), vec![1], "the forged item is dropped");
+
+    // ...and isn't passed on to the next computer.
+    let c = node(&group, "c", false).await;
+    c.add_peer("b", at(&b));
+    let (got, _) = c.pull(&Default::default()).await.unwrap();
+    assert_eq!(nums(&group, &got), vec![1]);
 }
 
 #[tokio::test]

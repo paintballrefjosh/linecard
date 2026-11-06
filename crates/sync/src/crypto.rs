@@ -92,6 +92,13 @@ impl GroupKey {
         URL_SAFE_NO_PAD.encode(self.derive("linecard relay token v1"))
     }
 
+    /// Bearer token between computers syncing on the local network. Separate
+    /// from [`Self::relay_token`]: it travels over plain HTTP, so someone on
+    /// the network can see it, and it only lets them read sealed items.
+    pub fn lan_token(&self) -> String {
+        URL_SAFE_NO_PAD.encode(self.derive("linecard lan token v1"))
+    }
+
     fn cipher(&self) -> XChaCha20Poly1305 {
         XChaCha20Poly1305::new(&self.derive("linecard ops key v1").into())
     }
@@ -230,6 +237,8 @@ mod tests {
         assert_eq!(k.group_id().len(), 32);
         assert_ne!(k.group_id(), GroupKey::from_bytes([8; 32]).group_id());
         assert!(!k.relay_token().contains(&k.group_id()));
+        assert_ne!(k.lan_token(), k.relay_token());
+        assert_eq!(k.lan_token(), GroupKey::from_bytes([7; 32]).lan_token());
     }
 
     #[test]

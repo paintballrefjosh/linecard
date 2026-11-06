@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use linecard_core_model::ConnectionKind;
-use linecard_proto::sftp::{join, EntryKind, SftpClient, Transfer};
+use linecard_proto::sftp::{join, local_name, EntryKind, SftpClient, Transfer};
 use linecard_proto::{PromptReply, SessionEvent, TerminalTarget};
 use serde::Serialize;
 use tauri::ipc::Channel;
@@ -225,11 +225,10 @@ pub async fn sftp_download(
     let (c, cancel) = for_transfer(&state, &session_id)?;
     let mut total = 0u64;
     for r in remote {
-        let name = r
-            .trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .unwrap_or("download")
+        // The name came from the server's listing: it must be one safe file name.
+        let last = r.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+        let name = local_name(if last.is_empty() { "download" } else { last }) // "/" itself
+            .map_err(err)?
             .to_string();
         let local = PathBuf::from(&dest).join(&name);
         if local.exists() && !resume {

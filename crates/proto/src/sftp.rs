@@ -72,6 +72,46 @@ pub fn join(dir: &str, name: &str) -> String {
     }
 }
 
+/// `name` (one entry of a remote folder, as the server sent it) if it is
+/// safe to use as a single local file name. A server chooses these names, so
+/// a hostile one could otherwise send `../../x`, an absolute path, or (on
+/// Windows) `..\x`, `C:x` or a device name, and write outside the folder the
+/// user picked.
+pub fn local_name(name: &str) -> io::Result<&str> {
+    let refuse = || {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("the server sent a file name that isn't safe to save: {name:?}"),
+        ))
+    };
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\0']) {
+        return refuse();
+    }
+    if cfg!(windows) {
+        if name.contains(['\\', ':', '<', '>', '"', '|', '?', '*']) || name.chars().any(|c| (c as u32) < 0x20) {
+            return refuse();
+        }
+        // Windows drops trailing dots and spaces ("..." would mean "..").
+        if name.ends_with(['.', ' ']) {
+            return refuse();
+        }
+        let stem = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+        let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+            || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+                && stem.len() == 4
+                && stem.as_bytes()[3].is_ascii_digit()
+                && stem.as_bytes()[3] != b'0');
+        if device {
+            return refuse();
+        }
+    }
+    // Whatever the platform's rules, it must be exactly one plain component.
+    match Path::new(name).components().collect::<Vec<_>>().as_slice() {
+        [std::path::Component::Normal(_)] => Ok(name),
+        _ => refuse(),
+    }
+}
+
 /// A logged-in SFTP session. Dropping it ends the connection.
 pub struct SftpClient {
     sftp: SftpSession,
@@ -180,6 +220,10 @@ impl SftpClient {
     /// Copy a remote file or folder to `local`. With `resume`, files that
     /// already exist locally are continued (or skipped when complete) rather
     /// than refused; this assumes they are the start of the same file.
+    ///
+    /// Inside a folder, links to files are copied as files, but links to
+    /// folders are skipped (they can loop, or lead to the server's root).
+    /// A file name that isn't safe to save locally stops the download.
     pub async fn download(
         &self,
         remote: &str,
@@ -204,7 +248,18 @@ impl SftpClient {
             if self.is_dir(remote).await? {
                 tokio::fs::create_dir_all(local).await?;
                 for e in self.list(remote).await? {
-                    let (r, l) = (join(remote, &e.name), local.join(&e.name));
+                    let r = join(remote, &e.name);
+                    match e.kind {
+                        EntryKind::Dir | EntryKind::File => {}
+                        // Follow a link only to a file; a broken one is skipped too.
+                        EntryKind::Link => {
+                            if !matches!(self.is_dir(&r).await, Ok(false)) {
+                                continue;
+                            }
+                        }
+                        EntryKind::Other => continue,
+                    }
+                    let l = local.join(local_name(&e.name)?);
                     self.download_into(&r, &l, opts, done, progress).await?;
                 }
                 return Ok(());
@@ -371,12 +426,44 @@ impl SftpClient {
 
 #[cfg(test)]
 mod tests {
-    use super::join;
+    use super::{join, local_name};
 
     #[test]
     fn joins_remote_paths() {
         assert_eq!(join("/home/a", "x"), "/home/a/x");
         assert_eq!(join("/", "x"), "/x");
         assert_eq!(join("rel/", "x"), "rel/x");
+    }
+
+    #[test]
+    fn server_file_names_must_stay_in_the_folder() {
+        for ok in ["notes.txt", ".bashrc", "a b", "..hidden", "résumé.pdf", "config"] {
+            assert_eq!(local_name(ok).unwrap(), ok);
+        }
+        for bad in ["", ".", "..", "../x", "a/b", "/etc/passwd", "x\0y"] {
+            assert!(local_name(bad).is_err(), "{bad:?} should be refused");
+        }
+        if cfg!(windows) {
+            for bad in [
+                "..\\x",
+                "a\\b",
+                "C:x",
+                "C:\\Windows",
+                "file:stream",
+                "...",
+                "name. ",
+                "CON",
+                "nul.txt",
+                "com1",
+                "LPT9.log",
+                "a*b",
+                "tab\there",
+            ] {
+                assert!(local_name(bad).is_err(), "{bad:?} should be refused on Windows");
+            }
+            for ok in ["COM10", "console.log", "com0"] {
+                assert!(local_name(ok).is_ok(), "{ok:?} is a normal name");
+            }
+        }
     }
 }
