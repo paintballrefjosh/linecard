@@ -81,6 +81,8 @@ const WAIT: Duration = Duration::from_secs(10);
 const LINE_END_WAIT: Duration = Duration::from_millis(100);
 /// How long a sender listens for a reply it doesn't need yet.
 const GLANCE: Duration = Duration::from_millis(100);
+/// Damaged or false headers in a row before a receiver gives up.
+const DAMAGED_HEADERS: usize = 1000;
 /// Tries at each step before giving up.
 const RETRIES: usize = 10;
 
@@ -373,8 +375,9 @@ impl Reader<'_> {
                     seen_pad = false;
                     cans = 0;
                     skipped += 1;
-                    // A whole screen of something else: not a ZMODEM peer.
-                    if skipped > 64 * 1024 {
+                    // Far more than a sender can have in flight (its window)
+                    // when we're skipping to the next header: not a ZMODEM peer.
+                    if skipped > 1024 * 1024 {
                         return Err(TransferError::Timeout);
                     }
                 }
@@ -538,6 +541,7 @@ fn receive_files(
     let mut current: Option<(PathBuf, String, File, u64, Option<u64>)> = None;
     let mut retry = zrinit.clone();
     let mut tries = 0;
+    let mut damaged = 0;
     link.send(&zrinit)?;
     loop {
         let mut r = Reader {
@@ -559,13 +563,17 @@ fn receive_files(
             Err(e) => return Err(e),
         };
         let Some((h, wide)) = got else {
-            tries += 1;
-            if tries > RETRIES {
+            // Something header-like that wasn't one: usually data still in
+            // flight from before our last ZRPOS. Asking again each time would
+            // only make the sender start over again; keep looking (a real
+            // stall still ends in a timeout above, which asks again).
+            damaged += 1;
+            if damaged > DAMAGED_HEADERS {
                 return Err(TransferError::TooManyErrors);
             }
-            link.send(&retry)?;
             continue;
         };
+        damaged = 0;
         match h.kind {
             ZRQINIT => {
                 retry = zrinit.clone();
@@ -775,7 +783,19 @@ fn send_file(
 
     // Data: stream subpackets, with ZCRCQ checkpoints and a bounded window.
     let mut acked = pos;
+    // Errors since the receiver last moved forward: repeats of the same
+    // trouble give up, but a long file with a few bad blocks spread through
+    // it doesn't.
     let mut errors = 0;
+    let mut furthest_rpos = pos;
+    let mut setback = |at: u64, errors: &mut usize| {
+        if at > furthest_rpos {
+            furthest_rpos = at;
+            *errors = 0;
+        }
+        *errors += 1;
+        *errors <= RETRIES
+    };
     'resend: loop {
         file.seek(SeekFrom::Start(pos))?;
         link.send(&bin_header(Header::pos(ZDATA, pos), wide, o))?;
@@ -817,10 +837,15 @@ fn send_file(
                     read_header(link, cancel, GLANCE)?
                 };
                 match reply {
-                    Some(h) if h.kind == ZACK => acked = acked.max(h.position().min(pos)),
+                    Some(h) if h.kind == ZACK => {
+                        let at = h.position().min(pos);
+                        if at > acked {
+                            acked = at;
+                            errors = 0;
+                        }
+                    }
                     Some(h) if h.kind == ZRPOS => {
-                        errors += 1;
-                        if errors > RETRIES {
+                        if !setback(h.position(), &mut errors) {
                             return Err(TransferError::TooManyErrors);
                         }
                         pos = h.position().min(size);
@@ -860,8 +885,7 @@ fn send_file(
             match next_header(link, cancel)? {
                 Some(h) if h.kind == ZRINIT => break 'resend,
                 Some(h) if h.kind == ZRPOS => {
-                    errors += 1;
-                    if errors > RETRIES {
+                    if !setback(h.position(), &mut errors) {
                         return Err(TransferError::TooManyErrors);
                     }
                     pos = h.position().min(size);
@@ -977,6 +1001,10 @@ mod tests {
         corrupt_at: Option<usize>,
         /// Bytes this end refuses to pass through (to prove escaping works).
         forbidden: Vec<u8>,
+        /// Reads lag (a slow receiver), so lots of data is in flight when
+        /// something goes wrong.
+        slow: bool,
+        read: usize,
     }
 
     impl Link for Pipe {
@@ -994,6 +1022,12 @@ mod tests {
             Ok(())
         }
         fn recv(&mut self, timeout: Duration) -> io::Result<Option<u8>> {
+            if self.slow {
+                self.read += 1;
+                if self.read.is_multiple_of(2048) {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            }
             if let Some(b) = self.held.pop_front() {
                 return Ok(Some(b));
             }
@@ -1017,6 +1051,8 @@ mod tests {
             sent: 0,
             corrupt_at: None,
             forbidden: vec![],
+            slow: false,
+            read: 0,
         };
         (p(a_tx, a_rx), p(b_tx, b_rx))
     }
@@ -1073,6 +1109,19 @@ mod tests {
         b.forbidden = vec![0x00];
         let opts = Options { escape_ctl: true };
         assert_eq!(round_trip(&data, a, b, opts).0, data);
+    }
+
+    #[test]
+    fn damage_on_a_slow_line_recovers_without_giving_up() {
+        // The receiver lags, so a whole window is in flight when it notices
+        // the damage; the data it skips must not count as more errors.
+        let data = sample(900 * 1024);
+        for at in [20_000, 300_000] {
+            let (mut a, mut b) = pipes();
+            a.corrupt_at = Some(at);
+            b.slow = true;
+            assert!(round_trip(&data, a, b, Options::default()).0 == data, "damage at {at}");
+        }
     }
 
     #[test]
