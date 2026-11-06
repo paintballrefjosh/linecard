@@ -774,6 +774,53 @@ async fn maybe_compact(
     }
 }
 
+/// What a pull turned out to hold.
+#[derive(Default)]
+struct Sorted {
+    incoming: Vec<Op>,
+    closed: Option<Notice>,
+    problem: Option<SyncError>,
+    /// An item came from a newer Linecard: don't move the cursor past it.
+    hold: bool,
+}
+
+/// Open each pulled item, keeping changes and notices from verified members.
+/// Forged or foreign items are reported and skipped for good (retrying can't
+/// fix them, and they mustn't stall sync). Items signed by a member that this
+/// version can't read are reported and held for after an update.
+fn sort_received(
+    group: &GroupKey,
+    device: &str,
+    received: Vec<Received>,
+    mut pinned_ok: impl FnMut(&Sealed) -> bool,
+) -> Sorted {
+    let mut out = Sorted::default();
+    for r in received {
+        if r.sealed.device == device {
+            continue; // the relay returns our own pushes too
+        }
+        // Verify first, pin after: pinning an unverified key would let anyone
+        // who can write to the storage (without the phrase) claim a device's
+        // name before that device first syncs, and lock it out for good.
+        let opened = match open::<Batch>(group, &r.sealed) {
+            Ok(b) => Ok(Ok(b)),
+            Err(e) => open::<Notice>(group, &r.sealed).map(Err).map_err(|_| e),
+        };
+        match opened {
+            Err(e) => {
+                // Corrupt here means it verified and decrypted but didn't parse:
+                // a format from a newer version, like Unsupported.
+                out.hold |= matches!(e, SyncError::Unsupported(_) | SyncError::Corrupt(_));
+                out.problem = Some(e);
+            }
+            Ok(_) if !pinned_ok(&r.sealed) => out.problem = Some(SyncError::Tampered),
+            Ok(Ok(b)) => out.incoming.extend(b.ops),
+            Ok(Err(n)) => out.closed = Some(n),
+        }
+    }
+    out
+}
+
 async fn round(
     app: &AppHandle,
     transport: &Transport,
@@ -828,31 +875,20 @@ async fn round(
         state.sync.poke();
         return Ok(None);
     }
-    let mut incoming = Vec::new();
-    let mut problem = None;
-    let mut closed = None;
-    for r in received {
-        if r.sealed.device == device {
-            continue; // the relay returns our own pushes too
-        }
-        // Verify first, pin after: pinning an unverified key would let anyone
-        // who can write to the storage (without the phrase) claim a device's
-        // name before that device first syncs, and lock it out for good.
-        let opened = match open::<Batch>(group, &r.sealed) {
-            Ok(b) => Ok(Ok(b)),
-            Err(e) => open::<Notice>(group, &r.sealed).map(Err).map_err(|_| e),
-        };
-        match opened {
-            Err(e) => problem = Some(e),
-            Ok(_) if !pinned_ok(app, &r.sealed) => problem = Some(SyncError::Tampered),
-            Ok(Ok(b)) => incoming.extend(b.ops),
-            Ok(Err(n)) => closed = Some(n),
-        }
-    }
+    let Sorted {
+        incoming,
+        closed,
+        problem,
+        hold,
+    } = sort_received(group, device, received, |s| pinned_ok(app, s));
     let fresh = {
         let mut lib = state.lib.lock().map_err(|e| lib_err(e.to_string()))?;
         let fresh = lib.apply_remote(incoming).map_err(lib_err)?;
-        lib.set_sync_cursor("sync", &next).map_err(lib_err)?;
+        // Something this version can't read yet: keep the cursor where it was so
+        // it's pulled again after an update (what did open is skipped as seen).
+        if !hold {
+            lib.set_sync_cursor("sync", &next).map_err(lib_err)?;
+        }
         fresh
     };
     if fresh > 0 {
@@ -900,6 +936,73 @@ async fn round(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn got(sealed: Sealed) -> Received {
+        Received { sealed, stored_at: 0 }
+    }
+
+    #[test]
+    fn forged_items_are_skipped_and_never_pinned() {
+        let (group, other) = (GroupKey::generate(), GroupKey::generate());
+        let k = DeviceKey::generate();
+        let received = vec![
+            got(seal(&other, &k, "laptop", &Batch { ops: vec![] })),
+            got(seal(&group, &k, "me", &Batch { ops: vec![] })),
+            got(seal(
+                &group,
+                &k,
+                "desk",
+                &Notice {
+                    closed_by: "desk".into(),
+                    at: 1,
+                },
+            )),
+        ];
+        let mut asked = Vec::new();
+        let s = sort_received(&group, "me", received, |s| {
+            asked.push(s.device.clone());
+            true
+        });
+        assert_eq!(
+            asked,
+            ["desk"],
+            "only verified senders get pinned; our own items are skipped"
+        );
+        assert!(matches!(s.problem, Some(SyncError::WrongKey | SyncError::Tampered)));
+        assert!(!s.hold, "a forgery can't be fixed by retrying, so the cursor moves on");
+        assert_eq!(s.closed.map(|n| n.closed_by).as_deref(), Some("desk"));
+    }
+
+    #[test]
+    fn a_key_that_doesnt_match_the_pinned_one_is_refused() {
+        let group = GroupKey::generate();
+        let k = DeviceKey::generate();
+        let s = sort_received(
+            &group,
+            "me",
+            vec![got(seal(&group, &k, "desk", &Batch { ops: vec![] }))],
+            |_| false,
+        );
+        assert!(matches!(s.problem, Some(SyncError::Tampered)));
+        assert!(!s.hold);
+    }
+
+    #[test]
+    fn items_from_a_newer_version_hold_the_cursor() {
+        let group = GroupKey::generate();
+        let k = DeviceKey::generate();
+        // Signed and encrypted by a member, but in a shape this version doesn't know.
+        let newer = serde_json::json!({ "ops": [{ "kind": "from the future" }] });
+        let s = sort_received(&group, "me", vec![got(seal(&group, &k, "desk", &newer))], |_| true);
+        assert!(matches!(s.problem, Some(SyncError::Corrupt(_))));
+        assert!(s.hold);
+
+        let mut v2 = seal(&group, &k, "desk", &Batch { ops: vec![] });
+        v2.v = 2;
+        let s = sort_received(&group, "me", vec![got(v2)], |_| true);
+        assert!(matches!(s.problem, Some(SyncError::Unsupported(2))));
+        assert!(s.hold);
+    }
 
     fn peer(id: &str, age_ms: u64) -> (DeviceInfo, String) {
         (
