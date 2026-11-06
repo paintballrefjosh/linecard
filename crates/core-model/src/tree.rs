@@ -73,6 +73,8 @@ pub struct Tree {
     pub highlight_profiles: BTreeMap<ObjectId, crate::HighlightProfile>,
     /// Button-bar commands by id.
     pub snippets: BTreeMap<ObjectId, crate::Snippet>,
+    /// Named credentials (user name; the password is in the keychain) by id.
+    pub credentials: BTreeMap<ObjectId, crate::Credential>,
     /// Synced vault (opt-in): its salt and check value, if set up.
     pub vault: Option<crate::VaultMeta>,
     /// Saved passwords that sync, encrypted, by object id.

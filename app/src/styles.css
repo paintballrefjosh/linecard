@@ -1946,6 +1946,55 @@ kbd {
 .forward-add {
   align-self: flex-start;
 }
+/* Logon actions: wait for / what to send / line, one step per row. */
+.logon {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* Two lines per step: what to wait for, then what to send. */
+.logon-row {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "expect expect remove"
+    "kind send .";
+  align-items: center;
+  gap: 4px 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.logon-row input {
+  min-width: 0;
+  font-family: var(--font-mono);
+}
+.logon-row select {
+  min-width: 0;
+  grid-area: kind;
+}
+.logon-row > :first-child {
+  grid-area: expect;
+}
+.logon-row > :nth-child(3) {
+  grid-area: send;
+}
+.logon-row > button {
+  grid-area: remove;
+}
+.logon-secret {
+  color: var(--text-quiet);
+  font-size: 12px;
+}
+.logon-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.logon-foot .form-hint,
+.logon-inherited {
+  margin: 0;
+}
 /* Find in the terminal (Ctrl+Shift+F). */
 .term-search {
   position: absolute;

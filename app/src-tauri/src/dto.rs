@@ -1,7 +1,7 @@
 //! JSON shapes sent to the UI. Keep in sync with app/src/types.ts.
 
 use linecard_core_model::{
-    Connection, ConnectionKind, Endpoint, FlowControl, Parity, PortForward, SerialSettings, Settings, Tree,
+    Connection, ConnectionKind, Endpoint, FlowControl, LogonStep, Parity, PortForward, SerialSettings, Settings, Tree,
 };
 use linecard_core_sync::{ChangeKind, ChangeTracker, PendingChange, Value};
 use serde::{Deserialize, Serialize};
@@ -141,6 +141,12 @@ pub struct ConnectionDraftDto {
     /// Keyword-highlight profile id; null = inherit.
     #[serde(default)]
     pub highlight: Option<String>,
+    /// Named credential id; null = inherit.
+    #[serde(default)]
+    pub credential: Option<String>,
+    /// Logon actions; null = inherit, [] = none here.
+    #[serde(default)]
+    pub logon_actions: Option<Vec<LogonStep>>,
     /// SSH port forwards.
     #[serde(default)]
     pub forwards: Vec<PortForward>,
@@ -177,10 +183,29 @@ impl From<&Connection> for ConnectionDraftDto {
             jump_host: c.overrides.jump_host.clone(),
             log: c.overrides.log_enabled,
             highlight: c.overrides.highlight_rules.clone(),
+            credential: c.overrides.credential_id.clone(),
+            logon_actions: c.overrides.logon_actions.clone(),
             forwards: c.forwards.clone(),
             notes: c.notes.clone(),
         }
     }
+}
+
+/// Logon steps as saved: blank rows dropped (a step must send something).
+fn clean_steps(steps: &[LogonStep]) -> Vec<LogonStep> {
+    steps
+        .iter()
+        .filter(|s| !s.send.trim().is_empty() || s.password_of.is_some())
+        .map(|s| LogonStep {
+            expect: s.expect.clone(),
+            send: if s.password_of.is_some() {
+                String::new()
+            } else {
+                s.send.clone()
+            },
+            password_of: s.password_of.clone().filter(|p| !p.is_empty()),
+        })
+        .collect()
 }
 
 fn non_empty(s: &Option<String>) -> Option<String> {
@@ -230,6 +255,8 @@ impl ConnectionDraftDto {
         conn.overrides.tab_color = non_empty(&self.tab_color);
         conn.overrides.log_enabled = self.log;
         conn.overrides.highlight_rules = non_empty(&self.highlight);
+        conn.overrides.credential_id = non_empty(&self.credential);
+        conn.overrides.logon_actions = self.logon_actions.as_deref().map(clean_steps);
         conn.forwards = if self.kind == ConnectionKind::Ssh {
             self.forwards.clone()
         } else {
@@ -461,6 +488,10 @@ pub struct InheritedDto {
     pub log: Option<InheritedValue>,
     /// The keyword-highlight profile's name.
     pub highlight: Option<InheritedValue>,
+    /// The named credential's name.
+    pub credential: Option<InheritedValue>,
+    /// What the inherited logon actions send, e.g. "enable, terminal length 0".
+    pub logon_actions: Option<InheritedValue>,
 }
 
 /// The settings a folder passes down. Empty / null = inherit.
@@ -472,6 +503,10 @@ pub struct FolderSettingsDto {
     pub jump_host: Option<String>,
     pub log: Option<bool>,
     pub highlight: Option<String>,
+    #[serde(default)]
+    pub credential: Option<String>,
+    #[serde(default)]
+    pub logon_actions: Option<Vec<LogonStep>>,
 }
 
 impl From<&Settings> for FolderSettingsDto {
@@ -482,6 +517,8 @@ impl From<&Settings> for FolderSettingsDto {
             jump_host: s.jump_host.clone(),
             log: s.log_enabled,
             highlight: s.highlight_rules.clone(),
+            credential: s.credential_id.clone(),
+            logon_actions: s.logon_actions.clone(),
         }
     }
 }
@@ -493,6 +530,8 @@ impl FolderSettingsDto {
         s.jump_host = non_empty(&self.jump_host);
         s.log_enabled = self.log;
         s.highlight_rules = non_empty(&self.highlight);
+        s.credential_id = non_empty(&self.credential);
+        s.logon_actions = self.logon_actions.as_deref().map(clean_steps);
     }
 }
 

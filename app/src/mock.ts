@@ -12,6 +12,7 @@ import type {
   RdpShare,
   SerialSettings,
   FolderSettings,
+  LogonStep,
   PortForward,
   SyncConfig,
   TreeNode,
@@ -232,6 +233,10 @@ export function mockBackend(): Backend {
   let logging: LoggingSettings = { enabled: false, folder: null, timestamps: false };
   /** login label -> saved-at, standing in for the OS keychain. */
   const savedPasswords = new Map<string, number>();
+  // Named credentials (the demo's DC1 folders use NetOps admin).
+  const credentials = new Map<string, { id: string; name: string; username: string; saved: boolean }>([
+    ["cred-netops", { id: "cred-netops", name: "NetOps admin", username: "netadmin", saved: true }],
+  ]);
   let snippets: Snippet[] = [
     { id: "s-1", name: "Show version", text: "show version", folder: null, order: 1, enter: true },
     { id: "s-2", name: "Interfaces", text: "show ip interface brief", folder: null, order: 2, enter: true },
@@ -247,6 +252,8 @@ export function mockBackend(): Backend {
       jumpHost: string | null;
       log: boolean | null;
       highlight?: string | null;
+      credential?: string | null;
+      logonActions?: LogonStep[] | null;
       forwards?: PortForward[];
     }
   >();
@@ -418,6 +425,8 @@ export function mockBackend(): Backend {
         jumpHost: x?.jumpHost ?? null,
         log: x?.log ?? null,
         highlight: x?.highlight ?? null,
+        credential: x?.credential ?? null,
+        logonActions: x?.logonActions ?? null,
         forwards: x?.forwards ?? [],
         notes: x?.notes ?? "",
       };
@@ -445,6 +454,8 @@ export function mockBackend(): Backend {
         jumpHost: d.jumpHost,
         log: d.log,
         highlight: d.highlight,
+        credential: d.credential,
+        logonActions: d.logonActions,
         forwards: d.forwards,
       });
       emit();
@@ -571,6 +582,27 @@ export function mockBackend(): Backend {
       emit();
     },
     logDebug() {},
+    async listCredentials() {
+      return [...credentials.values()]
+        .map((c) => ({
+          ...c,
+          usedBy: c.id === "cred-netops" ? 4 : [...extra.values()].filter((x) => x.credential === c.id).length,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    },
+    async saveCredential(d) {
+      if (!d.name.trim()) throw "Name the credential";
+      const id = d.id || newId();
+      const was = credentials.get(id);
+      credentials.set(id, { id, name: d.name.trim(), username: d.username.trim(), saved: !!d.password || !!was?.saved });
+      emit();
+      return id;
+    },
+    async deleteCredential(id) {
+      credentials.delete(id);
+      for (const x of extra.values()) if (x.credential === id) x.credential = null;
+      emit();
+    },
     async forgetSavedPassword(key) {
       savedPasswords.delete(key.replace(/^ssh:/, ""));
     },
@@ -635,10 +667,22 @@ export function mockBackend(): Backend {
         highlight: inDc1
           ? { value: "Cisco", from: "/DC1 Fort Worth" }
           : { value: hl.profiles.find((p) => p.id === hl.defaultId)?.name ?? "", from: "Settings" },
+        credential: inDc1 ? { value: "NetOps admin", from: "/DC1 Fort Worth" } : null,
+        logonActions: inDc1 ? { value: "terminal length 0", from: "/DC1 Fort Worth" } : null,
       };
     },
     async getFolderSettings(id) {
-      return folderSettings.get(id) ?? { username: null, tabColor: null, jumpHost: null, log: null, highlight: null };
+      return (
+        folderSettings.get(id) ?? {
+          username: null,
+          tabColor: null,
+          jumpHost: null,
+          log: null,
+          highlight: null,
+          credential: null,
+          logonActions: null,
+        }
+      );
     },
     async saveFolderSettings(id, settings) {
       folderSettings.set(id, settings);

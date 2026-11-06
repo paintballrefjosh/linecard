@@ -1,6 +1,8 @@
 import type {
   ConnectionDraft,
   ConnectionNode,
+  Credential,
+  CredentialDraft,
   FolderSettings,
   Launch,
   LocalShell,
@@ -168,6 +170,12 @@ export interface Backend {
   setPreferences(p: Preferences): Promise<void>;
   listSavedPasswords(): Promise<SavedPassword[]>;
   forgetSavedPassword(key: string): Promise<void>;
+  /** Named credentials, by name. */
+  listCredentials(): Promise<Credential[]>;
+  /** Create or change a credential (and save its password if one is given). Returns its id. */
+  saveCredential(draft: CredentialDraft): Promise<string>;
+  /** Delete a credential; whatever used it goes back to its own login. */
+  deleteCredential(id: string): Promise<void>;
   /** Linecard's own error log, as text. */
   /** Whether Python scripts can run, and where they're kept. */
   scriptStatus(): Promise<ScriptStatus>;
@@ -318,6 +326,9 @@ async function tauriBackend(): Promise<Backend> {
     setPreferences: (preferences) => invoke("set_preferences", { preferences }),
     listSavedPasswords: () => invoke<SavedPassword[]>("list_saved_passwords"),
     forgetSavedPassword: (key) => invoke("forget_saved_password", { key }),
+    listCredentials: () => invoke<Credential[]>("list_credentials"),
+    saveCredential: (draft) => invoke<string>("save_credential", { draft }),
+    deleteCredential: (id) => invoke("delete_credential", { id }),
     scriptStatus: () => invoke<ScriptStatus>("script_status"),
     listScripts: () => invoke<ScriptFile[]>("script_list"),
     newScript: (name) => invoke<string>("script_new", { name }),

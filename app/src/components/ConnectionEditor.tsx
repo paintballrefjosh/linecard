@@ -15,6 +15,7 @@ import { ArrowRight, X } from "lucide-react";
 import { Modal } from "./Dialog";
 import { highlightStore } from "../highlight";
 import { kindLabel } from "./icons";
+import { CredentialSelect, LogonActionsEditor, useCredentials } from "./LoginFields";
 
 const defaultPort: Record<ConnectionKind, number> = { ssh: 22, telnet: 23, rdp: 3389, vnc: 5900, serial: 0, local: 0 };
 const kinds: ConnectionKind[] = ["ssh", "telnet", "serial", "rdp", "vnc"];
@@ -46,6 +47,8 @@ export function blankDraft(folderId: string | null): ConnectionDraft {
     jumpHost: null,
     log: null,
     highlight: null,
+    credential: null,
+    logonActions: null,
     forwards: [],
     notes: "",
   };
@@ -198,6 +201,7 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
   const setSerial = (patch: Partial<SerialSettings>) =>
     setD((cur) => ({ ...cur, serial: { ...(cur.serial ?? consoleDefaults()), ...patch } }));
   const [inherited, setInherited] = useState<Inherited | null>(null);
+  const [credentials, reloadCredentials] = useCredentials();
   const [forwards, setForwards] = useState<ForwardRow[]>(() => initial.forwards.map(toRow));
   useEffect(() => {
     void getBackend().then((b) => b.inheritedSettings(initial.folderId).then(setInherited));
@@ -424,6 +428,20 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
           </>
         )}
 
+        {d.kind !== "serial" && (
+          <>
+            <label htmlFor="ce-cred">Credential</label>
+            <CredentialSelect
+              id="ce-cred"
+              value={d.credential}
+              inherited={inherited?.credential ?? null}
+              credentials={credentials}
+              onChange={(credential) => set({ credential })}
+              onCreated={reloadCredentials}
+            />
+          </>
+        )}
+
         <label htmlFor="ce-user">Username</label>
         <input
           id="ce-user"
@@ -437,6 +455,18 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
           spellCheck={false}
           autoComplete="off"
         />
+
+        {(d.kind === "ssh" || d.kind === "telnet" || serial) && (
+          <>
+            <span className="form-label form-label-top">Logon actions</span>
+            <LogonActionsEditor
+              value={d.logonActions}
+              inherited={inherited?.logonActions ?? null}
+              credentials={credentials}
+              onChange={(logonActions) => set({ logonActions })}
+            />
+          </>
+        )}
 
         <label htmlFor="ce-log">Session log</label>
         <select
@@ -499,12 +529,14 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
                   Let the remote computer change and delete files in it
                 </label>
                 <p className="form-hint">
-                  Shows up as a drive in the remote session, read-only unless you tick the box. This is kept on
-                  this computer only and is not synced to your others.
+                  Shows up as a drive in the remote session, read-only unless you tick the box. This is kept on this
+                  computer only and is not synced to your others.
                 </p>
               </div>
             ) : (
-              <p className="form-hint">Sharing a folder with the remote computer is available on Windows only for now.</p>
+              <p className="form-hint">
+                Sharing a folder with the remote computer is available on Windows only for now.
+              </p>
             )}
           </>
         )}

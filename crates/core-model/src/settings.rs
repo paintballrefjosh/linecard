@@ -74,6 +74,8 @@ inheritable! {
     keepalive_secs: u32,
     /// Reconnect automatically when the session drops.
     auto_reconnect: bool,
+    /// Steps run after connecting: wait for some text, send a line.
+    logon_actions: Vec<crate::LogonStep>,
 }
 
 /// Where an effective setting came from.

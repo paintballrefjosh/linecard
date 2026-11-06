@@ -15,7 +15,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use linecard_core_model::{
-    Connection, ConnectionKind, Endpoint, Folder, HighlightProfile, Settings, Snippet, SyncedSecret, Tree, VaultMeta,
+    Connection, ConnectionKind, Credential, Endpoint, Folder, HighlightProfile, Settings, Snippet, SyncedSecret, Tree,
+    VaultMeta,
 };
 use linecard_core_store::Store;
 use linecard_core_sync::{ChangeTracker, Hlc, ObjectState, Op, Replica, Value};
@@ -33,6 +34,7 @@ const KIND_CONNECTION: &str = "connection";
 const KIND_SETTINGS: &str = "settings";
 const KIND_HIGHLIGHT: &str = "highlight_profile";
 const KIND_SNIPPET: &str = "snippet";
+const KIND_CREDENTIAL: &str = "credential";
 const KIND_VAULT: &str = "vault";
 const KIND_SECRET: &str = "secret";
 /// Object id of the synced vault's salt and check value.
@@ -140,6 +142,7 @@ impl Library {
             }
             t.highlight_profiles.clear();
             t.snippets.clear();
+            t.credentials.clear();
             Ok(())
         })?;
         Ok(self.last_own_op())
@@ -370,6 +373,13 @@ fn snippet_fields(s: &Snippet) -> Fields {
     m
 }
 
+fn credential_fields(c: &Credential) -> Fields {
+    let mut m = Fields::new();
+    m.insert("name".into(), Value::Str(c.name.clone()));
+    m.insert("username".into(), Value::Str(c.username.clone()));
+    m
+}
+
 fn kind_name(k: ConnectionKind) -> &'static str {
     match k {
         ConnectionKind::Ssh => "ssh",
@@ -408,6 +418,9 @@ fn changed_ids(old: &Tree, new: &Tree, live: impl Fn(&str) -> bool) -> BTreeSet<
     for (id, s) in &new.secrets {
         check(id, old.secrets.get(id) == Some(s));
     }
+    for (id, c) in &new.credentials {
+        check(id, old.credentials.get(id) == Some(c));
+    }
     // Removed ones.
     let gone = old
         .folders()
@@ -424,7 +437,8 @@ fn changed_ids(old: &Tree, new: &Tree, live: impl Fn(&str) -> bool) -> BTreeSet<
                 .filter(|id| !new.highlight_profiles.contains_key(*id)),
         )
         .chain(old.snippets.keys().filter(|id| !new.snippets.contains_key(*id)))
-        .chain(old.secrets.keys().filter(|id| !new.secrets.contains_key(*id)));
+        .chain(old.secrets.keys().filter(|id| !new.secrets.contains_key(*id)))
+        .chain(old.credentials.keys().filter(|id| !new.credentials.contains_key(*id)));
     out.extend(gone.cloned());
     out
 }
@@ -449,6 +463,9 @@ fn object_fields(t: &Tree, id: &str) -> Option<(&'static str, Fields)> {
     }
     if let Some(s) = t.snippets.get(id) {
         return Some((KIND_SNIPPET, snippet_fields(s)));
+    }
+    if let Some(c) = t.credentials.get(id) {
+        return Some((KIND_CREDENTIAL, credential_fields(c)));
     }
     if let Some(h) = t.highlight_profiles.get(id) {
         return Some((KIND_HIGHLIGHT, highlight_fields(h)));
@@ -485,6 +502,9 @@ fn snapshot(t: &Tree) -> BTreeMap<String, (&'static str, Fields)> {
     }
     for s in t.snippets.values() {
         out.insert(s.id.clone(), (KIND_SNIPPET, snippet_fields(s)));
+    }
+    for c in t.credentials.values() {
+        out.insert(c.id.clone(), (KIND_CREDENTIAL, credential_fields(c)));
     }
     if let Some(v) = &t.vault {
         let mut m = Fields::new();
@@ -597,6 +617,19 @@ pub fn project(replica: &Replica) -> Tree {
                 enter: matches!(o.get("enter"), Some(Value::Bool(true))),
             };
             (id.to_string(), snippet)
+        })
+        .collect();
+
+    tree.credentials = live
+        .iter()
+        .filter(|(_, o)| o.kind == KIND_CREDENTIAL)
+        .map(|(id, o)| {
+            let c = Credential {
+                id: id.to_string(),
+                name: get_str(o, "name").unwrap_or_default(),
+                username: get_str(o, "username").unwrap_or_default(),
+            };
+            (id.to_string(), c)
         })
         .collect();
 
@@ -921,6 +954,53 @@ mod tests {
         })
         .unwrap();
         assert!(Library::open(&path, |_| {}).unwrap().tree().snippets.is_empty());
+    }
+
+    #[test]
+    fn credentials_and_logon_actions_survive_a_restart() {
+        use linecard_core_model::LogonStep;
+        let path = temp_db();
+        let steps = vec![
+            LogonStep {
+                expect: ">".into(),
+                send: "enable".into(),
+                password_of: None,
+            },
+            LogonStep {
+                expect: "Password:".into(),
+                send: String::new(),
+                password_of: Some("c1".into()),
+            },
+        ];
+        {
+            let mut lib = Library::open(&path, sample).unwrap();
+            lib.edit(|t| {
+                t.credentials.insert(
+                    "c1".into(),
+                    Credential {
+                        id: "c1".into(),
+                        name: "NetOps".into(),
+                        username: "admin".into(),
+                    },
+                );
+                let f = t.folder_mut("dc").map_err(|e| e.to_string())?;
+                f.defaults.credential_id = Some("c1".into());
+                f.defaults.logon_actions = Some(steps.clone());
+                Ok(())
+            })
+            .unwrap();
+        }
+        let mut lib = Library::open(&path, |_| {}).unwrap();
+        assert_eq!(lib.tree().credentials["c1"].username, "admin");
+        let dc = lib.tree().folder("dc").unwrap();
+        assert_eq!(dc.defaults.credential_id.as_deref(), Some("c1"));
+        assert_eq!(dc.defaults.logon_actions.as_ref(), Some(&steps));
+        lib.edit(|t| {
+            t.credentials.remove("c1");
+            Ok(())
+        })
+        .unwrap();
+        assert!(Library::open(&path, |_| {}).unwrap().tree().credentials.is_empty());
     }
 
     #[test]

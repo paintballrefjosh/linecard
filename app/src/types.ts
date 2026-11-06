@@ -90,6 +90,10 @@ export interface ConnectionDraft {
   log: boolean | null;
   /** Keyword-highlight profile id; null = from the folder or Settings. */
   highlight: string | null;
+  /** Named credential id; null = from the folder. */
+  credential: string | null;
+  /** Logon actions; null = from the folder, [] = none here. */
+  logonActions: LogonStep[] | null;
   /** SSH port forwards, started with the session. */
   forwards: PortForward[];
   notes: string;
@@ -207,7 +211,15 @@ export type GfxEvent =
   | { event: "resized"; width: number; height: number }
   | { event: "bell" }
   | { event: "clipboard"; text: string }
-  | { event: "cursor"; shape: "default" | "hidden" | "image"; width: number; height: number; hotX: number; hotY: number; rgba: string }
+  | {
+      event: "cursor";
+      shape: "default" | "hidden" | "image";
+      width: number;
+      height: number;
+      hotX: number;
+      hotY: number;
+      rgba: string;
+    }
   | { event: "audio"; channels: number; rate: number; pcm: Uint8Array<ArrayBuffer> }
   | { event: "disconnected"; reason: string | null }
   | HostKeyEvent
@@ -284,6 +296,10 @@ export interface Inherited {
   log: InheritedValue | null;
   /** The keyword-highlight profile's name. */
   highlight: InheritedValue | null;
+  /** The named credential's name. */
+  credential: InheritedValue | null;
+  /** What the inherited logon actions send, e.g. "enable, terminal length 0". */
+  logonActions: InheritedValue | null;
 }
 
 /** What a folder passes down to its folders and connections; null = inherit. */
@@ -293,6 +309,8 @@ export interface FolderSettings {
   jumpHost: string | null;
   log: boolean | null;
   highlight: string | null;
+  credential: string | null;
+  logonActions: LogonStep[] | null;
 }
 
 /** What a saved password for a connection is keyed by. */
@@ -348,3 +366,31 @@ export type ScriptEvent =
   | { event: "output"; stderr: boolean; text: string }
   | { event: "ask"; id: number; prompt: string; secret: boolean }
   | { event: "finished"; code: number | null; stopped: boolean };
+
+/** A user name and password many connections share. The password stays in the keychain. */
+export interface Credential {
+  id: string;
+  name: string;
+  username: string;
+  /** A password is saved for it on this computer. */
+  saved: boolean;
+  /** Connections that log in with it (their own choice or inherited). */
+  usedBy: number;
+}
+
+/** Creating (empty id) or changing a credential; an empty password keeps the saved one. */
+export interface CredentialDraft {
+  id: string;
+  name: string;
+  username: string;
+  password: string | null;
+}
+
+/** After connecting: wait for some text, then send a line (and Enter). */
+export interface LogonStep {
+  /** Empty = send straight away. */
+  expect: string;
+  send: string;
+  /** Send this credential's saved password instead of `send`. */
+  passwordOf?: string | null;
+}

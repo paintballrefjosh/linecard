@@ -3,6 +3,7 @@ import { getBackend } from "../api";
 import type { ConnectionNode, FolderSettings, Inherited } from "../types";
 import { HighlightSelect, swatches } from "./ConnectionEditor";
 import { Modal } from "./Dialog";
+import { CredentialSelect, LogonActionsEditor, useCredentials } from "./LoginFields";
 
 interface Props {
   folderId: string;
@@ -19,6 +20,7 @@ export function FolderSettingsDialog({ folderId, parentId, path, jumpHosts, onCl
   const [s, setS] = useState<FolderSettings | null>(null);
   const [inherited, setInherited] = useState<Inherited | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [credentials, reloadCredentials] = useCredentials();
   const set = (patch: Partial<FolderSettings>) => setS((cur) => cur && { ...cur, ...patch });
 
   useEffect(() => {
@@ -60,6 +62,16 @@ export function FolderSettingsDialog({ folderId, parentId, path, jumpHosts, onCl
     >
       {s && (
         <div className="form-grid">
+          <label htmlFor="fs-cred">Credential</label>
+          <CredentialSelect
+            id="fs-cred"
+            value={s.credential}
+            inherited={inherited?.credential ?? null}
+            credentials={credentials}
+            onChange={(credential) => set({ credential })}
+            onCreated={reloadCredentials}
+          />
+
           <label htmlFor="fs-user">Username</label>
           <input
             id="fs-user"
@@ -91,6 +103,14 @@ export function FolderSettingsDialog({ folderId, parentId, path, jumpHosts, onCl
             value={s.highlight}
             inherited={inherited?.highlight ?? null}
             onChange={(highlight) => set({ highlight })}
+          />
+
+          <span className="form-label form-label-top">Logon actions</span>
+          <LogonActionsEditor
+            value={s.logonActions}
+            inherited={inherited?.logonActions ?? null}
+            credentials={credentials}
+            onChange={(logonActions) => set({ logonActions })}
           />
 
           <label htmlFor="fs-log">Session log</label>
