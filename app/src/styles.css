@@ -1359,6 +1359,11 @@ select {
 .terminal-host .xterm {
   height: 100%;
 }
+/* xterm.css paints the viewport black. It shows as a strip under the last row
+   when the pane isn't a whole number of rows tall, so let the pane show through. */
+.terminal-host .xterm .xterm-viewport {
+  background-color: transparent;
+}
 
 .watermark {
   display: grid;
