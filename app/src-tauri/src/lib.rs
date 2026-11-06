@@ -30,7 +30,7 @@ use linecard_core_sync::Hlc;
 use linecard_proto::{SerialSettings, Session, SshOptions, TerminalTarget};
 use linecard_vault::{SavedCredential, Secret, Vault};
 use logging::SessionLog;
-use tauri::ipc::Channel;
+use tauri::ipc::{Channel, InvokeBody, InvokeResponseBody, Request};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use dto::{ConnectionDraftDto, DeviceDto, PromptReplyDto, SessionEventDto, SyncStateDto, TreeNodeDto};
@@ -841,7 +841,7 @@ async fn open_session(
     endpoint: String,
     cols: u16,
     rows: u16,
-    on_event: Channel<SessionEventDto>,
+    on_event: Channel<InvokeResponseBody>,
 ) -> CmdResult<String> {
     enum Plan {
         Network(ConnectionKind, TerminalTarget),
@@ -894,15 +894,15 @@ async fn open_session(
         match SessionLog::open(path.clone(), settings.log_timestamps == Some(true)) {
             Ok(mut l) => {
                 l.note(&format!("{name} ({endpoint}) session opened"));
-                let _ = on_event.send(SessionEventDto::Data {
-                    data: format!("\x1b[2mLogging to {}\x1b[0m\r\n", path.display()).into_bytes(),
-                });
+                let _ = on_event.send(InvokeResponseBody::Raw(
+                    format!("\x1b[2mLogging to {}\x1b[0m\r\n", path.display()).into_bytes(),
+                ));
                 log = Some(l);
             }
             Err(e) => {
-                let _ = on_event.send(SessionEventDto::Data {
-                    data: format!("\x1b[33mCould not start the session log: {e}\x1b[0m\r\n").into_bytes(),
-                });
+                let _ = on_event.send(InvokeResponseBody::Raw(
+                    format!("\x1b[33mCould not start the session log: {e}\x1b[0m\r\n").into_bytes(),
+                ));
             }
         }
     }
@@ -932,7 +932,14 @@ async fn open_session(
                 _ => {}
             }
         }
-        let _ = on_event.send(SessionEventDto::from(e));
+        // Output goes as raw bytes: as JSON every byte became a number (about
+        // four times the size, and slow to parse) on the busiest path there is.
+        match e {
+            linecard_proto::SessionEvent::Data(d) => {
+                let _ = on_event.send(InvokeResponseBody::Raw(d));
+            }
+            e => gfx::send_json(&on_event, &SessionEventDto::from(e)),
+        }
     });
     // Telnet and serial connect before returning; SSH returns at once and
     // reports progress as events.
@@ -963,11 +970,22 @@ async fn open_session(
     Ok(id)
 }
 
+/// Input as raw bytes, with the session id in the `x-session` header.
 #[tauri::command]
-fn session_write(state: State<AppState>, session_id: String, data: Vec<u8>) -> CmdResult<()> {
+fn session_write(state: State<AppState>, request: Request<'_>) -> CmdResult<()> {
+    let InvokeBody::Raw(data) = request.body() else {
+        return Err("expected raw bytes".into());
+    };
+    let session_id = request
+        .headers()
+        .get("x-session")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("missing x-session")?;
     let mut sessions = state.sessions.lock().map_err(err)?;
-    let s = sessions.get_mut(&session_id).ok_or("session closed")?;
-    s.write(&data).map_err(err)
+    let s = sessions.get_mut(session_id).ok_or("session closed")?;
+    // Never blocks: sessions queue their writes (a held lock here would stall
+    // every tab, and this runs on the window's thread).
+    s.write(data).map_err(err)
 }
 
 #[tauri::command]

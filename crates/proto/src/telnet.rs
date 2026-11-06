@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use crate::queue::WriteQueue;
 use crate::{ConnectionKind, EventSink, Session, SessionEvent, TerminalTarget};
 
 pub const IAC: u8 = 255;
@@ -197,6 +198,9 @@ impl TelnetCodec {
 /// A Telnet session over TCP.
 pub struct TelnetSession {
     stream: TcpStream,
+    /// Everything we send (input, window sizes, option replies), in order and
+    /// off the caller's thread.
+    out: WriteQueue<TcpStream>,
     codec: Arc<Mutex<TelnetCodec>>,
 }
 
@@ -215,7 +219,8 @@ impl TelnetSession {
         )));
 
         let mut reader = stream.try_clone()?;
-        let mut replier = stream.try_clone()?;
+        let out = WriteQueue::spawn("telnet-tx", stream.try_clone()?)?;
+        let replier = out.clone();
         let rx_codec = Arc::clone(&codec);
         events(SessionEvent::Connected);
         thread::Builder::new().name("telnet-rx".into()).spawn(move || {
@@ -226,7 +231,10 @@ impl TelnetSession {
                     Ok(n) => {
                         let decoded = rx_codec.lock().unwrap().feed(&buf[..n]);
                         if !decoded.reply.is_empty() {
-                            if let Err(e) = replier.write_all(&decoded.reply) {
+                            // Through the queue, so a reply never lands in the
+                            // middle of the user's input.
+                            let reply = decoded.reply;
+                            if let Err(e) = replier.run(move |s| s.write_all(&reply)) {
                                 break Some(e.to_string());
                             }
                         }
@@ -240,7 +248,7 @@ impl TelnetSession {
             };
             events(SessionEvent::Disconnected { reason });
         })?;
-        Ok(TelnetSession { stream, codec })
+        Ok(TelnetSession { stream, out, codec })
     }
 }
 
@@ -251,18 +259,20 @@ impl Session for TelnetSession {
 
     fn write(&mut self, data: &[u8]) -> io::Result<()> {
         let bytes = self.codec.lock().unwrap().encode(data);
-        self.stream.write_all(&bytes)
+        self.out.run(move |s| s.write_all(&bytes))
     }
 
     fn resize(&mut self, cols: u16, rows: u16) -> io::Result<()> {
         let msg = self.codec.lock().unwrap().resize(cols, rows);
         match msg {
-            Some(m) => self.stream.write_all(&m),
+            Some(m) => self.out.run(move |s| s.write_all(&m)),
             None => Ok(()),
         }
     }
 
     fn close(&mut self) -> io::Result<()> {
+        self.out.close();
+        // Shutting the socket down also unsticks a write the server isn't reading.
         match self.stream.shutdown(Shutdown::Both) {
             // The far end already hung up (macOS reports ENOTCONN): closed is closed.
             Err(e) if e.kind() == io::ErrorKind::NotConnected => Ok(()),
@@ -359,6 +369,31 @@ mod tests {
         assert!(got.windows(3).any(|w| w == [IAC, WILL, OPT_NAWS]));
         assert!(got.windows(7).any(|w| w == [IAC, SB, OPT_NAWS, 0, 80, 0, 24]));
         session.close().unwrap();
+    }
+
+    #[test]
+    fn input_never_waits_for_a_server_that_stopped_reading() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (done_tx, done_rx) = mpsc::channel::<()>();
+        let server = thread::spawn(move || {
+            let (_s, _) = listener.accept().unwrap();
+            done_rx.recv().ok(); // hold the connection open, never read
+        });
+        let (tx, _rx) = mpsc::channel();
+        let mut session = connect_test(port, tx);
+        // Far more than the socket buffers hold: written directly, this blocks.
+        let page = vec![b'x'; 1024 * 1024];
+        let start = std::time::Instant::now();
+        for _ in 0..32 {
+            session.write(&page).unwrap();
+        }
+        session.resize(100, 30).unwrap();
+        assert!(start.elapsed() < Duration::from_secs(2), "input waited on the network");
+        // Closing still works, and frees the writer stuck on the full socket.
+        session.close().unwrap();
+        done_tx.send(()).unwrap();
+        server.join().unwrap();
     }
 
     fn connect_test(port: u16, tx: mpsc::Sender<SessionEvent>) -> TelnetSession {

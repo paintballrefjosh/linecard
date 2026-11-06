@@ -155,7 +155,13 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
     t.loadAddon(fit);
     t.open(host.current);
     try {
-      t.loadAddon(new WebglAddon());
+      const webgl = new WebglAddon();
+      // The GPU driver reset, the computer woke from sleep, or too many tabs are
+      // open (browsers keep about 16 WebGL contexts and drop the oldest): without
+      // this the terminal stays blank. Dropping the addon brings back the DOM
+      // renderer, which redraws everything.
+      webgl.onContextLoss(() => webgl.dispose());
+      t.loadAddon(webgl);
     } catch {
       // WebGL unavailable (VMs, remote desktop): xterm falls back to the DOM renderer.
     }
@@ -203,7 +209,7 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onOutput 
           b.openSession(conn, { cols: t.cols, rows: t.rows }, (e) => {
             if (mine !== attempt) return;
             if (e.event === "data") {
-              t.write(new Uint8Array(e.data));
+              t.write(e.data);
               outputRef.current?.();
             } else if (e.event === "hostKey" || e.event === "auth") {
               setPrompt(e);

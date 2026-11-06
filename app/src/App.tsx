@@ -232,13 +232,37 @@ export default function App() {
     [backend],
   );
 
-  const refresh = useCallback(async (b: Backend) => {
-    const [t, d, s, h] = await Promise.all([b.getTree(), b.getDevices(), b.getSyncState(), b.getHighlight()]);
-    highlightStore.set(h);
-    setTree(t);
+  /** Sync status and devices: cheap, and changes twice every sync round. */
+  const refreshSync = useCallback(async (b: Backend) => {
+    const [d, s] = await Promise.all([b.getDevices(), b.getSyncState()]);
     setDevices(d);
     setSync(s);
   }, []);
+
+  /** Everything. Edits and syncs can fire tree-changed in quick bursts: one
+   *  refresh runs at a time, and those asked for meanwhile become one more. */
+  const refreshing = useRef<{ running: boolean; again: boolean }>({ running: false, again: false });
+  const refresh = useCallback(
+    async (b: Backend) => {
+      const r = refreshing.current;
+      if (r.running) {
+        r.again = true;
+        return;
+      }
+      r.running = true;
+      try {
+        do {
+          r.again = false;
+          const [t, h] = await Promise.all([b.getTree(), b.getHighlight(), refreshSync(b)]);
+          highlightStore.set(h);
+          setTree(t);
+        } while (r.again);
+      } finally {
+        r.running = false;
+      }
+    },
+    [refreshSync],
+  );
 
   useEffect(() => {
     let unsub = () => {};
@@ -251,14 +275,15 @@ export default function App() {
       });
       refresh(b);
       const offTree = b.onTreeChanged(() => refresh(b));
-      const offSync = b.onSyncChanged(() => refresh(b));
+      // A sync that changed the tree also fires tree-changed.
+      const offSync = b.onSyncChanged(() => void refreshSync(b));
       unsub = () => {
         offTree();
         offSync();
       };
     });
     return () => unsub();
-  }, [refresh]);
+  }, [refresh, refreshSync]);
 
   const changeLayout = useCallback((id: LayoutId) => {
     setLayout(id);

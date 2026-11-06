@@ -806,7 +806,7 @@ export function mockBackend(): Backend {
       return { handle, opened: Promise.resolve("/home/admin") };
     },
     async openSession(node, _size, onEvent): Promise<SessionHandle> {
-      const send = (s: string) => onEvent({ event: "data", data: Array.from(new TextEncoder().encode(s)) });
+      const send = (s: string) => onEvent({ event: "data", data: new TextEncoder().encode(s) });
       const host = node.name;
       const prompt = `${host.split(" ")[0]}# `;
       let line = "";
