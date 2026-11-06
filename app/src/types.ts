@@ -1,7 +1,14 @@
 // Shapes shared with the Rust backend (serde JSON). Keep in sync with
 // app/src-tauri/src/dto.rs.
 
-export type ConnectionKind = "ssh" | "telnet" | "serial" | "rdp" | "vnc";
+/** "local" is a shell on this computer: opened in a tab, never saved or synced. */
+export type ConnectionKind = "ssh" | "telnet" | "serial" | "rdp" | "vnc" | "local";
+
+/** A shell this computer can open in a tab ("pwsh", "wsl:Ubuntu", "/bin/zsh"…). */
+export interface LocalShell {
+  id: string;
+  name: string;
+}
 
 export type ChangeKind = "added" | "edited" | "moved" | "deleted" | "restored" | "reverted";
 

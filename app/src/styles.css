@@ -27,6 +27,7 @@
   --kind-serial: #5c6b7d;
   --kind-rdp: #2f6fd6;
   --kind-vnc: #8a4fc2;
+  --kind-local: #4b5a6b;
 
   --chg-added: #2c8a3e;
   --chg-added-bg: #e3f3e5;
@@ -60,6 +61,7 @@
   --kind-serial: #98a6b8;
   --kind-rdp: #6c9ef0;
   --kind-vnc: #be93ef;
+  --kind-local: #b4c0cf;
 
   --chg-added: #6fd083;
   --chg-added-bg: #183326;
@@ -868,6 +870,107 @@ body.is-resizing .main {
 .modal::backdrop {
   background: rgb(8 12 18 / 0.45);
 }
+
+/* Command palette (Ctrl+Shift+P): find a connection by typing. */
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 12vh 16px 16px;
+  background: rgb(8 12 18 / 0.35);
+}
+.palette {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: 70vh;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-main);
+  color: var(--text);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+.palette-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-quiet);
+}
+.palette-search input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: 15px var(--font-ui);
+}
+.palette-heading {
+  padding: 8px 14px 2px;
+  color: var(--text-quiet);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.palette-list {
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+}
+.palette-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 4px 10px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+.palette-list li.is-active {
+  background: var(--bg-select);
+}
+.palette-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  color: var(--text-quiet);
+}
+.palette-name {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-quiet);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette-recent {
+  flex: none;
+  color: var(--text-quiet);
+}
+.palette-list li.palette-empty {
+  justify-content: center;
+  color: var(--text-quiet);
+  cursor: default;
+}
 .modal-confirm {
   width: min(380px, calc(100vw - 32px));
 }
@@ -1255,6 +1358,11 @@ select {
 }
 .terminal-host .xterm {
   height: 100%;
+}
+/* xterm.css paints the viewport black. It shows as a strip under the last row
+   when the pane isn't a whole number of rows tall, so let the pane show through. */
+.terminal-host .xterm .xterm-viewport {
+  background-color: transparent;
 }
 
 .watermark {
@@ -1838,6 +1946,59 @@ kbd {
 .forward-add {
   align-self: flex-start;
 }
+/* Find in the terminal (Ctrl+Shift+F). */
+.term-search {
+  position: absolute;
+  top: 8px;
+  right: 18px;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 36px);
+  padding: 3px 4px 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--bg-main);
+  box-shadow: var(--shadow-pop);
+  font-family: var(--font-ui);
+}
+.term-search .icon-btn {
+  width: 26px;
+  height: 26px;
+  flex: none;
+}
+.term-search-input {
+  width: 200px;
+  min-width: 80px;
+  flex: 1 1 auto;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--bg-side);
+  color: var(--text);
+  font: 13px var(--font-mono);
+}
+.term-search-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.term-search-input[aria-invalid="true"] {
+  border-color: var(--chg-deleted);
+}
+.term-search-status {
+  min-width: 72px;
+  padding: 0 6px;
+  color: var(--text-quiet);
+  font-size: 12px;
+  text-align: center;
+  white-space: nowrap;
+}
+.forward-chip-wrap.below-search {
+  top: 50px;
+}
+
 .forward-chip-wrap {
   position: absolute;
   top: 8px;

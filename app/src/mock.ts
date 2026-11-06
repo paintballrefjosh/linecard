@@ -805,15 +805,33 @@ export function mockBackend(): Backend {
       };
       return { handle, opened: Promise.resolve("/home/admin") };
     },
+    async localShells() {
+      return [
+        { id: "pwsh", name: "PowerShell 7" },
+        { id: "powershell", name: "Windows PowerShell" },
+        { id: "cmd", name: "Command Prompt" },
+        { id: "wsl:Ubuntu", name: "Ubuntu (WSL)" },
+        { id: "gitbash", name: "Git Bash" },
+      ];
+    },
     async openSession(node, _size, onEvent): Promise<SessionHandle> {
       const send = (s: string) => onEvent({ event: "data", data: new TextEncoder().encode(s) });
       const host = node.name;
-      const prompt = `${host.split(" ")[0]}# `;
+      const prompt =
+        node.kind === "local"
+          ? node.endpoint === "cmd"
+            ? "C:\\Users\\you>"
+            : node.endpoint.startsWith("pwsh") || node.endpoint === "powershell"
+              ? "PS C:\\Users\\you> "
+              : "you@this-pc:~$ "
+          : `${host.split(" ")[0]}# `;
       let line = "";
       const connect = () => {
         onEvent({ event: "connected" });
         send(
-          `\x1b[2mDemo session (browser preview). Real ${node.kind.toUpperCase()} sessions run in the desktop app.\x1b[0m\r\n\r\n`,
+          node.kind === "local"
+            ? `\x1b[2mDemo shell (browser preview). Real local shells run in the desktop app.\x1b[0m\r\n\r\n`
+            : `\x1b[2mDemo session (browser preview). Real ${node.kind.toUpperCase()} sessions run in the desktop app.\x1b[0m\r\n\r\n`,
         );
         send(prompt);
       };

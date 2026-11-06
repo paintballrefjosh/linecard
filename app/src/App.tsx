@@ -7,6 +7,7 @@ import {
   ListTree,
   Monitor,
   Moon,
+  Search,
   Settings as SettingsIcon,
   SquareTerminal,
   Sun,
@@ -22,6 +23,7 @@ import type {
   Device,
   Launch,
   LayoutId,
+  LocalShell,
   SyncState,
   TreeNode,
 } from "./types";
@@ -45,6 +47,9 @@ import { SettingsPage } from "./components/SettingsPage";
 import { ConnectionPanel, usePanelLayout } from "./components/ConnectionPanel";
 import { CloseConfirm, Workspace, applyLayout, openConnection } from "./components/Workspace";
 import { WorkspaceMenu } from "./components/WorkspaceMenu";
+import { CommandPalette } from "./components/CommandPalette";
+import { localConnection, remember, shellItems } from "./palette";
+import { ShellMenu } from "./components/ShellMenu";
 
 type View = "connections" | "devices" | "settings";
 
@@ -64,7 +69,7 @@ export function parseQuickConnect(input: string): ConnectionNode | null {
   const m = /^(ssh|telnet|rdp|vnc)?\s*(?:([^@\s]+)@)?([^\s:]+)(?::(\d+)|\s+(\d+))?$/i.exec(s);
   if (!m) return null;
   const kind = (m[1]?.toLowerCase() ?? "ssh") as ConnectionKind;
-  const ports: Record<ConnectionKind, number> = { ssh: 22, telnet: 23, rdp: 3389, vnc: 5900, serial: 0 };
+  const ports: Record<ConnectionKind, number> = { ssh: 22, telnet: 23, rdp: 3389, vnc: 5900, serial: 0, local: 0 };
   const port = m[4] ?? m[5] ?? String(ports[kind]);
   return { type: "connection", id: `quick-${s}`, name: m[3], kind, endpoint: `${m[3]}:${port}` };
 }
@@ -194,6 +199,26 @@ export default function App() {
   const [prefsReady, setPrefsReady] = useState(false);
   const [folderSettings, setFolderSettings] = useState<{ id: string; parentId: string | null } | null>(null);
 
+  /** Newest first, kept per computer for the command palette. */
+  const rememberOpened = (id: string) =>
+    setPrefs((cur) => {
+      const next = { ...cur, recent: remember(cur.recent, id) };
+      void backend?.setPreferences(next);
+      return next;
+    });
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  /** This computer's shells; null until found (WSL can take a moment). */
+  const [shells, setShells] = useState<LocalShell[] | null>(null);
+  useEffect(() => {
+    if (!backend) return;
+    void backend
+      .localShells()
+      .then(setShells)
+      .catch(() => setShells([]));
+  }, [backend]);
+  const shellPalette = useMemo(() => shellItems(shells ?? []), [shells]);
+  const openDefaultShell = useRef<() => void>(() => {});
+
   const prefsValue = useMemo(
     () => ({
       prefs,
@@ -295,6 +320,18 @@ export default function App() {
       // A reload would drop every open session; keys are still passed to the terminal.
       if (!import.meta.env.DEV && (e.key === "F5" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r")))
         e.preventDefault();
+      // The command palette (Ctrl+K would take a shell's kill-line key).
+      if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyP") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+        return;
+      }
+      // A new tab with this computer's default shell.
+      if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyT") {
+        e.preventDefault();
+        openDefaultShell.current();
+        return;
+      }
       if (e.ctrlKey && e.altKey) {
         const id = layoutShortcut(e.key);
         if (id) {
@@ -321,12 +358,17 @@ export default function App() {
     setView("connections");
     setPeek(false);
     if (dock.current) openConnection(dock.current, conn, { files: true });
+    rememberOpened(conn.id);
   };
 
   const open = (conn: ConnectionNode) => {
     setView("connections");
     setPeek(false);
     if (dock.current) openConnection(dock.current, conn);
+    rememberOpened(conn.id);
+  };
+  openDefaultShell.current = () => {
+    if (shells?.length) open(localConnection(shells[0]));
   };
 
   /** A launch that arrived before the workspace was ready. */
@@ -459,6 +501,15 @@ export default function App() {
                     aria-invalid={quickError}
                   />
                 </form>
+                <button
+                  className="icon-btn"
+                  aria-label="Find a connection"
+                  title="Find a connection (Ctrl+Shift+P)"
+                  onClick={() => setPaletteOpen(true)}
+                >
+                  <Search size={16} />
+                </button>
+                <ShellMenu shells={shells} onOpen={(s) => open(localConnection(s))} />
                 <WorkspaceMenu dock={dock} findConnection={(id) => findConnection(tree, id)} />
                 <button
                   className={`icon-btn ${prefs.showButtonBar ? "is-toggled" : ""}`}
@@ -563,6 +614,16 @@ export default function App() {
         )}
         {importing && <ImportDialog onClose={() => setImporting(false)} onImported={() => setView("connections")} />}
         {scriptsOpen && <ScriptsDialog tree={tree} onClose={() => setScriptsOpen(false)} />}
+        {paletteOpen && (
+          <CommandPalette
+            tree={tree}
+            recent={prefs.recent}
+            extra={shellPalette}
+            parseQuick={parseQuickConnect}
+            onOpen={open}
+            onClose={() => setPaletteOpen(false)}
+          />
+        )}
 
         {folderSettings && (
           <FolderSettingsDialog

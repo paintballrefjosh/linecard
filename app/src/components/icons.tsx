@@ -10,6 +10,7 @@ import {
   RotateCcw,
   ScreenShare,
   SquareTerminal,
+  Terminal,
   Undo2,
 } from "lucide-react";
 import type { ChangeKind, ConnectionKind } from "../types";
@@ -20,6 +21,7 @@ export const kindLabel: Record<ConnectionKind, string> = {
   serial: "Serial",
   rdp: "RDP",
   vnc: "VNC",
+  local: "Local shell",
 };
 
 /** Connection-type icon in its accent color. SSH and Telnet share the
@@ -38,6 +40,8 @@ export function KindIcon({ kind, size = 16 }: { kind: ConnectionKind; size?: num
         return <Monitor size={size} strokeWidth={1.75} />;
       case "vnc":
         return <ScreenShare size={size} strokeWidth={1.75} />;
+      case "local":
+        return <Terminal size={size} strokeWidth={1.75} />;
     }
   })();
   const badge =

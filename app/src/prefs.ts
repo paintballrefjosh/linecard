@@ -35,6 +35,8 @@ export interface Preferences {
   pythonPath: string;
   /** Ask once before quitting with sessions open. */
   confirmQuit: boolean;
+  /** Connections opened lately, newest first (ids; "quick-…" for quick connects). */
+  recent: string[];
 }
 
 export const defaultPrefs: Preferences = {
@@ -50,6 +52,7 @@ export const defaultPrefs: Preferences = {
   pythonPath: "",
   onConnect: [],
   schedules: [],
+  recent: [],
 };
 
 export function withDefaults(stored: Partial<Preferences> | null | undefined): Preferences {

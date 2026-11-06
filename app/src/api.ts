@@ -3,6 +3,7 @@ import type {
   ConnectionNode,
   FolderSettings,
   Launch,
+  LocalShell,
   PasswordSync,
   Device,
   ImportPreview,
@@ -240,8 +241,12 @@ export interface Backend {
   openUrl(url: string): Promise<void>;
   clipboardRead(): Promise<string>;
   clipboardWrite(text: string): Promise<void>;
+  /** Shells this computer can open in a tab (finding WSL distributions can
+   *  take a moment). */
+  localShells(): Promise<LocalShell[]>;
   /** Open a session. Saved connections are looked up by id; quick-connect
-   *  entries (not in the tree) are opened from `kind` + `endpoint`. */
+   *  entries (not in the tree) are opened from `kind` + `endpoint`; local
+   *  shells by the shell id in `endpoint`. */
   openSession(
     conn: ConnectionNode,
     size: { cols: number; rows: number },
@@ -387,6 +392,7 @@ async function tauriBackend(): Promise<Backend> {
     // The clipboard plugin: WebView2 can refuse navigator.clipboard reads.
     clipboardRead: async () => (await clipboard).readText().catch(() => ""),
     clipboardWrite: async (text) => (await clipboard).writeText(text),
+    localShells: () => invoke<LocalShell[]>("local_shells"),
     async openSession(conn, size, onEvent) {
       // Output arrives as raw bytes; every other event as JSON.
       const channel = new Channel<unknown>();
@@ -396,14 +402,23 @@ async function tauriBackend(): Promise<Backend> {
           onEvent({ event: "data", data: new Uint8Array(m.buffer, m.byteOffset, m.byteLength) });
         else onEvent(m as SessionEvent);
       };
-      const sessionId = await invoke<string>("open_session", {
-        connectionId: conn.id,
-        kind: conn.kind,
-        endpoint: conn.endpoint,
-        cols: size.cols,
-        rows: size.rows,
-        onEvent: channel,
-      });
+      // A local shell's endpoint is its id from localShells().
+      const sessionId =
+        conn.kind === "local"
+          ? await invoke<string>("open_local_session", {
+              shellId: conn.endpoint,
+              cols: size.cols,
+              rows: size.rows,
+              onEvent: channel,
+            })
+          : await invoke<string>("open_session", {
+              connectionId: conn.id,
+              kind: conn.kind,
+              endpoint: conn.endpoint,
+              cols: size.cols,
+              rows: size.rows,
+              onEvent: channel,
+            });
       return {
         id: sessionId,
         write: (data) => void invoke("session_write", encoder.encode(data), { headers: { "x-session": sessionId } }),

@@ -16,6 +16,7 @@ pub use linecard_core_model::{ConnectionKind, ForwardKind, PortForward, SerialSe
 
 pub mod forward;
 pub mod gfx;
+pub mod local;
 mod queue;
 pub mod rdp;
 pub mod serial;

@@ -970,6 +970,70 @@ async fn open_session(
     Ok(id)
 }
 
+/// The shells this computer can open in a tab.
+#[tauri::command]
+async fn local_shells() -> CmdResult<Vec<dto::LocalShellDto>> {
+    // Listing WSL distributions runs wsl.exe, which can take a moment.
+    let shells = tauri::async_runtime::spawn_blocking(linecard_proto::local::local_shells)
+        .await
+        .map_err(err)?;
+    Ok(shells
+        .into_iter()
+        .map(|s| dto::LocalShellDto { id: s.id, name: s.name })
+        .collect())
+}
+
+/// Open a local shell (one from `local_shells`, by id) in a terminal tab.
+#[tauri::command]
+async fn open_local_session(
+    state: State<'_, AppState>,
+    shell_id: String,
+    cols: u16,
+    rows: u16,
+    on_event: Channel<InvokeResponseBody>,
+) -> CmdResult<String> {
+    let tap = Arc::new(linecard_script::Tap::default());
+    let sink_tap = tap.clone();
+    let sink: linecard_proto::EventSink = Box::new(move |e| {
+        match &e {
+            linecard_proto::SessionEvent::Data(d) => sink_tap.push(d),
+            linecard_proto::SessionEvent::Connected => sink_tap.set_connected(),
+            linecard_proto::SessionEvent::Disconnected { reason } => sink_tap.end(reason.clone()),
+            _ => {}
+        }
+        match e {
+            linecard_proto::SessionEvent::Data(d) => {
+                let _ = on_event.send(InvokeResponseBody::Raw(d));
+            }
+            e => gfx::send_json(&on_event, &SessionEventDto::from(e)),
+        }
+    });
+    let shell = shell_id.clone();
+    let session = tauri::async_runtime::spawn_blocking(move || {
+        linecard_proto::local::LocalSession::spawn(&shell, cols, rows, sink)
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)?;
+    let id = new_id();
+    state
+        .sessions
+        .lock()
+        .map_err(err)?
+        .insert(id.clone(), Box::new(session));
+    state.scripting.register(
+        &id,
+        scripting::Entry {
+            name: shell_id.clone(),
+            kind: "local".into(),
+            endpoint: shell_id,
+            connection: None,
+            tap,
+        },
+    );
+    Ok(id)
+}
+
 /// Input as raw bytes, with the session id in the `x-session` header.
 #[tauri::command]
 fn session_write(state: State<AppState>, request: Request<'_>) -> CmdResult<()> {
@@ -1157,6 +1221,8 @@ pub fn run() {
             sync_rotate,
             sync_disable,
             open_session,
+            local_shells,
+            open_local_session,
             session_write,
             session_resize,
             session_reply,

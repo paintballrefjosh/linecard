@@ -16,7 +16,7 @@ import { Modal } from "./Dialog";
 import { highlightStore } from "../highlight";
 import { kindLabel } from "./icons";
 
-const defaultPort: Record<ConnectionKind, number> = { ssh: 22, telnet: 23, rdp: 3389, vnc: 5900, serial: 0 };
+const defaultPort: Record<ConnectionKind, number> = { ssh: 22, telnet: 23, rdp: 3389, vnc: 5900, serial: 0, local: 0 };
 const kinds: ConnectionKind[] = ["ssh", "telnet", "serial", "rdp", "vnc"];
 const bauds = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200];
 /** Same hues as the tab-color convention: red for production, etc. */
