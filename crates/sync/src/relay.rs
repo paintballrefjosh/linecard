@@ -121,13 +121,64 @@ async fn check(resp: reqwest::Response) -> Result<reqwest::Response, SyncError> 
     }))
 }
 
+/// The relay's address must use https, except for a relay on this computer
+/// or your own network: every request carries the group's token, and over
+/// plain http anyone on the path could read it and write to (or compact)
+/// the group. The data itself is end-to-end encrypted either way.
+fn check_address(base: &str) -> Result<(), SyncError> {
+    let url = reqwest::Url::parse(base)
+        .map_err(|_| SyncError::Relay("the relay address must look like https://relay.example.com".into()))?;
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" if url.host().is_some_and(|h| is_local(&h)) => Ok(()),
+        "http" => Err(SyncError::Relay(
+            "use https:// for a relay on the internet (plain http:// is only for this computer or your own network)"
+                .into(),
+        )),
+        _ => Err(SyncError::Relay("the relay address must start with https://".into())),
+    }
+}
+
+/// This computer, a private or link-local address, or a name that only
+/// resolves inside a home or office network.
+fn is_local(host: &url::Host<&str>) -> bool {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    let v4 = |ip: Ipv4Addr| {
+        let [a, b, ..] = ip.octets();
+        // 100.64.0.0/10 is carrier-grade NAT, which Tailscale uses too.
+        ip.is_loopback() || ip.is_private() || ip.is_link_local() || (a == 100 && (64..128).contains(&b))
+    };
+    let v6 = |ip: Ipv6Addr| {
+        let first = ip.segments()[0];
+        ip.is_loopback()
+            || first & 0xfe00 == 0xfc00 // unique local fc00::/7
+            || first & 0xffc0 == 0xfe80 // link-local fe80::/10
+            || ip.to_ipv4_mapped().is_some_and(v4)
+    };
+    match host {
+        url::Host::Ipv4(ip) => v4(*ip),
+        url::Host::Ipv6(ip) => v6(*ip),
+        url::Host::Domain(name) => {
+            let name = name.trim_end_matches('.').to_ascii_lowercase();
+            if let Ok(ip) = name.parse::<IpAddr>() {
+                return match ip {
+                    IpAddr::V4(ip) => v4(ip),
+                    IpAddr::V6(ip) => v6(ip),
+                };
+            }
+            !name.contains('.')
+                || [".localhost", ".local", ".lan", ".home.arpa", ".internal"]
+                    .iter()
+                    .any(|suffix| name.ends_with(suffix))
+        }
+    }
+}
+
 impl RelayTransport {
     /// `base` like `https://relay.example.com`.
     pub fn new(base: &str, group_id: &str, token: &str, device: &str) -> Result<Self, SyncError> {
         let base = base.trim().trim_end_matches('/').to_string();
-        if !(base.starts_with("https://") || base.starts_with("http://")) {
-            return Err(SyncError::Relay("the relay address must start with https://".into()));
-        }
+        check_address(&base)?;
         Ok(RelayTransport {
             base,
             group: group_id.to_string(),
@@ -381,6 +432,39 @@ impl RelayTransport {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn plain_http_only_stays_on_your_own_network() {
+        for ok in [
+            "https://relay.example.com",
+            "https://203.0.113.5:8443/",
+            "http://localhost:8080",
+            "http://127.0.0.1:8080",
+            "http://[::1]:8080",
+            "http://192.168.1.20:8080",
+            "http://10.0.0.5",
+            "http://172.20.1.1",
+            "http://100.101.102.103",
+            "http://[fd12:3456::1]",
+            "http://nas:8080",
+            "http://relay.lan",
+            "http://pi.local",
+            "http://box.home.arpa",
+        ] {
+            assert!(check_address(ok).is_ok(), "{ok} should be accepted");
+        }
+        for bad in [
+            "http://relay.example.com",
+            "http://203.0.113.5:8080",
+            "http://172.32.0.1",
+            "http://[2001:db8::1]",
+            "ftp://relay.example.com",
+            "relay.example.com",
+        ] {
+            assert!(check_address(bad).is_err(), "{bad} should be refused");
+        }
+    }
     #[test]
     fn the_websocket_tls_setup_builds() {
         // wss:// uses the system's trust store through an explicit crypto provider;
