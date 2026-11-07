@@ -43,6 +43,7 @@ import { isDue } from "./schedule";
 import { scripts, useScripts } from "./scripts";
 import { screens } from "./screens";
 import { LayoutPicker, layoutShortcut } from "./components/LayoutPicker";
+import { ZoomControl } from "./components/ZoomControl";
 import { SettingsPage } from "./components/SettingsPage";
 import { ConnectionPanel, usePanelLayout } from "./components/ConnectionPanel";
 import { CloseConfirm, Workspace, applyLayout, openConnection } from "./components/Workspace";
@@ -533,6 +534,7 @@ export default function App() {
                   <FileCode2 size={16} />
                 </button>
                 <BroadcastButton dock={dock} />
+                <ZoomControl />
                 <LayoutPicker value={layout} onChange={changeLayout} />
               </header>
 

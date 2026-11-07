@@ -939,7 +939,7 @@ export function mockBackend(): Backend {
               }
               // "title X" sets the tab title, as a shell's OSC 0 would.
               if (cmd.startsWith("title")) {
-                onEvent({ event: "title", title: cmd.slice(5).trim() });
+                send(`\x1b]0;${cmd.slice(5).trim()}\x07`);
                 send(prompt);
                 return;
               }

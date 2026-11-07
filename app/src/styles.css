@@ -301,10 +301,47 @@ body.is-resizing .main {
   border-color: var(--chg-deleted);
 }
 
+.zoom-control {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: auto;
+  padding: 2px;
+  border-radius: var(--radius-m);
+  background: var(--bg-hover);
+}
+.zoom-control .icon-btn {
+  width: 24px;
+  height: 26px;
+}
+.zoom-control .icon-btn:hover:not(:disabled) {
+  background: var(--bg-main);
+}
+.zoom-control .icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.zoom-level {
+  width: 48px;
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-s);
+  background: var(--bg-main);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.zoom-level:focus {
+  border-color: var(--accent);
+  outline: none;
+}
 .layout-picker {
   display: flex;
   gap: 2px;
-  margin-left: auto;
+  margin-left: 6px;
   padding: 2px;
   border-radius: var(--radius-m);
   background: var(--bg-hover);
@@ -1155,13 +1192,20 @@ select {
   --dv-inactivegroup-visiblepanel-tab-color: var(--text);
   --dv-inactivegroup-hiddenpanel-tab-color: var(--text-quiet);
 }
-/* The tab you're in: an accent bar along its top, and its title in full
-   weight. The visible tab of another pane gets a quieter bar. */
+/* The tab you're in: outlined on all four sides in the accent color, and its
+   title in full weight. The visible tab of another pane gets a quieter
+   outline. */
 .workspace .dv-groupview.dv-active-group .dv-tab.dv-active-tab {
-  box-shadow: inset 0 2px 0 var(--accent);
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 .workspace .dv-groupview.dv-inactive-group .dv-tab.dv-active-tab {
-  box-shadow: inset 0 2px 0 var(--line-strong, var(--text-quiet));
+  box-shadow:
+    inset 0 2px 0 var(--text-quiet),
+    inset 0 0 0 1px var(--text-quiet);
+}
+/* A clear line between the tabs and the session below them. */
+.workspace .dv-tabs-and-actions-container {
+  border-bottom: 1px solid color-mix(in srgb, var(--text-quiet) 60%, var(--line));
 }
 .workspace .dv-tab.dv-active-tab .session-tab-title {
   font-weight: 600;
@@ -1420,16 +1464,118 @@ select {
 
 /* ---- settings ------------------------------------------------------------- */
 
-.settings-page {
+.settings-layout {
   position: absolute;
   inset: 0;
+  display: flex;
+}
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: max-content;
+  min-width: 220px;
+  flex-shrink: 0;
+  overflow: auto;
+  padding: 24px 10px;
+  border-right: 1px solid var(--line);
+  background: var(--bg-side);
+}
+.settings-nav h1 {
+  margin: 0 8px 12px;
+  font-size: 20px;
+  font-weight: 600;
+}
+.settings-nav button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-quiet);
+  font: inherit;
+  text-align: left;
+}
+.settings-nav button:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.settings-nav button.is-active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text);
+  font-weight: 500;
+}
+/* Labels stay on one line, and each takes the width it has in bold (an
+   invisible bold copy holds the space), so selecting a page never moves or
+   wraps anything. */
+.settings-nav-label {
+  display: inline-flex;
+  flex-direction: column;
+  white-space: nowrap;
+}
+.settings-nav-label::after {
+  content: attr(data-label);
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: 500;
+  user-select: none;
+  pointer-events: none;
+}
+.settings-nav button.is-active svg {
+  color: var(--accent);
+}
+.settings-search {
+  position: relative;
+  margin: 0 0 10px;
+}
+.settings-search svg {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  translate: 0 -50%;
+  color: var(--text-quiet);
+  pointer-events: none;
+}
+.settings-search input {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px 0 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--bg-main);
+  color: var(--text);
+  font: inherit;
+}
+.settings-search input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.settings-page {
+  flex: 1;
+  min-width: 0;
   overflow: auto;
   padding: 28px 32px;
 }
-.settings-page h1 {
-  margin: 0 0 4px;
-  font-size: 20px;
-  font-weight: 600;
+.settings-page [data-search-hidden] {
+  display: none;
+}
+::highlight(settings-search) {
+  background-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: inherit;
+}
+@media (max-width: 640px) {
+  .settings-layout {
+    flex-direction: column;
+  }
+  .settings-nav {
+    width: auto;
+    max-height: 40%;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
 }
 .settings-section {
   max-width: 720px;
@@ -1584,12 +1730,18 @@ kbd {
   padding: 9px 10px;
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
+  vertical-align: middle;
 }
+/* The flex layout goes inside the cell: a flex td stops being a table cell,
+   so it didn't stretch to the row's height and its bottom line sat higher
+   than the rest of the row. */
 .devices-table td:first-child {
+  font-weight: 500;
+}
+.device-name {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-weight: 500;
 }
 .devices-table tr.is-behind td:nth-child(3) {
   color: var(--chg-edited);
