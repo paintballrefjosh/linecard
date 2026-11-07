@@ -1,5 +1,18 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { Copy, QrCode as QrCodeIcon, X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import {
+  Copy,
+  FileText,
+  Highlighter,
+  KeyRound,
+  LayoutGrid,
+  LifeBuoy,
+  Palette,
+  QrCode as QrCodeIcon,
+  RefreshCw,
+  Search,
+  SquareTerminal,
+  X,
+} from "lucide-react";
 import { getBackend } from "../api";
 import {
   colorFor,
@@ -26,117 +39,323 @@ import { ConfirmDialog, Modal } from "./Dialog";
 import { relativeTime } from "./ConnectionTree";
 import { QrCode } from "./QrCode";
 import { CredentialDialog, useCredentials } from "./LoginFields";
+import { ZoomControl } from "./ZoomControl";
 
 interface Props {
   theme: ThemePref;
   onTheme(t: ThemePref): void;
 }
 
-/** Per-device settings. Changes apply immediately and are saved as you go. */
+type PageId = "appearance" | "terminal" | "highlighting" | "sync" | "credentials" | "logging" | "workspaces" | "help";
+
+const PAGES: { id: PageId; label: string; icon: typeof Palette }[] = [
+  { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "terminal", label: "Tabs and terminal", icon: SquareTerminal },
+  { id: "highlighting", label: "Highlighting", icon: Highlighter },
+  { id: "sync", label: "Sync", icon: RefreshCw },
+  { id: "credentials", label: "Credentials and passwords", icon: KeyRound },
+  { id: "logging", label: "Logging and scripts", icon: FileText },
+  { id: "workspaces", label: "Workspaces", icon: LayoutGrid },
+  { id: "help", label: "Troubleshooting", icon: LifeBuoy },
+];
+
+/** The page you were on, kept while the app runs. */
+let lastPage: PageId = "appearance";
+
+/** Per-device settings, grouped into pages with a search across all of them.
+ *  Changes apply immediately and are saved as you go. */
 export function SettingsPage({ theme, onTheme }: Props) {
-  const { prefs, update } = usePrefs();
+  const [page, setPageState] = useState<PageId>(lastPage);
+  const setPage = (p: PageId) => {
+    lastPage = p;
+    setPageState(p);
+  };
+  const [query, setQuery] = useState("");
+  const q = query.trim();
+  const body = useRef<HTMLDivElement>(null);
+  const noMatches = useSettingsSearch(body, q);
+
   return (
-    <div className="settings-page">
-      <h1>Settings</h1>
-      <p className="lede">These apply to this computer only and save as you change them.</p>
+    <div className="settings-layout">
+      <nav className="settings-nav" aria-label="Settings pages">
+        <h1>Settings</h1>
+        <div className="settings-search">
+          <Search size={14} aria-hidden="true" />
+          <input
+            type="search"
+            value={query}
+            placeholder="Search settings"
+            aria-label="Search settings"
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+          />
+        </div>
+        {PAGES.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            className={!q && page === id ? "is-active" : ""}
+            aria-current={!q && page === id ? "page" : undefined}
+            onClick={() => {
+              setQuery("");
+              setPage(id);
+              body.current?.scrollTo({ top: 0 });
+            }}
+          >
+            <Icon size={15} aria-hidden="true" />
+            <span className="settings-nav-label" data-label={label}>
+              {label}
+            </span>
+          </button>
+        ))}
+      </nav>
 
-      <Section title="Appearance">
-        <Row label="Theme" htmlFor="set-theme">
-          <Segmented
-            id="set-theme"
-            value={theme}
-            onChange={onTheme}
-            options={[
-              { value: "system", label: "Match Windows" },
-              { value: "light", label: "Light" },
-              { value: "dark", label: "Dark" },
-            ]}
-          />
-        </Row>
-      </Section>
-
-      <SyncSettings />
-
-      <Section title="Tabs">
-        <Row
-          label="Ask before closing a tab"
-          hint="Only for tabs whose session is still open. Middle-click a tab to close it; Ctrl+Tab and Ctrl+Shift+Tab move between tabs."
-          htmlFor="set-confirm-close"
-        >
-          <Toggle
-            id="set-confirm-close"
-            checked={prefs.confirmCloseTab}
-            onChange={(v) => update({ confirmCloseTab: v })}
-          />
-        </Row>
-        <Row
-          label="Name tabs after the session's title"
-          hint="Shells and programs like Claude Code set a title, as in SecureCRT. Hover a tab for its connection and host."
-          htmlFor="set-tab-title"
-        >
-          <Toggle
-            id="set-tab-title"
-            checked={prefs.tabTitleFromSession}
-            onChange={(v) => update({ tabTitleFromSession: v })}
-          />
-        </Row>
-        <Row label="Ask once before quitting with connections open" htmlFor="set-confirm-quit">
-          <Toggle id="set-confirm-quit" checked={prefs.confirmQuit} onChange={(v) => update({ confirmQuit: v })} />
-        </Row>
-      </Section>
-
-      <Section title="Terminal mouse and clipboard">
-        <Row
-          label="Copy when you highlight text"
-          hint="Selecting text in a terminal copies it right away, like SecureCRT and PuTTY."
-          htmlFor="set-copy"
-        >
-          <Toggle id="set-copy" checked={prefs.copyOnSelect} onChange={(v) => update({ copyOnSelect: v })} />
-        </Row>
-        <Row label="Right-click in a terminal" htmlFor="set-right">
-          <Segmented
-            id="set-right"
-            value={prefs.rightClick}
-            onChange={(v) => update({ rightClick: v })}
-            options={[
-              { value: "paste", label: "Paste" },
-              { value: "menu", label: "Show menu" },
-            ]}
-          />
-        </Row>
-        <Row
-          label="Confirm multi-line pastes"
-          hint="Shows the text before pasting more than one line, so a stray paste can't run a batch of commands on a device."
-          htmlFor="set-confirm"
-        >
-          <Toggle
-            id="set-confirm"
-            checked={prefs.confirmMultilinePaste}
-            onChange={(v) => update({ confirmMultilinePaste: v })}
-          />
-        </Row>
-        <p className="settings-note">
-          Keyboard: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> copies, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>{" "}
-          or <kbd>Shift</kbd>+<kbd>Insert</kbd> pastes.
+      <div className="settings-page" ref={body}>
+        <p className="lede">
+          {q ? (
+            noMatches ? (
+              <>No settings match “{q}”.</>
+            ) : (
+              <>Settings matching “{q}”</>
+            )
+          ) : (
+            "These apply to this computer only and save as you change them."
+          )}
         </p>
-      </Section>
-
-      <KeywordHighlighting />
-
-      <LinksAndCommandLine />
-
-      <SessionLogging />
-
-      <Scripting />
-
-      <Credentials />
-      <SavedPasswords />
-
-      <DebugLog />
-
-      <Workspaces />
+        <SettingsPageBody show={(id) => !!q || page === id} theme={theme} onTheme={onTheme} />
+      </div>
     </div>
   );
+}
+
+function Page({ id, hidden, children }: { id: PageId; hidden: boolean; children: ReactNode }) {
+  return (
+    <div className="settings-subpage" data-page={id} hidden={hidden}>
+      {children}
+    </div>
+  );
+}
+
+/** Every page is rendered (hidden unless it's the one shown), so the search
+ *  can look through all of them. */
+function SettingsPageBody({
+  show,
+  theme,
+  onTheme,
+}: {
+  show(id: PageId): boolean;
+  theme: ThemePref;
+  onTheme(t: ThemePref): void;
+}) {
+  const { prefs, update } = usePrefs();
+  return (
+    <>
+      <Page id="appearance" hidden={!show("appearance")}>
+        <Section title="Appearance">
+          <Row label="Theme" htmlFor="set-theme">
+            <Segmented
+              id="set-theme"
+              value={theme}
+              onChange={onTheme}
+              options={[
+                { value: "system", label: "Match Windows" },
+                { value: "light", label: "Light" },
+                { value: "dark", label: "Dark" },
+              ]}
+            />
+          </Row>
+          <Row
+            label="Terminal zoom"
+            hint="Zoom for every terminal tab. Also in the top bar, or Ctrl+scroll and pinch in a terminal."
+            htmlFor="set-zoom"
+          >
+            <ZoomControl />
+          </Row>
+        </Section>
+      </Page>
+
+      <Page id="terminal" hidden={!show("terminal")}>
+        <Section title="Tabs">
+          <Row
+            label="Ask before closing a tab"
+            hint="Only for tabs whose session is still open. Middle-click a tab to close it; Ctrl+Tab and Ctrl+Shift+Tab move between tabs."
+            htmlFor="set-confirm-close"
+          >
+            <Toggle
+              id="set-confirm-close"
+              checked={prefs.confirmCloseTab}
+              onChange={(v) => update({ confirmCloseTab: v })}
+            />
+          </Row>
+          <Row
+            label="Name tabs after the session's title"
+            hint="Shells and programs like Claude Code set a title, as in SecureCRT. Hover a tab for its connection and host."
+            htmlFor="set-tab-title"
+          >
+            <Toggle
+              id="set-tab-title"
+              checked={prefs.tabTitleFromSession}
+              onChange={(v) => update({ tabTitleFromSession: v })}
+            />
+          </Row>
+          <Row label="Ask once before quitting with connections open" htmlFor="set-confirm-quit">
+            <Toggle id="set-confirm-quit" checked={prefs.confirmQuit} onChange={(v) => update({ confirmQuit: v })} />
+          </Row>
+        </Section>
+
+        <Section title="Terminal mouse and clipboard">
+          <Row
+            label="Copy when you highlight text"
+            hint="Selecting text in a terminal copies it right away, like SecureCRT and PuTTY."
+            htmlFor="set-copy"
+          >
+            <Toggle id="set-copy" checked={prefs.copyOnSelect} onChange={(v) => update({ copyOnSelect: v })} />
+          </Row>
+          <Row label="Right-click in a terminal" htmlFor="set-right">
+            <Segmented
+              id="set-right"
+              value={prefs.rightClick}
+              onChange={(v) => update({ rightClick: v })}
+              options={[
+                { value: "paste", label: "Paste" },
+                { value: "menu", label: "Show menu" },
+              ]}
+            />
+          </Row>
+          <Row
+            label="Confirm multi-line pastes"
+            hint="Shows the text before pasting more than one line, so a stray paste can't run a batch of commands on a device."
+            htmlFor="set-confirm"
+          >
+            <Toggle
+              id="set-confirm"
+              checked={prefs.confirmMultilinePaste}
+              onChange={(v) => update({ confirmMultilinePaste: v })}
+            />
+          </Row>
+          <p className="settings-note">
+            Keyboard: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> copies, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+
+            <kbd>V</kbd> or <kbd>Shift</kbd>+<kbd>Insert</kbd> pastes.
+          </p>
+        </Section>
+
+        <LinksAndCommandLine />
+      </Page>
+
+      <Page id="highlighting" hidden={!show("highlighting")}>
+        <KeywordHighlighting />
+      </Page>
+
+      <Page id="sync" hidden={!show("sync")}>
+        <SyncSettings />
+      </Page>
+
+      <Page id="credentials" hidden={!show("credentials")}>
+        <Credentials />
+        <SavedPasswords />
+      </Page>
+
+      <Page id="logging" hidden={!show("logging")}>
+        <SessionLogging />
+        <Scripting />
+      </Page>
+
+      <Page id="workspaces" hidden={!show("workspaces")}>
+        <Workspaces />
+      </Page>
+
+      <Page id="help" hidden={!show("help")}>
+        <DebugLog />
+      </Page>
+    </>
+  );
+}
+
+/**
+ * Filters the settings to rows (and notes) whose text contains the query,
+ * across every page, and highlights the matches, like a browser's settings
+ * search. A section whose title matches is shown whole. Works on the rendered
+ * page, so rows that load later (saved passwords, credentials) are included.
+ * Returns true when nothing matches.
+ */
+function useSettingsSearch(root: RefObject<HTMLDivElement | null>, query: string): boolean {
+  const [none, setNone] = useState(false);
+  useEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    const needle = query.toLowerCase();
+    const highlights = typeof CSS !== "undefined" && "highlights" in CSS ? CSS.highlights : null;
+
+    const apply = () => {
+      const ranges: Range[] = [];
+      let any = false;
+      for (const section of el.querySelectorAll<HTMLElement>(".settings-section")) {
+        const title = section.querySelector("h2")?.textContent?.toLowerCase() ?? "";
+        const whole = !needle || title.includes(needle);
+        let shown = 0;
+        // Rows, plus the notes and editors that sit between rows.
+        const items = section.querySelectorAll<HTMLElement>(".settings-rows > *");
+        for (const item of items) {
+          const match = whole || matches(item, needle);
+          item.toggleAttribute("data-search-hidden", !match);
+          if (match) shown++;
+        }
+        const show = whole || shown > 0;
+        section.toggleAttribute("data-search-hidden", !show);
+        if (show && needle) {
+          any = true;
+          ranges.push(...findRanges(section, needle));
+        }
+      }
+      setNone(!!needle && !any);
+      if (highlights) {
+        if (ranges.length) highlights.set("settings-search", new Highlight(...ranges));
+        else highlights.delete("settings-search");
+      }
+    };
+
+    apply();
+    if (!needle) return;
+    // Rows that appear later (lists that load, a section that opens) get filtered too.
+    const watch = new MutationObserver(apply);
+    watch.observe(el, { childList: true, subtree: true, characterData: true });
+    return () => {
+      watch.disconnect();
+      highlights?.delete("settings-search");
+    };
+  }, [root, query]);
+  return none;
+}
+
+/** Text a person can see or that describes a control: labels, hints, button
+ *  names, field placeholders. */
+function matches(item: HTMLElement, needle: string): boolean {
+  if (item.textContent?.toLowerCase().includes(needle)) return true;
+  for (const f of item.querySelectorAll<HTMLElement>("[placeholder], [aria-label], [title]")) {
+    const words = [f.getAttribute("placeholder"), f.getAttribute("aria-label"), f.getAttribute("title")];
+    if (words.some((w) => w?.toLowerCase().includes(needle))) return true;
+  }
+  return false;
+}
+
+/** Where the query appears in the section's visible text, for highlighting. */
+function findRanges(section: HTMLElement, needle: string): Range[] {
+  const out: Range[] = [];
+  const walk = document.createTreeWalker(section, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) =>
+      n.parentElement?.closest("[data-search-hidden], [hidden], input, textarea")
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT,
+  });
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+    const text = n.textContent?.toLowerCase() ?? "";
+    for (let i = text.indexOf(needle); i >= 0 && out.length < 500; i = text.indexOf(needle, i + needle.length)) {
+      const r = document.createRange();
+      r.setStart(n, i);
+      r.setEnd(n, i + needle.length);
+      out.push(r);
+    }
+  }
+  return out;
 }
 
 /** Set up end-to-end encrypted sync of the connection tree. */

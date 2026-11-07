@@ -4,7 +4,7 @@ Templates for the package managers that install a published release. Nothing
 here runs in CI; after publishing a release, render the files for it:
 
 ```bash
-packaging/render.sh 0.4.11     # needs gh; fills packaging/out/ (git-ignored)
+packaging/render.sh 0.5.0     # needs gh; fills packaging/out/ (git-ignored)
 ```
 
 The installers' SHA-256 comes from the release itself, so nothing is downloaded.

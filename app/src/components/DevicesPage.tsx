@@ -76,8 +76,10 @@ export function DevicesPage({ devices, syncOn }: { devices: Device[]; syncOn: bo
             return (
               <tr key={d.id} className={stale ? "is-stale" : old ? "is-behind" : ""}>
                 <td>
-                  <Laptop size={14} /> {d.name}
-                  {d.isThisDevice && <span className="tag">This device</span>}
+                  <span className="device-name">
+                    <Laptop size={14} /> {d.name}
+                    {d.isThisDevice && <span className="tag">This device</span>}
+                  </span>
                 </td>
                 <td>{d.os}</td>
                 <td>

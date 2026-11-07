@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import { attachHighlighter, highlightStore } from "../highlight";
 import { pasteLineCount, usePrefs } from "../prefs";
-import { clampFont, FONT_DEFAULT, WheelZoom } from "../zoom";
+import { clampFont, FONT_DEFAULT, fontToPercent, stepFont, WheelZoom } from "../zoom";
 import { broadcast, useBroadcast } from "../broadcast";
 import { reconnect } from "../reconnect";
 import { scripts } from "../scripts";
@@ -244,6 +244,10 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onTitle, 
     }
     fit.fit();
     term.current = t;
+    // The session's own title (OSC 0/2): shells set "user@host: ~/dir", and
+    // tools like Claude Code set what they're doing. The terminal reads it from
+    // the output stream, so this works for every protocol.
+    t.onTitleChange((title) => titleRef.current?.(title.trim()));
 
     let session: SessionHandle | null = null;
     let disposed = false;
@@ -420,7 +424,7 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onTitle, 
       e.preventDefault();
       e.stopPropagation();
       const steps = wheelZoom.steps(e.deltaY, e.deltaMode);
-      if (steps) setFontSizeRef.current((t.options.fontSize ?? FONT_DEFAULT) + steps);
+      if (steps) setFontSizeRef.current(stepFont(t.options.fontSize ?? FONT_DEFAULT, steps));
     };
     // macOS (WebKit) reports a trackpad pinch as gesture events with a scale.
     let pinchFrom = 0;
@@ -563,7 +567,7 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onTitle, 
             ...(prefs.fontSize !== FONT_DEFAULT
               ? [
                   {
-                    label: `Reset text size (now ${prefs.fontSize} pt)`,
+                    label: `Reset zoom (now ${fontToPercent(prefs.fontSize)}%)`,
                     icon: <ZoomOut size={15} />,
                     shortcut: "Ctrl+scroll",
                     onSelect: () => setFontSize(FONT_DEFAULT),
