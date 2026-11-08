@@ -9,7 +9,7 @@ import {
   type SerializedDockview,
 } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
-import { FolderOpen, Radio, RotateCw, X } from "lucide-react";
+import { CopyPlus, FolderOpen, Radio, RotateCw, X } from "lucide-react";
 import type { ConnectionNode, LayoutId } from "../types";
 import type { Theme } from "../theme";
 import { KindIcon } from "./icons";
@@ -198,6 +198,11 @@ function SessionTab({ api, containerApi, params }: IDockviewPanelHeaderProps<Pan
               disabled: s !== "disconnected",
               onSelect: () => reconnect.run(api.id),
             },
+            {
+              label: "Clone session",
+              icon: <CopyPlus size={15} />,
+              onSelect: () => focusSession(containerApi, openConnection(containerApi, conn, { files: params.files, after: api.id })),
+            },
             { label: "Close tab", icon: <X size={15} />, onSelect: () => askClose(api.id) },
           ]}
         />
@@ -219,10 +224,15 @@ let counter = 0;
 /** Saved connections group by id; quick-connect sessions by host:port. */
 const sessionKey = (conn: ConnectionNode) => (conn.id.startsWith("quick-") ? `${conn.kind}:${conn.endpoint}` : conn.id);
 
-/** Open a connection as a tab in the active pane. A second session to the
- *  same connection is titled "name (2)"; numbers stay put while a tab is open
- *  and the lowest free one is reused, so the first session is plain "name". */
-export function openConnection(api: DockviewApi, conn: ConnectionNode, opts: { files?: boolean } = {}) {
+/** Open a connection as a tab in the active pane, or just right of the tab
+ *  `after` (Clone session). A second session to the same connection is titled
+ *  "name (2)"; numbers stay put while a tab is open and the lowest free one is
+ *  reused, so the first session is plain "name". Returns the new panel's id. */
+export function openConnection(
+  api: DockviewApi,
+  conn: ConnectionNode,
+  opts: { files?: boolean; after?: string } = {},
+): string {
   const files = !!opts.files;
   const key = sessionKey(conn);
   const taken = new Set(
@@ -233,14 +243,21 @@ export function openConnection(api: DockviewApi, conn: ConnectionNode, opts: { f
   );
   let instance = 1;
   while (taken.has(instance)) instance++;
+  const after = opts.after ? api.getPanel(opts.after) : undefined;
+  const id = `${conn.id}#${++counter}`;
   api.addPanel<PanelParams>({
-    id: `${conn.id}#${++counter}`,
+    id,
     component: "session",
     tabComponent: "session",
     title: `${conn.name}${files ? " · files" : ""}${instance === 1 ? "" : ` (${instance})`}`,
     params: { conn, instance, ...(files ? { files } : {}) },
-    position: api.activeGroup ? { referenceGroup: api.activeGroup } : undefined,
+    position: after
+      ? { referenceGroup: after.group, index: after.group.panels.indexOf(after) + 1 }
+      : api.activeGroup
+        ? { referenceGroup: api.activeGroup }
+        : undefined,
   });
+  return id;
 }
 
 /** Open tabs and pane layout, for saving as a workspace. */
