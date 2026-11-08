@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Clone session.** Right-click a tab and choose Clone session to open another session to the same host, as a new tab just to the right of it. A file browser tab clones as another file browser.
+
 ## v0.5.0 — find in the terminal, command palette and local shells; named credentials, logon actions and ZMODEM; tab titles and zoom; settings pages with search; security fixes
 
 - **Devices table lines up.** On the Devices page, each row's line under the Device column sat higher than the rest of the row.
