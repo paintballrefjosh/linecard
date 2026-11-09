@@ -276,7 +276,7 @@ export function mockBackend(): Backend {
     d.kind === "serial" && d.serial ? `${d.serial.port} ${d.serial.baud}` : `${d.host.trim()}:${d.port}`;
 
   return {
-    appVersion: async () => "0.1.0-dev",
+    appVersion: async () => "0.5.0-dev",
     getTree: async () => structuredClone(tree),
     getDevices: async () => devices,
     getSyncState: async () =>
@@ -950,7 +950,8 @@ export function mockBackend(): Backend {
                 onEvent({ event: "zmodem", upload: cmd === "rz" });
                 return;
               }
-              if (cmd === "show version") send("Linecard demo OS, Version 0.1.0\r\nUptime is 42 days\r\n");
+              if (cmd === "clear") send("\x1b[2J\x1b[H");
+              else if (cmd === "show version") send("Linecard demo OS, Version 0.1.0\r\nUptime is 42 days\r\n");
               else if (cmd === "show int status") {
                 send(
                   "Port      Status       Vlan\r\nEth1/1    \x1b[32mconnected\x1b[0m    10\r\nEth1/2    \x1b[31mdown\x1b[0m         10\r\nEth1/3    \x1b[33merr-disabled\x1b[0m 20\r\n",
