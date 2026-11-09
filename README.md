@@ -11,6 +11,16 @@ A terminal and remote-desktop client in the spirit of SecureCRT and PuTTY — SS
 
 Windows first; macOS and Linux build from the same code.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/main-dark.png">
+  <img alt="Linecard with two SSH sessions side by side and the connection tree on the left, with changes from other computers highlighted" src="docs/screenshots/main-light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/palette-dark.png">
+  <img alt="The command palette finding a connection from a few letters" src="docs/screenshots/palette-light.png">
+</picture>
+
 ## Install
 
 Download `Linecard_<version>_x64-setup.exe` from [Releases](https://github.com/paintballrefjosh/linecard/releases) and run it. It installs for your user only (no admin prompt) and fetches Microsoft's WebView2 runtime if your PC doesn't already have it. Later versions are offered from inside the app.
