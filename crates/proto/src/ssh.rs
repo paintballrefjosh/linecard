@@ -139,6 +139,19 @@ impl From<russh::Error> for Failure {
     }
 }
 
+/// Old gear that shares no algorithm with us just closes the connection, which
+/// reads as a bare "early eof". Say what that usually means instead.
+fn hung_up_in_handshake(f: Failure, host: &str) -> Failure {
+    match f {
+        Failure::Msg(m) if m == "early eof" => Failure::Msg(format!(
+            "{host} closed the connection during the SSH handshake. Older switches and routers do this \
+             when they share no key exchange method or cipher with Linecard, or when an access list on the \
+             SSH (vty) lines doesn't allow this computer."
+        )),
+        other => other,
+    }
+}
+
 impl From<io::Error> for Failure {
     fn from(e: io::Error) -> Self {
         Failure::Msg(e.to_string())
@@ -402,9 +415,16 @@ impl client::Handler for Client {
 /// the server offers nothing better.
 fn preferred() -> Preferred {
     let mut kex_order = Preferred::DEFAULT.kex.to_vec();
-    kex_order.extend([kex::DH_GEX_SHA1, kex::DH_G14_SHA1]);
+    // group1 and 3des-cbc are all that many Catalyst 2960/3560/3750 IOS 12.2
+    // releases speak.
+    kex_order.extend([kex::DH_GEX_SHA1, kex::DH_G14_SHA1, kex::DH_G1_SHA1]);
     let mut ciphers = Preferred::DEFAULT.cipher.to_vec();
-    ciphers.extend([cipher::AES_256_CBC, cipher::AES_192_CBC, cipher::AES_128_CBC]);
+    ciphers.extend([
+        cipher::AES_256_CBC,
+        cipher::AES_192_CBC,
+        cipher::AES_128_CBC,
+        cipher::TRIPLE_DES_CBC,
+    ]);
     let mut macs = Preferred::DEFAULT.mac.to_vec();
     macs.extend([mac::HMAC_SHA1_ETM, mac::HMAC_SHA1]);
     Preferred {
@@ -486,7 +506,8 @@ async fn reach(
         };
         let mut handle = tokio::time::timeout(CONNECT_TIMEOUT, connecting)
             .await
-            .map_err(|_| Failure::Msg(format!("timed out connecting to {}", hop.host)))??;
+            .map_err(|_| Failure::Msg(format!("timed out connecting to {}", hop.host)))?
+            .map_err(|f| hung_up_in_handshake(f, &hop.host))?;
         authenticate(&mut handle, hop, opts, ui).await?;
         if i + 1 < chain.len() {
             ui.print(&format!("\x1b[2mVia jump host {}…\x1b[0m\n", hop.host));
