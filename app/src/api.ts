@@ -227,6 +227,11 @@ export interface Backend {
   importHighlight(path: string): Promise<string>;
   getLogging(): Promise<LoggingSettings>;
   setLogging(l: LoggingSettings): Promise<void>;
+  /** App-wide lines of scrollback (folders and connections can override). */
+  getScrollback(): Promise<number>;
+  setScrollback(lines: number): Promise<void>;
+  /** Lines of scrollback for a connection's terminal (null: the app-wide value). */
+  effectiveScrollback(connectionId: string | null): Promise<number>;
   /** Serial ports present right now. */
   listSerialPorts(): Promise<{ name: string; description: string | null }[]>;
   /** Native folder picker; null if canceled. */
@@ -372,6 +377,9 @@ async function tauriBackend(): Promise<Backend> {
     importHighlight: (path) => invoke<string>("import_highlight", { path }),
     getLogging: () => invoke<LoggingSettings>("get_logging"),
     setLogging: (logging) => invoke("set_logging", { logging }),
+    getScrollback: () => invoke<number>("get_scrollback"),
+    setScrollback: (lines) => invoke("set_scrollback", { lines }),
+    effectiveScrollback: (connectionId) => invoke<number>("effective_scrollback", { connectionId }),
     listSerialPorts: () => invoke("list_serial_ports"),
     rdpShareSupported: () => invoke<boolean>("rdp_share_supported"),
     getRdpShare: (connectionId) => invoke<RdpShare | null>("get_rdp_share", { connectionId }),

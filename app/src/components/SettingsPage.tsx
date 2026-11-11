@@ -40,6 +40,7 @@ import { relativeTime } from "./ConnectionTree";
 import { QrCode } from "./QrCode";
 import { CredentialDialog, useCredentials } from "./LoginFields";
 import { ZoomControl } from "./ZoomControl";
+import { SCROLLBACK_DEFAULT, SCROLLBACK_MAX, SCROLLBACK_MIN } from "../types";
 
 interface Props {
   theme: ThemePref;
@@ -199,6 +200,16 @@ function SettingsPageBody({
           </Row>
           <Row label="Ask once before quitting with connections open" htmlFor="set-confirm-quit">
             <Toggle id="set-confirm-quit" checked={prefs.confirmQuit} onChange={(v) => update({ confirmQuit: v })} />
+          </Row>
+        </Section>
+
+        <Section title="Terminal history">
+          <Row
+            label="Scrollback"
+            hint="Lines each terminal keeps above the screen. Fewer lines use less memory in tabs left open a long time. Folders and connections can set their own."
+            htmlFor="set-scrollback"
+          >
+            <ScrollbackSetting />
           </Row>
         </Section>
 
@@ -964,6 +975,50 @@ function KeywordHighlighting() {
 }
 
 /** ssh:// and telnet:// links, and opening sessions from a command line. */
+/** The app-wide scrollback; saved when the field is left or Enter pressed. */
+function ScrollbackSetting() {
+  const [saved, setSaved] = useState<number | null>(null);
+  const [text, setText] = useState("");
+  useEffect(() => {
+    void getBackend()
+      .then((b) => b.getScrollback())
+      .then((n) => {
+        setSaved(n);
+        setText(String(n));
+      });
+  }, []);
+  const commit = () => {
+    const n = Number(text);
+    const lines = text.trim() === "" || !Number.isFinite(n) ? SCROLLBACK_DEFAULT : n;
+    const clamped = Math.min(SCROLLBACK_MAX, Math.max(SCROLLBACK_MIN, Math.round(lines)));
+    setText(String(clamped));
+    if (clamped === saved) return;
+    setSaved(clamped);
+    void getBackend().then((b) => b.setScrollback(clamped));
+  };
+  return (
+    <div className="scrollback-field">
+      <input
+        id="set-scrollback"
+        type="number"
+        inputMode="numeric"
+        min={SCROLLBACK_MIN}
+        max={SCROLLBACK_MAX}
+        step={500}
+        value={text}
+        disabled={saved === null}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape" && saved !== null) setText(String(saved));
+        }}
+      />
+      <span className="field-unit">lines</span>
+    </div>
+  );
+}
+
 function LinksAndCommandLine() {
   const [links, setLinks] = useState<boolean | null>(null);
   const [path, setPath] = useState<{ on: boolean | null; manual: string | null } | null>(null);

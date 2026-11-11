@@ -76,6 +76,8 @@ inheritable! {
     auto_reconnect: bool,
     /// Steps run after connecting: wait for some text, send a line.
     logon_actions: Vec<crate::LogonStep>,
+    /// Lines of history a terminal keeps above the screen.
+    scrollback_lines: u32,
 }
 
 /// Where an effective setting came from.

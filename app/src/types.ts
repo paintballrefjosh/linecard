@@ -94,6 +94,8 @@ export interface ConnectionDraft {
   credential: string | null;
   /** Logon actions; null = from the folder, [] = none here. */
   logonActions: LogonStep[] | null;
+  /** Lines of scrollback; null = from the folder or Settings. */
+  scrollback: number | null;
   /** SSH port forwards, started with the session. */
   forwards: PortForward[];
   notes: string;
@@ -307,6 +309,8 @@ export interface Inherited {
   credential: InheritedValue | null;
   /** What the inherited logon actions send, e.g. "enable, terminal length 0". */
   logonActions: InheritedValue | null;
+  /** Lines of scrollback, e.g. "2500". */
+  scrollback: InheritedValue | null;
 }
 
 /** What a folder passes down to its folders and connections; null = inherit. */
@@ -318,7 +322,14 @@ export interface FolderSettings {
   highlight: string | null;
   credential: string | null;
   logonActions: LogonStep[] | null;
+  scrollback: number | null;
 }
+
+/** Fewest and most lines of scrollback a terminal can keep. */
+export const SCROLLBACK_MIN = 0;
+export const SCROLLBACK_MAX = 100_000;
+/** Scrollback when nothing sets it. */
+export const SCROLLBACK_DEFAULT = 2500;
 
 /** What a saved password for a connection is keyed by. */
 export interface PasswordTarget {

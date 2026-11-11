@@ -30,6 +30,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { attachHighlighter, highlightStore } from "../highlight";
+import { SCROLLBACK_DEFAULT } from "../types";
 import { pasteLineCount, usePrefs } from "../prefs";
 import { clampFont, FONT_DEFAULT, fontToPercent, stepFont, WheelZoom } from "../zoom";
 import { broadcast, useBroadcast } from "../broadcast";
@@ -126,6 +127,30 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onTitle, 
     load();
     return highlightStore.subscribe(load);
   }, [conn.id]);
+  /** Lines of history to keep: the connection's, its folder's or Settings'.
+   *  Follows changes, so lowering it frees memory in open tabs too. */
+  const scrollback = useRef(SCROLLBACK_DEFAULT);
+  useEffect(() => {
+    let live = true;
+    let stop = () => {};
+    const load = () =>
+      void getBackend()
+        .then((b) => b.effectiveScrollback(conn.id))
+        .then((lines) => {
+          if (!live) return;
+          scrollback.current = lines;
+          if (term.current) term.current.options.scrollback = lines;
+        });
+    load();
+    void getBackend().then((b) => {
+      if (live) stop = b.onTreeChanged(load);
+      else b.onTreeChanged(load)();
+    });
+    return () => {
+      live = false;
+      stop();
+    };
+  }, [conn.id]);
   /** Multi-line text waiting for the user to confirm the paste. */
   const [pending, setPending] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -220,7 +245,7 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onTitle, 
       fontFamily: FONT,
       fontSize: clampFont(prefsRef.current.fontSize),
       cursorBlink: true,
-      scrollback: 10_000,
+      scrollback: scrollback.current,
       allowProposedApi: true,
       theme: terminalThemes[theme],
     });

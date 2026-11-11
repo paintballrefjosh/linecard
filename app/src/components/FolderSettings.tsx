@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getBackend } from "../api";
 import type { ConnectionNode, FolderSettings, Inherited } from "../types";
-import { HighlightSelect, swatches } from "./ConnectionEditor";
+import { HighlightSelect, ScrollbackInput, swatches } from "./ConnectionEditor";
 import { Modal } from "./Dialog";
 import { CredentialSelect, LogonActionsEditor, useCredentials } from "./LoginFields";
 
@@ -103,6 +103,14 @@ export function FolderSettingsDialog({ folderId, parentId, path, jumpHosts, onCl
             value={s.highlight}
             inherited={inherited?.highlight ?? null}
             onChange={(highlight) => set({ highlight })}
+          />
+
+          <label htmlFor="fs-scrollback">Scrollback</label>
+          <ScrollbackInput
+            id="fs-scrollback"
+            value={s.scrollback}
+            inherited={inherited?.scrollback ?? null}
+            onChange={(scrollback) => set({ scrollback })}
           />
 
           <span className="form-label form-label-top">Logon actions</span>

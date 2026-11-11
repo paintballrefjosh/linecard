@@ -1619,6 +1619,32 @@ select {
 .settings-control {
   flex: none;
 }
+/* Lines of scrollback: a number with its unit after it. */
+.scrollback-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.form-grid .scrollback-field input {
+  width: 210px;
+}
+.settings-control .scrollback-field input {
+  width: 110px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--bg-side);
+  font: inherit;
+  color: inherit;
+}
+.settings-control .scrollback-field input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.field-unit {
+  color: var(--text-quiet);
+}
 .settings-empty {
   border-top: 0;
 }

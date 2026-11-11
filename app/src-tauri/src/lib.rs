@@ -313,6 +313,12 @@ fn inherited_settings(state: State<AppState>, folder_id: Option<String>) -> CmdR
                         .join(", ")
                 }),
         ),
+        scrollback: item("scrollback_lines", r.settings.scrollback_lines.map(|n| n.to_string())).or_else(|| {
+            Some(dto::InheritedValue {
+                value: dto::SCROLLBACK_DEFAULT.to_string(),
+                from: "Settings".into(),
+            })
+        }),
     })
 }
 
@@ -501,6 +507,41 @@ fn set_logging(app: AppHandle, state: State<AppState>, logging: dto::LoggingDto)
         tree.global.log_path_template = logging.folder.map(|f| f.trim().to_string()).filter(|f| !f.is_empty());
         Ok(())
     })
+}
+
+// ---- scrollback --------------------------------------------------------------
+
+/// The app-wide scrollback default (folders and connections can override it).
+#[tauri::command]
+fn get_scrollback(state: State<AppState>) -> CmdResult<u32> {
+    let lib = state.lib.lock().map_err(err)?;
+    Ok(lib.tree().global.scrollback_lines.unwrap_or(dto::SCROLLBACK_DEFAULT))
+}
+
+#[tauri::command]
+fn set_scrollback(app: AppHandle, state: State<AppState>, lines: u32) -> CmdResult<()> {
+    edit(&app, &state, |tree| {
+        tree.global.scrollback_lines = Some(dto::clamp_scrollback(lines));
+        Ok(())
+    })
+}
+
+/// Lines of scrollback a terminal keeps: its connection's setting (or its
+/// folder's), else the app-wide default. Quick connects and local shells,
+/// which aren't saved connections, use the app-wide default.
+#[tauri::command]
+fn effective_scrollback(state: State<AppState>, connection_id: Option<String>) -> CmdResult<u32> {
+    let lib = state.lib.lock().map_err(err)?;
+    Ok(scrollback_for(lib.tree(), connection_id.as_deref()))
+}
+
+fn scrollback_for(tree: &Tree, connection_id: Option<&str>) -> u32 {
+    let lines = connection_id
+        .and_then(|id| tree.resolve(id).ok())
+        .and_then(|r| r.settings.scrollback_lines)
+        .or(tree.global.scrollback_lines)
+        .unwrap_or(dto::SCROLLBACK_DEFAULT);
+    dto::clamp_scrollback(lines)
 }
 
 // ---- saved passwords ---------------------------------------------------------
@@ -1254,6 +1295,9 @@ pub fn run() {
             launch::set_cli_path,
             highlight::get_highlight,
             highlight::effective_highlight,
+            get_scrollback,
+            set_scrollback,
+            effective_scrollback,
             snippets::list_snippets,
             snippets::snippets_for,
             snippets::save_snippet,
@@ -1364,6 +1408,7 @@ mod tests {
             highlight: None,
             credential: None,
             logon_actions: None,
+            scrollback: Some(250_000),
             forwards: vec![],
             notes: String::new(),
         }
@@ -1381,6 +1426,7 @@ mod tests {
         assert_eq!(conn.overrides.username, None, "blank username inherits");
         let back = ConnectionDraftDto::from(&conn);
         assert_eq!(back.tab_color.as_deref(), Some("#d64545"));
+        assert_eq!(back.scrollback, Some(100_000), "scrollback is capped");
 
         let mut bad = draft(ConnectionKind::Ssh);
         bad.host = " ".into();
@@ -1392,6 +1438,25 @@ mod tests {
             draft(ConnectionKind::Serial).apply_to(&mut conn).is_err(),
             "serial needs settings"
         );
+    }
+
+    #[test]
+    fn scrollback_comes_from_the_connection_its_folder_or_settings() {
+        let mut tree = Tree::default();
+        seed_starter(&mut tree);
+        let conn = tree.connections().next().unwrap().clone();
+        let id = Some(conn.id.as_str());
+        assert_eq!(scrollback_for(&tree, id), 2500, "default");
+        tree.global.scrollback_lines = Some(1000);
+        assert_eq!(scrollback_for(&tree, id), 1000, "Settings");
+        assert_eq!(scrollback_for(&tree, None), 1000, "local shells and quick connects");
+        assert_eq!(scrollback_for(&tree, Some("quick-x")), 1000, "unsaved connections");
+        if let Some(folder) = conn.folder.as_deref() {
+            tree.folder_mut(folder).unwrap().defaults.scrollback_lines = Some(5000);
+            assert_eq!(scrollback_for(&tree, id), 5000, "folder");
+        }
+        tree.connection_mut(&conn.id).unwrap().overrides.scrollback_lines = Some(300);
+        assert_eq!(scrollback_for(&tree, id), 300, "connection");
     }
 
     #[test]

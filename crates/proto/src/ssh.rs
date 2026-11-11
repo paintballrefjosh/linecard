@@ -776,10 +776,28 @@ async fn authenticate(
     pw.had_saved = pw.saved.is_some();
 
     let mut denied = 0;
+    // Keyboard-interactive that fails without asking anything (see below).
+    let mut ki_refused = false;
     while denied < AUTH_ATTEMPTS {
         let used_saved = pw.saved.is_some();
-        let result = if methods.contains(&MethodKind::KeyboardInteractive) {
-            keyboard_interactive(h, &user, &who, ui, &mut pw).await?
+        let result = if methods.contains(&MethodKind::KeyboardInteractive) && !ki_refused {
+            let (result, asked) = keyboard_interactive(h, &user, &who, ui, &mut pw).await?;
+            if result.is_err() && !asked {
+                // The server turned the login down before asking for a
+                // password: usually a lockout after failed logins (PAM
+                // faillock), sometimes a user not allowed in. Trying again
+                // can't help and may extend a lockout, so say so and stop,
+                // unless plain password login is also on offer.
+                ki_refused = true;
+                if let Err(m) = result {
+                    methods = m;
+                }
+                if methods.contains(&MethodKind::Password) {
+                    continue;
+                }
+                return Err(refused_without_asking(&who));
+            }
+            result
         } else if methods.contains(&MethodKind::Password) {
             let password = match pw.saved.take() {
                 Some(p) => p,
@@ -819,6 +837,14 @@ async fn authenticate(
         pw.typed = None;
     }
     Err(Failure::Msg(format!("authentication failed for {who}")))
+}
+
+fn refused_without_asking(who: &str) -> Failure {
+    Failure::Msg(format!(
+        "{who}: the server refused the login without asking for a password. After several wrong \
+         passwords many servers lock the account for a while (often 10 to 15 minutes), so wait \
+         and try again; each attempt during a lockout can restart it."
+    ))
 }
 
 /// A passphrase-protected key file, unlocked only when the server has said it
@@ -946,24 +972,29 @@ impl Passwords<'_> {
 
 /// Network gear usually prompts this way ("Password:", sometimes a token).
 /// A lone secret prompt is treated as the password: answered from the
-/// saved one first, and offered for saving.
+/// saved one first, and offered for saving. Also returns whether the server
+/// asked anything at all.
 async fn keyboard_interactive(
     h: &mut Handle<Client>,
     user: &str,
     who: &str,
     ui: &Ui,
     pw: &mut Passwords<'_>,
-) -> Result<Step, Failure> {
+) -> Result<(Step, bool), Failure> {
     let mut reply = h.authenticate_keyboard_interactive_start(user, None).await?;
+    let mut asked = false;
     loop {
         match reply {
-            KeyboardInteractiveAuthResponse::Success => return Ok(Ok(())),
-            KeyboardInteractiveAuthResponse::Failure { remaining_methods, .. } => return Ok(Err(remaining_methods)),
+            KeyboardInteractiveAuthResponse::Success => return Ok((Ok(()), asked)),
+            KeyboardInteractiveAuthResponse::Failure { remaining_methods, .. } => {
+                return Ok((Err(remaining_methods), asked))
+            }
             KeyboardInteractiveAuthResponse::InfoRequest {
                 name,
                 instructions,
                 prompts,
             } => {
+                asked |= !prompts.is_empty();
                 let is_password = prompts.len() == 1 && !prompts[0].echo;
                 let answers = if prompts.is_empty() {
                     Vec::new()
