@@ -51,12 +51,16 @@ const USER_PUBLIC: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINl6L25yBTGVbJ/lf
 enum Mode {
     Password,
     KeyboardInteractive,
+    /// Keyboard-interactive only, turned down at once without a prompt, as
+    /// OpenSSH does for an account PAM has locked after failed logins.
+    LockedOut,
     /// Public key or password; the key is authorized only if .
     KeyOrPassword(bool),
 }
 
 struct Shell {
     authorized: Option<PublicKey>,
+    locked: bool,
     /// Session channels; forwarded (jump) channels must not be echoed.
     shells: std::collections::HashSet<ChannelId>,
 }
@@ -66,6 +70,9 @@ impl Shell {
         self.authorized.as_ref().is_some_and(|k| k.key_data() == key.key_data())
     }
 }
+
+/// Logins the locked-out server turned down.
+static LOCKED_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
 
 /// Reject but keep offering the method, as OpenSSH and network gear do
 /// (russh's server would otherwise drop it after one failure).
@@ -110,6 +117,10 @@ impl server::Handler for Shell {
         _submethods: &str,
         response: Option<Response<'a>>,
     ) -> Result<Auth, Self::Error> {
+        if self.locked {
+            LOCKED_ATTEMPTS.fetch_add(1, Ordering::SeqCst);
+            return Ok(retry(MethodKind::KeyboardInteractive));
+        }
         Ok(match response {
             None => Auth::Partial {
                 name: "".into(),
@@ -239,7 +250,7 @@ impl server::Handler for Shell {
 async fn start_server(mode: Mode) -> u16 {
     let methods: &[MethodKind] = match mode {
         Mode::Password => &[MethodKind::Password],
-        Mode::KeyboardInteractive => &[MethodKind::KeyboardInteractive],
+        Mode::KeyboardInteractive | Mode::LockedOut => &[MethodKind::KeyboardInteractive],
         Mode::KeyOrPassword(_) => &[MethodKind::PublicKey, MethodKind::Password],
     };
     let authorized = match mode {
@@ -260,6 +271,7 @@ async fn start_server(mode: Mode) -> u16 {
             let config = config.clone();
             let shell = Shell {
                 authorized: authorized.clone(),
+                locked: matches!(mode, Mode::LockedOut),
                 shells: Default::default(),
             };
             tokio::spawn(async move {
@@ -471,6 +483,27 @@ async fn keyboard_interactive_asks_for_username_first() {
 
     // AcceptOnce leaves known_hosts alone.
     assert!(!opts.known_hosts.exists());
+}
+
+#[tokio::test]
+async fn a_server_that_refuses_without_asking_is_not_retried() {
+    // A locked account (wrong password too often): OpenSSH turns
+    // keyboard-interactive down without a prompt. Retrying can't help and
+    // can restart the lockout, so the session says why and ends at once.
+    let port = start_server(Mode::LockedOut).await;
+    let opts = options(temp_known_hosts());
+    let mut c = connect(port, Some("admin"), &opts);
+    assert!(matches!(c.event().await, SessionEvent::HostKey(_)));
+    c.reply(PromptReply::HostKey(HostKeyDecision::AcceptOnce));
+
+    match c.event().await {
+        SessionEvent::Disconnected { reason: Some(r) } => {
+            assert!(r.contains("refused the login without asking for a password"), "{r}")
+        }
+        other => panic!("expected the session to end, got {other:?}"),
+    }
+    assert!(!c.screen.contains("Access denied"), "screen: {:?}", c.screen);
+    assert_eq!(LOCKED_ATTEMPTS.load(Ordering::SeqCst), 1, "tried once, not three times");
 }
 
 #[tokio::test]

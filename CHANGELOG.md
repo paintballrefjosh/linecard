@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Fixed: "Access denied" three times, with no password prompt.** After several wrong passwords, servers like a UniFi Dream Machine lock the account for a while and turn down logins without asking for a password. Linecard counted each refusal as a wrong password and tried again, and each attempt could restart the lockout. Now it stops after the first refusal and explains that the account is probably locked and to wait and try again. A server that also offers plain password login is tried that way instead.
 - **Clone session.** Right-click a tab and choose Clone session to open another session to the same host, as a new tab just to the right of it. A file browser tab clones as another file browser.
 
 ## v0.5.0 — find in the terminal, command palette and local shells; named credentials, logon actions and ZMODEM; tab titles and zoom; settings pages with search; security fixes
