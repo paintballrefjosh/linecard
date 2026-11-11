@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Fixed: older Cisco switches drop the SSH connection ("early eof").** Many Catalyst 2960, 3560 and 3750 switches on IOS 12.2 only offer the `diffie-hellman-group1-sha1` key exchange and the `3des-cbc` cipher, which Linecard didn't offer, so the switch hung up mid-handshake. Linecard now offers both, last, so they're only used when the server has nothing newer. If a server still hangs up during the handshake, the message says what usually causes it instead of "early eof".
 - **Scrollback setting.** Choose how many lines of history each terminal keeps, in Settings → Tabs and terminal (default 2,500, up to 100,000). A folder or connection can set its own, as in SecureCRT. Fewer lines use less memory in tabs left open a long time, and changes apply to open tabs right away. Terminals used to keep a fixed 10,000 lines.
 - **Fixed: "Access denied" three times, with no password prompt.** After several wrong passwords, servers like a UniFi Dream Machine lock the account for a while and turn down logins without asking for a password. Linecard counted each refusal as a wrong password and tried again, and each attempt could restart the lockout. Now it stops after the first refusal and explains that the account is probably locked and to wait and try again. A server that also offers plain password login is tried that way instead.
 - **Clone session.** Right-click a tab and choose Clone session to open another session to the same host, as a new tab just to the right of it. A file browser tab clones as another file browser.

@@ -10,7 +10,7 @@ linecard-core-model = { workspace = true }
 tokio = { workspace = true }
 # `ring` instead of the default aws-lc-rs backend: no CMake/NASM needed to
 # build on Windows, and ring is already in the tree via rustls.
-russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2"] }
+russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2", "des"] }
 # No default features: skips libudev on Linux (port names still list).
 serialport = { version = "4", default-features = false }
 # VNC: password auth (DES) and ZRLE (zlib).

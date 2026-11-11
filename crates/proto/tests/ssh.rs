@@ -15,7 +15,7 @@ use linecard_proto::{
 };
 use russh::keys::{PrivateKey, PublicKey};
 use russh::server::{self, Auth, Msg, PublicKeyOffer, Response, VerifiedPublicKey};
-use russh::{Channel, ChannelId, MethodKind, MethodSet};
+use russh::{cipher, kex, mac, Channel, ChannelId, MethodKind, MethodSet, Preferred};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
@@ -248,6 +248,10 @@ impl server::Handler for Shell {
 }
 
 async fn start_server(mode: Mode) -> u16 {
+    start_server_with(mode, Preferred::DEFAULT).await
+}
+
+async fn start_server_with(mode: Mode, preferred: Preferred) -> u16 {
     let methods: &[MethodKind] = match mode {
         Mode::Password => &[MethodKind::Password],
         Mode::KeyboardInteractive | Mode::LockedOut => &[MethodKind::KeyboardInteractive],
@@ -262,6 +266,7 @@ async fn start_server(mode: Mode) -> u16 {
         methods: MethodSet::from(methods),
         auth_rejection_time: Duration::from_millis(5),
         auth_rejection_time_initial: Some(Duration::ZERO),
+        preferred,
         ..Default::default()
     });
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -504,6 +509,56 @@ async fn a_server_that_refuses_without_asking_is_not_retried() {
     }
     assert!(!c.screen.contains("Access denied"), "screen: {:?}", c.screen);
     assert_eq!(LOCKED_ATTEMPTS.load(Ordering::SeqCst), 1, "tried once, not three times");
+}
+
+#[tokio::test]
+async fn an_old_switch_with_only_group1_and_3des_connects() {
+    // What Catalyst 3750s on IOS 12.2 offer, and nothing else.
+    let port = start_server_with(
+        Mode::Password,
+        Preferred {
+            kex: vec![kex::DH_G1_SHA1].into(),
+            cipher: vec![cipher::TRIPLE_DES_CBC].into(),
+            mac: vec![mac::HMAC_SHA1].into(),
+            ..Preferred::DEFAULT
+        },
+    )
+    .await;
+    let opts = options(temp_known_hosts());
+    let mut c = connect(port, Some("admin"), &opts);
+    assert!(matches!(c.event().await, SessionEvent::HostKey(_)));
+    c.reply(PromptReply::HostKey(HostKeyDecision::AcceptOnce));
+    assert!(matches!(c.event().await, SessionEvent::Auth(_)));
+    c.password("secret");
+    assert_eq!(c.event().await, SessionEvent::Connected);
+    c.screen_has("welcome").await;
+    c.session.close().unwrap();
+}
+
+#[tokio::test]
+async fn a_server_that_hangs_up_mid_handshake_is_explained() {
+    // Old IOS closes the connection when it shares no algorithm with the
+    // client, rather than saying so.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        let (mut s, _) = listener.accept().await.unwrap();
+        s.write_all(b"SSH-1.99-Cisco-1.25\r\n").await.unwrap();
+        let mut buf = [0u8; 256];
+        let _ = s.read(&mut buf).await;
+        // Close our side cleanly, and drain theirs so Windows doesn't turn
+        // the close into a reset.
+        let _ = s.shutdown().await;
+        while matches!(s.read(&mut buf).await, Ok(n) if n > 0) {}
+    });
+    let opts = options(temp_known_hosts());
+    let mut c = connect(port, Some("admin"), &opts);
+    match c.event().await {
+        SessionEvent::Disconnected { reason: Some(r) } => {
+            assert!(r.contains("closed the connection during the SSH handshake"), "{r}")
+        }
+        other => panic!("expected the session to end, got {other:?}"),
+    }
 }
 
 #[tokio::test]
