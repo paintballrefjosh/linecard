@@ -20,6 +20,7 @@ import type {
   Snippet,
   SftpEntry,
 } from "./types";
+import { SCROLLBACK_DEFAULT, SCROLLBACK_MAX, SCROLLBACK_MIN } from "./types";
 import { defaultRules, type HighlightProfile } from "./highlight";
 
 const min = 60_000;
@@ -231,6 +232,7 @@ export function mockBackend(): Backend {
     },
   ];
   let logging: LoggingSettings = { enabled: false, folder: null, timestamps: false };
+  let scrollback = SCROLLBACK_DEFAULT;
   /** login label -> saved-at, standing in for the OS keychain. */
   const savedPasswords = new Map<string, number>();
   // Named credentials (the demo's DC1 folders use NetOps admin).
@@ -254,6 +256,7 @@ export function mockBackend(): Backend {
       highlight?: string | null;
       credential?: string | null;
       logonActions?: LogonStep[] | null;
+      scrollback?: number | null;
       forwards?: PortForward[];
     }
   >();
@@ -427,6 +430,7 @@ export function mockBackend(): Backend {
         highlight: x?.highlight ?? null,
         credential: x?.credential ?? null,
         logonActions: x?.logonActions ?? null,
+        scrollback: x?.scrollback ?? null,
         forwards: x?.forwards ?? [],
         notes: x?.notes ?? "",
       };
@@ -456,6 +460,7 @@ export function mockBackend(): Backend {
         highlight: d.highlight,
         credential: d.credential,
         logonActions: d.logonActions,
+        scrollback: d.scrollback,
         forwards: d.forwards,
       });
       emit();
@@ -669,6 +674,7 @@ export function mockBackend(): Backend {
           : { value: hl.profiles.find((p) => p.id === hl.defaultId)?.name ?? "", from: "Settings" },
         credential: inDc1 ? { value: "NetOps admin", from: "/DC1 Fort Worth" } : null,
         logonActions: inDc1 ? { value: "terminal length 0", from: "/DC1 Fort Worth" } : null,
+        scrollback: { value: String(scrollback), from: "Settings" },
       };
     },
     async getFolderSettings(id) {
@@ -681,6 +687,7 @@ export function mockBackend(): Backend {
           highlight: null,
           credential: null,
           logonActions: null,
+          scrollback: null,
         }
       );
     },
@@ -736,6 +743,13 @@ export function mockBackend(): Backend {
     async setLogging(l) {
       logging = { enabled: l.enabled, folder: l.folder, timestamps: l.timestamps };
     },
+    getScrollback: async () => scrollback,
+    async setScrollback(lines) {
+      scrollback = Math.min(SCROLLBACK_MAX, Math.max(SCROLLBACK_MIN, Math.round(lines)));
+      emit();
+    },
+    effectiveScrollback: async (connectionId) =>
+      (connectionId ? extra.get(connectionId)?.scrollback : null) ?? scrollback,
     async pickFile(mode) {
       return mode === "open"
         ? String.raw`C:\images\c2960x-universalk9-mz.bin`
@@ -951,7 +965,15 @@ export function mockBackend(): Backend {
                 return;
               }
               if (cmd === "clear") send("\x1b[2J\x1b[H");
-              else if (cmd === "show version") send("Linecard demo OS, Version 0.1.0\r\nUptime is 42 days\r\n");
+              else if (/^seq \d+$/.test(cmd)) {
+                // Numbered lines, to try the scrollback setting.
+                const n = Math.min(Number(cmd.slice(4)), 200_000);
+                const numbered = (i: number) => `line ${String(i).padStart(6, "0")}`;
+                for (let i = 1; i <= n; i += 1000) {
+                  const block = Array.from({ length: Math.min(1000, n - i + 1) }, (_, k) => numbered(i + k));
+                  send(block.join("\r\n") + "\r\n");
+                }
+              } else if (cmd === "show version") send("Linecard demo OS, Version 0.1.0\r\nUptime is 42 days\r\n");
               else if (cmd === "show int status") {
                 send(
                   "Port      Status       Vlan\r\nEth1/1    \x1b[32mconnected\x1b[0m    10\r\nEth1/2    \x1b[31mdown\x1b[0m         10\r\nEth1/3    \x1b[33merr-disabled\x1b[0m 20\r\n",

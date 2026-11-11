@@ -147,6 +147,9 @@ pub struct ConnectionDraftDto {
     /// Logon actions; null = inherit, [] = none here.
     #[serde(default)]
     pub logon_actions: Option<Vec<LogonStep>>,
+    /// Lines of scrollback; null = inherit.
+    #[serde(default)]
+    pub scrollback: Option<u32>,
     /// SSH port forwards.
     #[serde(default)]
     pub forwards: Vec<PortForward>,
@@ -185,6 +188,7 @@ impl From<&Connection> for ConnectionDraftDto {
             highlight: c.overrides.highlight_rules.clone(),
             credential: c.overrides.credential_id.clone(),
             logon_actions: c.overrides.logon_actions.clone(),
+            scrollback: c.overrides.scrollback_lines,
             forwards: c.forwards.clone(),
             notes: c.notes.clone(),
         }
@@ -257,6 +261,7 @@ impl ConnectionDraftDto {
         conn.overrides.highlight_rules = non_empty(&self.highlight);
         conn.overrides.credential_id = non_empty(&self.credential);
         conn.overrides.logon_actions = self.logon_actions.as_deref().map(clean_steps);
+        conn.overrides.scrollback_lines = self.scrollback.map(clamp_scrollback);
         conn.forwards = if self.kind == ConnectionKind::Ssh {
             self.forwards.clone()
         } else {
@@ -498,6 +503,8 @@ pub struct InheritedDto {
     pub credential: Option<InheritedValue>,
     /// What the inherited logon actions send, e.g. "enable, terminal length 0".
     pub logon_actions: Option<InheritedValue>,
+    /// Lines of scrollback, e.g. "2500".
+    pub scrollback: Option<InheritedValue>,
 }
 
 /// The settings a folder passes down. Empty / null = inherit.
@@ -513,6 +520,8 @@ pub struct FolderSettingsDto {
     pub credential: Option<String>,
     #[serde(default)]
     pub logon_actions: Option<Vec<LogonStep>>,
+    #[serde(default)]
+    pub scrollback: Option<u32>,
 }
 
 impl From<&Settings> for FolderSettingsDto {
@@ -525,6 +534,7 @@ impl From<&Settings> for FolderSettingsDto {
             highlight: s.highlight_rules.clone(),
             credential: s.credential_id.clone(),
             logon_actions: s.logon_actions.clone(),
+            scrollback: s.scrollback_lines,
         }
     }
 }
@@ -538,7 +548,17 @@ impl FolderSettingsDto {
         s.highlight_rules = non_empty(&self.highlight);
         s.credential_id = non_empty(&self.credential);
         s.logon_actions = self.logon_actions.as_deref().map(clean_steps);
+        s.scrollback_lines = self.scrollback.map(clamp_scrollback);
     }
+}
+
+/// Fewest and most lines of scrollback a terminal can be set to keep.
+pub const SCROLLBACK_RANGE: std::ops::RangeInclusive<u32> = 0..=100_000;
+/// Scrollback when nothing sets it.
+pub const SCROLLBACK_DEFAULT: u32 = 2500;
+
+pub fn clamp_scrollback(lines: u32) -> u32 {
+    lines.clamp(*SCROLLBACK_RANGE.start(), *SCROLLBACK_RANGE.end())
 }
 
 /// A shell this computer can open in a tab.

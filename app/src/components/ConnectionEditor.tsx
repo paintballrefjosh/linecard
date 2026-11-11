@@ -11,6 +11,7 @@ import type {
   RdpShare,
   SerialSettings,
 } from "../types";
+import { SCROLLBACK_DEFAULT, SCROLLBACK_MAX, SCROLLBACK_MIN } from "../types";
 import { ArrowRight, X } from "lucide-react";
 import { Modal } from "./Dialog";
 import { highlightStore } from "../highlight";
@@ -49,6 +50,7 @@ export function blankDraft(folderId: string | null): ConnectionDraft {
     highlight: null,
     credential: null,
     logonActions: null,
+    scrollback: null,
     forwards: [],
     notes: "",
   };
@@ -87,6 +89,46 @@ export function HighlightSelect({
         </option>
       ))}
     </select>
+  );
+}
+
+/** Lines of scrollback, or empty to inherit. Clamped to the allowed range
+ *  when the field is left. */
+export function ScrollbackInput({
+  id,
+  value,
+  inherited,
+  onChange,
+}: {
+  id: string;
+  value: number | null;
+  inherited: { value: string; from: string } | null;
+  onChange(v: number | null): void;
+}) {
+  const clamp = (n: number) => Math.min(SCROLLBACK_MAX, Math.max(SCROLLBACK_MIN, Math.round(n)));
+  return (
+    <div className="scrollback-field">
+      <input
+        id={id}
+        type="number"
+        inputMode="numeric"
+        min={SCROLLBACK_MIN}
+        max={SCROLLBACK_MAX}
+        step={500}
+        value={value ?? ""}
+        placeholder={
+          inherited
+            ? `${Number(inherited.value).toLocaleString()} (from ${inherited.from})`
+            : SCROLLBACK_DEFAULT.toLocaleString()
+        }
+        onChange={(e) => {
+          const n = e.target.valueAsNumber;
+          onChange(e.target.value === "" || !Number.isFinite(n) ? null : n);
+        }}
+        onBlur={() => value !== null && value !== clamp(value) && onChange(clamp(value))}
+      />
+      <span className="field-unit">lines</span>
+    </div>
   );
 }
 
@@ -490,6 +532,18 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
           inherited={inherited?.highlight ?? null}
           onChange={(highlight) => set({ highlight })}
         />
+
+        {d.kind !== "rdp" && d.kind !== "vnc" && (
+          <>
+            <label htmlFor="ce-scrollback">Scrollback</label>
+            <ScrollbackInput
+              id="ce-scrollback"
+              value={d.scrollback}
+              inherited={inherited?.scrollback ?? null}
+              onChange={(scrollback) => set({ scrollback })}
+            />
+          </>
+        )}
 
         {d.kind === "rdp" && (
           <>
