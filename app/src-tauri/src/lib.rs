@@ -7,6 +7,7 @@
 mod credentials;
 mod debuglog;
 mod dto;
+mod flow;
 mod gfx;
 mod highlight;
 mod import;
@@ -883,6 +884,15 @@ fn network_target(tree: &Tree, id: &str, depth: usize) -> CmdResult<TerminalTarg
     Ok(t)
 }
 
+/// Terminal output to the window, skipped (and counted) while the window has
+/// too much unread; see `flow`.
+fn send_output(flow: &flow::Flow, skipped: &flow::Skipped, data: Vec<u8>) {
+    let len = data.len();
+    if !flow.send(data) {
+        skipped.add(len);
+    }
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn open_session(
@@ -966,6 +976,7 @@ async fn open_session(
     // Scripts read the session's output from this.
     let tap = Arc::new(linecard_script::Tap::default());
     let sink_tap = tap.clone();
+    let (flow, skipped) = flow::terminal(on_event.clone());
     let sink: linecard_proto::EventSink = Box::new(move |e| {
         match &e {
             linecard_proto::SessionEvent::Data(d) => sink_tap.push(d),
@@ -989,9 +1000,7 @@ async fn open_session(
         // Output goes as raw bytes: as JSON every byte became a number (about
         // four times the size, and slow to parse) on the busiest path there is.
         match e {
-            linecard_proto::SessionEvent::Data(d) => {
-                let _ = on_event.send(InvokeResponseBody::Raw(d));
-            }
+            linecard_proto::SessionEvent::Data(d) => send_output(&flow, &skipped, d),
             e => gfx::send_json(&on_event, &SessionEventDto::from(e)),
         }
     });
@@ -1061,6 +1070,7 @@ async fn open_local_session(
 ) -> CmdResult<String> {
     let tap = Arc::new(linecard_script::Tap::default());
     let sink_tap = tap.clone();
+    let (flow, skipped) = flow::terminal(on_event.clone());
     let sink: linecard_proto::EventSink = Box::new(move |e| {
         match &e {
             linecard_proto::SessionEvent::Data(d) => sink_tap.push(d),
@@ -1069,9 +1079,7 @@ async fn open_local_session(
             _ => {}
         }
         match e {
-            linecard_proto::SessionEvent::Data(d) => {
-                let _ = on_event.send(InvokeResponseBody::Raw(d));
-            }
+            linecard_proto::SessionEvent::Data(d) => send_output(&flow, &skipped, d),
             e => gfx::send_json(&on_event, &SessionEventDto::from(e)),
         }
     });
@@ -1247,6 +1255,7 @@ pub fn run() {
             gfx::gfx_reply,
             gfx::gfx_resize,
             gfx::gfx_close,
+            flow::output_ack,
             launch::take_launch,
             launch::link_handler_status,
             launch::set_link_handler,

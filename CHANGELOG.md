@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Fixed: memory could grow until the computer ran out.** When the window stopped reading a session's output (a frozen or suspended window, often after hours in the background), every update waited in memory with no limit; one session left overnight reached about 100 GB. A session now stops sending once 16 MB (64 MB for a remote screen) is waiting unread, and catches up when the window reads again: a terminal notes how much output it skipped, and a remote screen repaints whatever changed. Session logs and scripts still get everything.
 - **Clone session.** Right-click a tab and choose Clone session to open another session to the same host, as a new tab just to the right of it. A file browser tab clones as another file browser.
 
 ## v0.5.0 — find in the terminal, command palette and local shells; named credentials, logon actions and ZMODEM; tab titles and zoom; settings pages with search; security fixes

@@ -283,6 +283,26 @@ async function tauriBackend(): Promise<Backend> {
   const { getVersion } = await import("@tauri-apps/api/app");
   const clipboard = import("@tauri-apps/plugin-clipboard-manager");
 
+  // Tell the app how much session output this window has received. A
+  // session stops sending once too much is unacknowledged, so a window that
+  // stops reading can't make the app's memory grow without limit.
+  const ackOutput = (channel: { id: number }) => {
+    let pending = 0;
+    let timer = 0;
+    const flush = () => {
+      window.clearTimeout(timer);
+      timer = 0;
+      if (!pending) return;
+      void invoke("output_ack", { channel: channel.id, bytes: pending });
+      pending = 0;
+    };
+    return (bytes: number) => {
+      pending += bytes;
+      if (pending >= 256 * 1024) flush();
+      else if (!timer) timer = window.setTimeout(flush, 50);
+    };
+  };
+
   return {
     appVersion: () => getVersion(),
     getTree: () => invoke<TreeNode[]>("get_tree"),
@@ -409,7 +429,9 @@ async function tauriBackend(): Promise<Backend> {
     async openSession(conn, size, onEvent) {
       // Output arrives as raw bytes; every other event as JSON.
       const channel = new Channel<unknown>();
+      const ack = ackOutput(channel);
       channel.onmessage = (m) => {
+        if (m instanceof ArrayBuffer || ArrayBuffer.isView(m)) ack(m.byteLength);
         if (m instanceof ArrayBuffer) onEvent({ event: "data", data: new Uint8Array(m) });
         else if (ArrayBuffer.isView(m))
           onEvent({ event: "data", data: new Uint8Array(m.buffer, m.byteOffset, m.byteLength) });
@@ -447,7 +469,9 @@ async function tauriBackend(): Promise<Backend> {
     },
     async openGfxSession(conn, size, onEvent) {
       const channel = new Channel<unknown>();
+      const ack = ackOutput(channel);
       channel.onmessage = (m) => {
+        if (m instanceof ArrayBuffer || ArrayBuffer.isView(m)) ack(m.byteLength);
         if (m instanceof ArrayBuffer) onEvent(decodeFrame(m));
         else if (ArrayBuffer.isView(m))
           onEvent(decodeFrame(m.buffer.slice(m.byteOffset, m.byteOffset + m.byteLength) as ArrayBuffer));
