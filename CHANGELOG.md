@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Try out keyword highlighting.** Settings → Highlighting has a Try it box: type or paste some output and see it colored by the profile's keywords, updating as you change them. To rename a profile, use the new Edit button next to New, Duplicate and Delete; the name above the keywords is no longer a text field.
+
 ## v0.5.1 — clone session, scrollback setting; fixes for older Cisco switches, locked SSH accounts and typing
 
 - **Fixed: typing stopped working in every tab.** If a single request between the window and the app failed, the window switched for good to a slower fallback, which sends keystrokes in a form Linecard didn't accept. Every terminal then ignored the keyboard, even new ones, while everything else kept working until Linecard was restarted. Keystrokes, and files dropped onto a file browser, now go through either way.
