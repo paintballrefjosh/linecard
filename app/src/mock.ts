@@ -279,7 +279,7 @@ export function mockBackend(): Backend {
     d.kind === "serial" && d.serial ? `${d.serial.port} ${d.serial.baud}` : `${d.host.trim()}:${d.port}`;
 
   return {
-    appVersion: async () => "0.5.0-dev",
+    appVersion: async () => "0.5.1-dev",
     getTree: async () => structuredClone(tree),
     getDevices: async () => devices,
     getSyncState: async () =>
