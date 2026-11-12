@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   Copy,
   FileText,
@@ -16,15 +16,18 @@ import {
 import { getBackend } from "../api";
 import {
   colorFor,
+  compileProfile,
   defaultRules,
+  highlightPieces,
   highlightStore,
   isPalette,
   palette,
   ruleRegex,
+  sampleOutput,
   type HighlightProfile,
   type HighlightRule,
 } from "../highlight";
-import type { ThemePref } from "../theme";
+import { terminalThemes, type ThemePref } from "../theme";
 import { usePrefs } from "../prefs";
 import type {
   Credential,
@@ -779,6 +782,7 @@ function KeywordHighlighting() {
   const [error, setError] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
 
   useEffect(() => setDraft(current ? structuredClone(current) : null), [current]);
@@ -833,6 +837,9 @@ function KeywordHighlighting() {
             </button>
             {draft && (
               <>
+                <button className="btn" onClick={() => setRenaming(true)}>
+                  Edit
+                </button>
                 <button className="btn" onClick={() => create({ ...draft, name: `${draft.name} copy` })}>
                   Duplicate
                 </button>
@@ -859,12 +866,7 @@ function KeywordHighlighting() {
         <div className="settings-row settings-row-wide">
           <div className="settings-text">
             <div className="hl-profile-head">
-              <input
-                className="settings-input hl-name"
-                aria-label="Profile name"
-                value={draft.name}
-                onChange={(e) => edit({ name: e.target.value })}
-              />
+              <span className="hl-name">{draft.name}</span>
               <label className="hl-check">
                 <input
                   type="checkbox"
@@ -948,6 +950,21 @@ function KeywordHighlighting() {
         </div>
       )}
 
+      {draft && <HighlightTester profile={draft} theme={theme} />}
+
+      {renaming && draft && (
+        <RenameProfile
+          name={draft.name}
+          onClose={() => setRenaming(false)}
+          onSave={async (name) => {
+            const next = { ...draft, name };
+            await (await getBackend()).saveHighlightProfile(next);
+            setDraft(next);
+            setRenaming(false);
+          }}
+        />
+      )}
+
       {importOpen && (
         <ImportKeywords
           onClose={() => setImportOpen(false)}
@@ -971,6 +988,101 @@ function KeywordHighlighting() {
         />
       )}
     </Section>
+  );
+}
+
+/** Type or paste output and see it colored by the profile's rules as they
+ *  are now, before any of it reaches a terminal. Nothing here is saved. */
+function HighlightTester({ profile, theme }: { profile: HighlightProfile; theme: "light" | "dark" }) {
+  const [text, setText] = useState(sampleOutput);
+  const compiled = useMemo(() => compileProfile(profile), [profile]);
+  const colors = terminalThemes[theme];
+  return (
+    <div className="settings-row settings-row-wide">
+      <div className="settings-text">
+        <label htmlFor="set-hl-test">Try it</label>
+        <p>Type or paste some output to see how this profile colors it. Nothing you type here is saved.</p>
+        <textarea
+          id="set-hl-test"
+          className="settings-input hl-test-input"
+          value={text}
+          rows={5}
+          wrap="off"
+          spellCheck={false}
+          onChange={(e) => setText(e.target.value)}
+        />
+        <pre
+          className="hl-test-preview"
+          aria-label="Highlighted preview"
+          style={{ background: colors.background, color: colors.foreground }}
+        >
+          {text.split("\n").map((line, i) => (
+            <div key={i}>
+              {line
+                ? highlightPieces(line, compiled).map((p, j) =>
+                    p.color ? (
+                      <span key={j} style={{ color: colorFor(p.color, theme) }}>
+                        {p.text}
+                      </span>
+                    ) : (
+                      p.text
+                    ),
+                  )
+                : " "}
+            </div>
+          ))}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+/** Rename a highlight profile. */
+function RenameProfile({
+  name,
+  onSave,
+  onClose,
+}: {
+  name: string;
+  onSave(name: string): Promise<void>;
+  onClose(): void;
+}) {
+  const [value, setValue] = useState(name);
+  const [error, setError] = useState<string | null>(null);
+  const trimmed = value.trim();
+  const save = () => {
+    if (!trimmed) return;
+    onSave(trimmed).catch((e) => setError(String(e)));
+  };
+  return (
+    <Modal
+      title="Edit profile"
+      onSubmit={save}
+      onClose={onClose}
+      actions={
+        <>
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-primary" disabled={!trimmed}>
+            Save
+          </button>
+        </>
+      }
+    >
+      <div className="form-grid">
+        <label htmlFor="hl-rename">Name</label>
+        <input
+          id="hl-rename"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          spellCheck={false}
+          autoComplete="off"
+          data-autofocus
+        />
+      </div>
+      {error && <p className="form-error">{error}</p>}
+    </Modal>
   );
 }
 
