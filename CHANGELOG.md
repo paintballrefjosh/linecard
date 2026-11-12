@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.5.1 — clone session, scrollback setting; fixes for older Cisco switches, locked SSH accounts and typing
+
 - **Fixed: typing stopped working in every tab.** If a single request between the window and the app failed, the window switched for good to a slower fallback, which sends keystrokes in a form Linecard didn't accept. Every terminal then ignored the keyboard, even new ones, while everything else kept working until Linecard was restarted. Keystrokes, and files dropped onto a file browser, now go through either way.
 - **Fixed: older Cisco switches drop the SSH connection ("early eof").** Many Catalyst 2960, 3560 and 3750 switches on IOS 12.2 only offer the `diffie-hellman-group1-sha1` key exchange and the `3des-cbc` cipher, which Linecard didn't offer, so the switch hung up mid-handshake. Linecard now offers both, last, so they're only used when the server has nothing newer. If a server still hangs up during the handshake, the message says what usually causes it instead of "early eof".
 - **Scrollback setting.** Choose how many lines of history each terminal keeps, in Settings → Tabs and terminal (default 2,500, up to 100,000). A folder or connection can set its own, as in SecureCRT. Fewer lines use less memory in tabs left open a long time, and changes apply to open tabs right away. Terminals used to keep a fixed 10,000 lines.
