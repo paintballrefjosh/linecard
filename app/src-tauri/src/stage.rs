@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
-use tauri::ipc::{InvokeBody, Request};
+use tauri::ipc::Request;
 
 use crate::{err, CmdResult};
 
@@ -106,9 +106,7 @@ pub fn stage_mkdir(dir: String, rel: String) -> CmdResult<()> {
 /// byte `x-offset` (0 starts the file afresh).
 #[tauri::command]
 pub fn stage_write(request: Request<'_>) -> CmdResult<()> {
-    let InvokeBody::Raw(bytes) = request.body() else {
-        return Err("expected raw bytes".into());
-    };
+    let bytes = crate::body_bytes(request.body())?;
     let header = |name: &str| {
         request
             .headers()
@@ -132,7 +130,7 @@ pub fn stage_write(request: Request<'_>) -> CmdResult<()> {
         .open(path)
         .map_err(err)?;
     f.seek(SeekFrom::Start(offset)).map_err(err)?;
-    f.write_all(bytes).map_err(err)
+    f.write_all(&bytes).map_err(err)
 }
 
 /// Remove a staging folder and everything in it.

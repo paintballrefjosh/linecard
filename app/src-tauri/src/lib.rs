@@ -1145,9 +1145,7 @@ async fn open_local_session(
 /// Input as raw bytes, with the session id in the `x-session` header.
 #[tauri::command]
 fn session_write(state: State<AppState>, request: Request<'_>) -> CmdResult<()> {
-    let InvokeBody::Raw(data) = request.body() else {
-        return Err("expected raw bytes".into());
-    };
+    let data = body_bytes(request.body())?;
     let session_id = request
         .headers()
         .get("x-session")
@@ -1157,7 +1155,24 @@ fn session_write(state: State<AppState>, request: Request<'_>) -> CmdResult<()> 
     let s = sessions.get_mut(session_id).ok_or("session closed")?;
     // Never blocks: sessions queue their writes (a held lock here would stall
     // every tab, and this runs on the window's thread).
-    s.write(data).map_err(err)
+    s.write(&data).map_err(err)
+}
+
+/// The bytes of a command sent as raw bytes. If one IPC request ever fails,
+/// Tauri's script switches the window to its fallback channel for good, and
+/// that sends bytes as a JSON list of numbers instead; take those too, or
+/// typing stops working in every tab until Linecard restarts.
+pub(crate) fn body_bytes(body: &InvokeBody) -> CmdResult<std::borrow::Cow<'_, [u8]>> {
+    match body {
+        InvokeBody::Raw(data) => Ok(std::borrow::Cow::Borrowed(data)),
+        InvokeBody::Json(serde_json::Value::Array(items)) => items
+            .iter()
+            .map(|v| v.as_u64().and_then(|n| u8::try_from(n).ok()))
+            .collect::<Option<Vec<u8>>>()
+            .map(std::borrow::Cow::Owned)
+            .ok_or_else(|| "expected bytes".into()),
+        _ => Err("expected bytes".into()),
+    }
 }
 
 #[tauri::command]
@@ -1360,6 +1375,22 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bytes_come_raw_or_as_the_fallback_channel_sends_them() {
+        let raw = InvokeBody::Raw(b"ls\r".to_vec());
+        assert_eq!(&*body_bytes(&raw).unwrap(), b"ls\r");
+        // What Tauri's postMessage fallback makes of a Uint8Array.
+        let listed = InvokeBody::Json(serde_json::json!([108, 115, 13]));
+        assert_eq!(&*body_bytes(&listed).unwrap(), b"ls\r");
+        for bad in [
+            serde_json::json!([256]),
+            serde_json::json!(["a"]),
+            serde_json::json!({"0": 1}),
+        ] {
+            assert!(body_bytes(&InvokeBody::Json(bad)).is_err());
+        }
+    }
 
     #[test]
     fn op_ids_round_trip() {
