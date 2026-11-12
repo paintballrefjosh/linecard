@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Fixed: older Cisco switches still dropped the SSH connection.** A Catalyst 3750 on IOS 12.2 offers several key exchange methods, and Linecard picked group exchange, asking for a bigger group than the switch has. The switch hung up instead of saying so. Linecard now tries `diffie-hellman-group14-sha1` first, and asks group exchange for 2048-bit groups, as OpenSSH does. v0.5.1's fix (group1 and 3des-cbc) only helps switches that offer nothing else.
 ## v0.5.1 — clone session, scrollback setting; fixes for older Cisco switches, locked SSH accounts and typing
 
 - **Fixed: typing stopped working in every tab.** If a single request between the window and the app failed, the window switched for good to a slower fallback, which sends keystrokes in a form Linecard didn't accept. Every terminal then ignored the keyboard, even new ones, while everything else kept working until Linecard was restarted. Keystrokes, and files dropped onto a file browser, now go through either way.
