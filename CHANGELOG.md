@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Links in the terminal, and programs can copy.** Ctrl+click a web address in a terminal to open it in your browser, including a long one that wraps onto the next line, and links a program marks, such as Claude Code's `/login` link. A program can also put text on your clipboard (OSC 52), as Claude Code's "c to copy" and tmux and vim do. It can never read the clipboard, and Settings → Tabs and terminal turns it off. Only http, https and mailto links open.
+
 ## v0.5.1 — clone session, scrollback setting; fixes for older Cisco switches, locked SSH accounts and typing
 
 - **Fixed: typing stopped working in every tab.** If a single request between the window and the app failed, the window switched for good to a slower fallback, which sends keystrokes in a form Linecard didn't accept. Every terminal then ignored the keyboard, even new ones, while everything else kept working until Linecard was restarted. Keystrokes, and files dropped onto a file browser, now go through either way.

@@ -14,6 +14,8 @@ export interface SavedWorkspace {
 export interface Preferences {
   /** Highlighting text in a terminal copies it (SecureCRT / PuTTY style). */
   copyOnSelect: boolean;
+  /** Programs in a terminal may copy text to the clipboard (OSC 52; never read it). */
+  programClipboard: boolean;
   /** What right-click does inside a terminal. */
   rightClick: "paste" | "menu";
   /** Show multi-line text before pasting it into a session. */
@@ -45,6 +47,7 @@ export interface Preferences {
 
 export const defaultPrefs: Preferences = {
   copyOnSelect: true,
+  programClipboard: true,
   rightClick: "paste",
   confirmMultilinePaste: true,
   highlightKeywords: true,
