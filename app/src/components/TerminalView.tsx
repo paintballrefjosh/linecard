@@ -3,8 +3,10 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { SearchAddon } from "@xterm/addon-search";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { getBackend, type SessionHandle } from "../api";
+import { openableUrl, osc52Text } from "../termlinks";
 import { terminalThemes, type Theme } from "../theme";
 import type {
   AuthEvent,
@@ -241,6 +243,13 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onTitle, 
 
   useEffect(() => {
     if (!host.current) return;
+    // Ctrl+click opens a link, as in Windows Terminal and VS Code; a plain
+    // click is left for selecting text.
+    const openLink = (e: MouseEvent, uri: string) => {
+      if (!(e.ctrlKey || e.metaKey) || !openableUrl(uri)) return;
+      e.preventDefault();
+      void getBackend().then((b) => b.openUrl(uri));
+    };
     const t = new Terminal({
       fontFamily: FONT,
       fontSize: clampFont(prefsRef.current.fontSize),
@@ -248,6 +257,9 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onTitle, 
       scrollback: scrollback.current,
       allowProposedApi: true,
       theme: terminalThemes[theme],
+      // Links a program marks (OSC 8), such as Claude Code's /login URL,
+      // which stays whole however the screen wraps it.
+      linkHandler: { activate: openLink, allowNonHttpProtocols: true },
     });
     const fit = new FitAddon();
     t.loadAddon(fit);
@@ -255,6 +267,15 @@ export function TerminalView({ panelId, active, conn, theme, onStatus, onTitle, 
     const search = new SearchAddon({ highlightLimit: 2000 });
     t.loadAddon(search);
     searchRef.current = search;
+    // URLs printed as plain text.
+    t.loadAddon(new WebLinksAddon(openLink));
+    // A program asking to copy text (OSC 52), such as Claude Code's "c to
+    // copy". Reading the clipboard back is never allowed.
+    t.parser.registerOscHandler(52, (payload) => {
+      const text = prefsRef.current.programClipboard ? osc52Text(payload) : null;
+      if (text) void getBackend().then((b) => b.clipboardWrite(text));
+      return true;
+    });
     t.open(host.current);
     try {
       const webgl = new WebglAddon();
