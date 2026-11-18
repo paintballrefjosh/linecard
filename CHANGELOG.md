@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Security: zlib updated.** The bundled zlib (used for compressed VNC and SSH data) is updated past a heap buffer overflow, RUSTSEC-2026-0544. The overflow is in gzip file writing, which Linecard doesn't use, but the fixed version ships anyway.
+
 ## v0.5.1 — clone session, scrollback setting; fixes for older Cisco switches, locked SSH accounts and typing
 
 - **Fixed: typing stopped working in every tab.** If a single request between the window and the app failed, the window switched for good to a slower fallback, which sends keystrokes in a form Linecard didn't accept. Every terminal then ignored the keyboard, even new ones, while everything else kept working until Linecard was restarted. Keystrokes, and files dropped onto a file browser, now go through either way.

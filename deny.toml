@@ -18,6 +18,9 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zvariant: unmaintained, via Tauri plugins (Linux)" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names: unmaintained, via Tauri plugins (Linux)" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: unmaintained, via Tauri plugins (Linux)" },
+    # chrono: Linecard (log timestamps) and russh-sftp (file times). Unmaintained notice only, no
+    # vulnerability and no successor release; ours can move to another crate, russh-sftp's can't.
+    { id = "RUSTSEC-2026-0543", reason = "chrono: unmaintained, used directly and via russh-sftp" },
 ]
 
 [licenses]
