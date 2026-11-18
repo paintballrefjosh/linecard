@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: a new tab opened mostly off screen.** With the tab strip full, a newly opened connection's tab showed only its left edge; the rest was past the right side until you scrolled or switched tabs away and back. The new tab is now scrolled fully into view, and the tab in use stays in view when its title changes.
+
 ## v0.5.1 — clone session, scrollback setting; fixes for older Cisco switches, locked SSH accounts and typing
 
 - **Fixed: typing stopped working in every tab.** If a single request between the window and the app failed, the window switched for good to a slower fallback, which sends keystrokes in a form Linecard didn't accept. Every terminal then ignored the keyboard, even new ones, while everything else kept working until Linecard was restarted. Keystrokes, and files dropped onto a file browser, now go through either way.
