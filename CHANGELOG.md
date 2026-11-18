@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Crash dumps on Windows.** When Linecard crashes outright, it now saves a crash dump in a crashes folder next to the debug log (Settings → Troubleshooting → Show folder), and notes the crash in the debug log the next time it starts. It keeps the five newest. Before, Windows recorded only the address where it crashed, which wasn't enough to find the cause. A Rust panic is also written to the debug log now. Each release includes the matching `linecard_<version>_x64.pdb`, so a dump or crash address can be traced to the line of code.
+- **Security: zlib updated.** The bundled zlib (used for compressed VNC and SSH data) is updated past a heap buffer overflow, RUSTSEC-2026-0544. The overflow is in gzip file writing, which Linecard doesn't use, but the fixed version ships anyway.
 
 ## v0.5.1 — clone session, scrollback setting; fixes for older Cisco switches, locked SSH accounts and typing
 
