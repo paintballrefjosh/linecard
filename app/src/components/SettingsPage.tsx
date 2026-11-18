@@ -1601,6 +1601,10 @@ function DebugLog() {
             Records sync, RDP/VNC/SSH and update errors, with the connection's address. It never contains terminal
             output, passwords or keys.
           </p>
+          <p>
+            If Linecard crashes, a crash dump is saved in the crashes folder next to the log. A dump can contain what
+            was on screen, so share it only with someone you trust.
+          </p>
           {note && <p role="status">{note}</p>}
         </div>
         <div className="settings-control">

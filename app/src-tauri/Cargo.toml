@@ -38,7 +38,15 @@ tauri-plugin-single-instance = "2"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"      # ssh:// and telnet:// link handler, PATH
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+  # Crash dumps
+  "Win32_Storage_FileSystem",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_Kernel",
+  "Win32_System_Threading",
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"   # Launch Services: default handler for ssh:// links

@@ -4,6 +4,7 @@
 //! next); SSH and Telnet sessions are real; Serial is next (see
 //! docs/roadmap.md).
 
+mod crash;
 mod credentials;
 mod debuglog;
 mod dto;
@@ -1226,6 +1227,7 @@ pub fn run() {
                 None => app.path().app_data_dir()?,
             };
             debuglog::init(&data, &app.package_info().version.to_string());
+            crash::init(&data);
             let mut lib = Library::open(&data.join("library.db"), seed_starter)
                 .map_err(|e| format!("could not open the connection library: {e}"))?;
             highlight::migrate(&mut lib, PREFERENCES_KEY)?;
