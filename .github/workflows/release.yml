@@ -69,6 +69,15 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           uploadUpdaterJson: true
           args: ${{ matrix.args }}
+      # Symbols for tracing a crash address or dump back to the code.
+      - if: matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cp target/release/linecard.pdb "linecard_${TAG#v}_x64.pdb"
+          gh release upload "$TAG" "linecard_${TAG#v}_x64.pdb" --clobber
 
   relay:
     # id-token: keyless signing with the workflow's identity (no key to keep).
