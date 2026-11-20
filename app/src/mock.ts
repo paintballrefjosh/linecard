@@ -973,6 +973,12 @@ export function mockBackend(): Backend {
                   const block = Array.from({ length: Math.min(1000, n - i + 1) }, (_, k) => numbered(i + k));
                   send(block.join("\r\n") + "\r\n");
                 }
+              } else if (cmd === "login") {
+                // Like Claude Code's /login: a marked link (OSC 8), a plain URL,
+                // and "c to copy" (OSC 52).
+                const url = "https://example.com/oauth/authorize?code=true&state=linecard-demo";
+                send(`Open \x1b]8;;${url}\x07this sign-in link\x1b]8;;\x07, or visit ${url}\r\n`);
+                send(`\x1b]52;c;${btoa(url)}\x07Copied the link.\r\n`);
               } else if (cmd === "show version") send("Linecard demo OS, Version 0.1.0\r\nUptime is 42 days\r\n");
               else if (cmd === "show int status") {
                 send(

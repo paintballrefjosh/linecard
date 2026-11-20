@@ -221,6 +221,13 @@ function SettingsPageBody({
           >
             <Toggle id="set-copy" checked={prefs.copyOnSelect} onChange={(v) => update({ copyOnSelect: v })} />
           </Row>
+          <Row
+            label="Let programs copy to the clipboard"
+            hint="A program in the terminal, such as Claude Code, tmux or vim, can put text on your clipboard (OSC 52). It can never read what's there."
+            htmlFor="set-osc52"
+          >
+            <Toggle id="set-osc52" checked={prefs.programClipboard} onChange={(v) => update({ programClipboard: v })} />
+          </Row>
           <Row label="Right-click in a terminal" htmlFor="set-right">
             <Segmented
               id="set-right"
@@ -245,7 +252,7 @@ function SettingsPageBody({
           </Row>
           <p className="settings-note">
             Keyboard: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> copies, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+
-            <kbd>V</kbd> or <kbd>Shift</kbd>+<kbd>Insert</kbd> pastes.
+            <kbd>V</kbd> or <kbd>Shift</kbd>+<kbd>Insert</kbd> pastes. <kbd>Ctrl</kbd>+click opens a web link.
           </p>
         </Section>
 

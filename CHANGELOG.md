@@ -7,6 +7,8 @@
 - **Security: zlib updated.** The bundled zlib (used for compressed VNC and SSH data) is updated past a heap buffer overflow, RUSTSEC-2026-0544. The overflow is in gzip file writing, which Linecard doesn't use, but the fixed version ships anyway.
 
 - **Fixed: older Cisco switches still dropped the SSH connection.** A Catalyst 3750 on IOS 12.2 offers several key exchange methods, and Linecard picked group exchange, asking for a bigger group than the switch has. The switch hung up instead of saying so. Linecard now tries `diffie-hellman-group14-sha1` first, and asks group exchange for 2048-bit groups, as OpenSSH does. v0.5.1's fix (group1 and 3des-cbc) only helps switches that offer nothing else.
+- **Links in the terminal, and programs can copy.** Ctrl+click a web address in a terminal to open it in your browser, including a long one that wraps onto the next line, and links a program marks, such as Claude Code's `/login` link. A program can also put text on your clipboard (OSC 52), as Claude Code's "c to copy" and tmux and vim do. It can never read the clipboard, and Settings → Tabs and terminal turns it off. Only http, https and mailto links open.
+
 ## v0.5.1 — clone session, scrollback setting; fixes for older Cisco switches, locked SSH accounts and typing
 
 - **Fixed: typing stopped working in every tab.** If a single request between the window and the app failed, the window switched for good to a slower fallback, which sends keystrokes in a form Linecard didn't accept. Every terminal then ignored the keyboard, even new ones, while everything else kept working until Linecard was restarted. Keystrokes, and files dropped onto a file browser, now go through either way.
