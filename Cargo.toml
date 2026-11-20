@@ -40,7 +40,12 @@ rusqlite = { version = "0.41", features = ["bundled"] }
 [profile.release]
 lto = true
 codegen-units = 1
-strip = true
+# Line tables (file and line per address), kept beside the program
+# (linecard.pdb on Windows), so a crash address or dump can be traced to the
+# code. They aren't part of the installers; releases attach the Windows one.
+debug = "line-tables-only"
+split-debuginfo = "packed"
+strip = "none"
 
 [patch.crates-io]
 ironrdp-rdpdr = { path = "vendor/ironrdp-rdpdr" }
