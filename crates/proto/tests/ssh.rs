@@ -13,6 +13,8 @@ use linecard_proto::{
     Credentials, EventSink, ForwardKind, HostKeyDecision, HostKeyStatus, PortForward, PromptReply, Session,
     SessionEvent, SshOptions, TerminalTarget,
 };
+use russh::client::GexParams;
+use russh::kex::dh::groups::{DhGroup, DH_GROUP14};
 use russh::keys::{PrivateKey, PublicKey};
 use russh::server::{self, Auth, Msg, PublicKeyOffer, Response, VerifiedPublicKey};
 use russh::{cipher, kex, mac, Channel, ChannelId, MethodKind, MethodSet, Preferred};
@@ -56,11 +58,16 @@ enum Mode {
     LockedOut,
     /// Public key or password; the key is authorized only if .
     KeyOrPassword(bool),
+    /// Password, and group exchange as old Cisco IOS does it: only a 2048-bit
+    /// group, and the connection is dropped if the client prefers or needs
+    /// a bigger one.
+    OldIos,
 }
 
 struct Shell {
     authorized: Option<PublicKey>,
     locked: bool,
+    old_ios: bool,
     /// Session channels; forwarded (jump) channels must not be echoed.
     shells: std::collections::HashSet<ChannelId>,
 }
@@ -85,6 +92,13 @@ fn retry(method: MethodKind) -> Auth {
 
 impl server::Handler for Shell {
     type Error = russh::Error;
+
+    async fn lookup_dh_gex_group(&mut self, gex: &GexParams) -> Result<Option<DhGroup>, Self::Error> {
+        if self.old_ios && (gex.min_group_size() > 2048 || gex.preferred_group_size() > 2048) {
+            return Ok(None);
+        }
+        Ok(Some(DH_GROUP14))
+    }
 
     /// Like a real server: say yes to the probe only for an authorized key.
     async fn auth_publickey_offered(&mut self, _user: &str, offer: PublicKeyOffer<'_>) -> Result<Auth, Self::Error> {
@@ -253,7 +267,7 @@ async fn start_server(mode: Mode) -> u16 {
 
 async fn start_server_with(mode: Mode, preferred: Preferred) -> u16 {
     let methods: &[MethodKind] = match mode {
-        Mode::Password => &[MethodKind::Password],
+        Mode::Password | Mode::OldIos => &[MethodKind::Password],
         Mode::KeyboardInteractive | Mode::LockedOut => &[MethodKind::KeyboardInteractive],
         Mode::KeyOrPassword(_) => &[MethodKind::PublicKey, MethodKind::Password],
     };
@@ -277,6 +291,7 @@ async fn start_server_with(mode: Mode, preferred: Preferred) -> u16 {
             let shell = Shell {
                 authorized: authorized.clone(),
                 locked: matches!(mode, Mode::LockedOut),
+                old_ios: matches!(mode, Mode::OldIos),
                 shells: Default::default(),
             };
             tokio::spawn(async move {
@@ -512,27 +527,46 @@ async fn a_server_that_refuses_without_asking_is_not_retried() {
 }
 
 #[tokio::test]
-async fn an_old_switch_with_only_group1_and_3des_connects() {
-    // What Catalyst 3750s on IOS 12.2 offer, and nothing else.
-    let port = start_server_with(
-        Mode::Password,
-        Preferred {
-            kex: vec![kex::DH_G1_SHA1].into(),
-            cipher: vec![cipher::TRIPLE_DES_CBC].into(),
-            mac: vec![mac::HMAC_SHA1].into(),
-            ..Preferred::DEFAULT
-        },
-    )
-    .await;
-    let opts = options(temp_known_hosts());
-    let mut c = connect(port, Some("admin"), &opts);
-    assert!(matches!(c.event().await, SessionEvent::HostKey(_)));
-    c.reply(PromptReply::HostKey(HostKeyDecision::AcceptOnce));
-    assert!(matches!(c.event().await, SessionEvent::Auth(_)));
-    c.password("secret");
-    assert_eq!(c.event().await, SessionEvent::Connected);
-    c.screen_has("welcome").await;
-    c.session.close().unwrap();
+async fn old_cisco_switches_connect() {
+    let cases = [
+        // A Catalyst 3750 on IOS 12.2 (Cisco-1.25), exactly.
+        (
+            vec![kex::DH_GEX_SHA1, kex::DH_G14_SHA1, kex::DH_G1_SHA1],
+            vec![
+                cipher::AES_128_CBC,
+                cipher::TRIPLE_DES_CBC,
+                cipher::AES_192_CBC,
+                cipher::AES_256_CBC,
+            ],
+        ),
+        // Group exchange alone: the group asked for must be one it has.
+        (vec![kex::DH_GEX_SHA1], vec![cipher::AES_128_CBC]),
+        // Older still: group1 and 3des-cbc only.
+        (vec![kex::DH_G1_SHA1], vec![cipher::TRIPLE_DES_CBC]),
+    ];
+    for (kexes, ciphers) in cases {
+        let what = format!("{kexes:?}");
+        let port = start_server_with(
+            Mode::OldIos,
+            Preferred {
+                kex: kexes.into(),
+                cipher: ciphers.into(),
+                mac: vec![mac::HMAC_SHA1].into(),
+                ..Preferred::DEFAULT
+            },
+        )
+        .await;
+        let opts = options(temp_known_hosts());
+        let mut c = connect(port, Some("admin"), &opts);
+        let first = c.event().await;
+        assert!(matches!(first, SessionEvent::HostKey(_)), "{what}: {first:?}");
+        c.reply(PromptReply::HostKey(HostKeyDecision::AcceptOnce));
+        assert!(matches!(c.event().await, SessionEvent::Auth(_)), "{what}");
+        c.password("secret");
+        assert_eq!(c.event().await, SessionEvent::Connected, "{what}");
+        c.screen_has("welcome").await;
+        c.session.close().unwrap();
+    }
 }
 
 #[tokio::test]

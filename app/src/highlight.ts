@@ -106,6 +106,30 @@ export function findMatches(line: string, compiled: Compiled): [number, number, 
   return out.sort((a, b) => a[0] - b[0]);
 }
 
+/** A line split into plain and colored pieces, as the terminal would show
+ *  it (for trying a profile out in Settings). */
+export function highlightPieces(line: string, compiled: Compiled): { text: string; color: string | null }[] {
+  const out: { text: string; color: string | null }[] = [];
+  let at = 0;
+  for (const [start, len, color] of findMatches(line, compiled)) {
+    if (start > at) out.push({ text: line.slice(at, start), color: null });
+    out.push({ text: line.slice(start, start + len), color });
+    at = start + len;
+  }
+  if (at < line.length) out.push({ text: line.slice(at), color: null });
+  return out;
+}
+
+/** What the tester in Settings starts with: a few lines of switch output. */
+export const sampleOutput = [
+  "Port      Name        Status       Vlan  Duplex Speed",
+  "Gi1/0/1  uplink      connected    trunk a-full a-1000",
+  "Gi1/0/2  printer     notconnect   20    auto   auto",
+  "Gi1/0/3  cam-lobby   err-disabled 30    auto   auto",
+  "%LINK-3-UPDOWN: Interface Gi1/0/4, changed state to down",
+  "%BGP-5-ADJCHANGE: neighbor 10.0.0.2 Up",
+].join("\n");
+
 /** Profiles as last loaded from the backend (refreshed with the tree). */
 let profiles: { profiles: HighlightProfile[]; defaultId: string | null } = { profiles: [], defaultId: null };
 const listeners = new Set<() => void>();

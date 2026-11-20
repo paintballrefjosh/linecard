@@ -5,6 +5,8 @@
 //! the tab paints onto a canvas. Everything else is JSON, shaped like the
 //! terminal's events so the same login and certificate prompts work.
 
+use std::sync::{Arc, Mutex};
+
 use base64::Engine;
 use linecard_core_model::{ConnectionKind, Endpoint};
 use linecard_proto::gfx::{CursorShape, GfxEvent, GfxSession};
@@ -14,6 +16,7 @@ use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::State;
 
 use crate::dto::{PromptReplyDto, SessionEventDto};
+use crate::flow::Flow;
 use crate::{err, network_target, new_id, parse_endpoint, AppState, CmdResult};
 
 #[derive(Serialize)]
@@ -54,6 +57,94 @@ pub(crate) fn send_json(ch: &Channel<InvokeResponseBody>, v: &impl Serialize) {
     }
 }
 
+/// A frame message: x, y, width, height (u16 little endian), then RGBA.
+fn frame_msg(x: u16, y: u16, width: u16, height: u16, rgba: &[u8]) -> Vec<u8> {
+    let mut msg = Vec::with_capacity(8 + rgba.len());
+    for v in [x, y, width, height] {
+        msg.extend(v.to_le_bytes());
+    }
+    msg.extend(rgba);
+    msg
+}
+
+/// The remote screen as the server last drew it. When the window falls
+/// behind (see `flow`), frames stop going to it and the area they covered is
+/// remembered; once it catches up that area is sent from here, so the
+/// screen is right again without asking the server.
+#[derive(Default)]
+struct Screen {
+    width: u16,
+    height: u16,
+    rgba: Vec<u8>,
+    /// Area not yet sent to the window: x0, y0, x1, y1 (end exclusive).
+    dirty: Option<(u16, u16, u16, u16)>,
+}
+
+impl Screen {
+    fn resize(&mut self, width: u16, height: u16) {
+        self.width = width;
+        self.height = height;
+        self.rgba = vec![0; usize::from(width) * usize::from(height) * 4];
+        self.dirty = None;
+    }
+
+    /// The part of a frame that's on the screen, as x0, y0, x1, y1.
+    fn clip(&self, x: u16, y: u16, w: u16, h: u16) -> Option<(u16, u16, u16, u16)> {
+        let x1 = x.saturating_add(w).min(self.width);
+        let y1 = y.saturating_add(h).min(self.height);
+        (x < x1 && y < y1).then_some((x, y, x1, y1))
+    }
+
+    fn paint(&mut self, x: u16, y: u16, w: u16, h: u16, rgba: &[u8]) {
+        let Some((x0, y0, x1, y1)) = self.clip(x, y, w, h) else {
+            return;
+        };
+        if rgba.len() < usize::from(w) * usize::from(h) * 4 {
+            return;
+        }
+        let n = usize::from(x1 - x0) * 4;
+        for row in y0..y1 {
+            let from = usize::from(row - y) * usize::from(w) * 4;
+            let to = (usize::from(row) * usize::from(self.width) + usize::from(x0)) * 4;
+            self.rgba[to..to + n].copy_from_slice(&rgba[from..from + n]);
+        }
+    }
+
+    fn mark(&mut self, x: u16, y: u16, w: u16, h: u16) {
+        let Some(r) = self.clip(x, y, w, h) else { return };
+        self.dirty = Some(match self.dirty {
+            None => r,
+            Some(d) => (d.0.min(r.0), d.1.min(r.1), d.2.max(r.2), d.3.max(r.3)),
+        });
+    }
+
+    /// The area not yet sent, as a frame message.
+    fn take_dirty(&mut self) -> Option<Vec<u8>> {
+        let (x0, y0, x1, y1) = self.dirty.take()?;
+        let n = usize::from(x1 - x0) * 4;
+        let mut rgba = Vec::with_capacity(n * usize::from(y1 - y0));
+        for row in y0..y1 {
+            let at = (usize::from(row) * usize::from(self.width) + usize::from(x0)) * 4;
+            rgba.extend_from_slice(&self.rgba[at..at + n]);
+        }
+        Some(frame_msg(x0, y0, x1 - x0, y1 - y0, &rgba))
+    }
+}
+
+/// Once the window catches up, send the area of the screen it missed.
+fn resume_screen(flow: &Flow, screen: &Arc<Mutex<Screen>>) {
+    let s = screen.clone();
+    flow.on_resume(move |f| {
+        let Ok(mut s) = s.lock() else { return };
+        let dirty = s.dirty;
+        if let Some(msg) = s.take_dirty() {
+            if !f.catch_up(msg) {
+                s.dirty = dirty;
+            }
+        }
+    });
+}
+
 /// Sound waiting to be sent: waves come every few milliseconds and each
 /// message costs the window time, so they go out about 100 ms at a time.
 #[derive(Default)]
@@ -66,7 +157,8 @@ struct AudioBatch {
 impl AudioBatch {
     /// Binary like a frame, told apart by 0xFFFF where the frame's x would be:
     /// marker, channels, rate (u16, u16, u32 little endian), then 16-bit samples.
-    fn flush(&mut self, ch: &Channel<InvokeResponseBody>) {
+    /// Sound the window can't take now (it's behind) is dropped, not queued.
+    fn flush(&mut self, flow: &Flow) {
         if self.pcm.is_empty() {
             return;
         }
@@ -75,22 +167,30 @@ impl AudioBatch {
         msg.extend(self.channels.to_le_bytes());
         msg.extend(self.rate.to_le_bytes());
         msg.append(&mut self.pcm);
-        let _ = ch.send(InvokeResponseBody::Raw(msg));
+        flow.send(msg);
     }
 
-    fn add(&mut self, ch: &Channel<InvokeResponseBody>, channels: u16, rate: u32, pcm: Vec<u8>) {
+    fn add(&mut self, flow: &Flow, channels: u16, rate: u32, pcm: Vec<u8>) {
         if (self.channels, self.rate) != (channels, rate) {
-            self.flush(ch);
+            self.flush(flow);
             (self.channels, self.rate) = (channels, rate);
         }
         self.pcm.extend(pcm);
         if self.pcm.len() >= usize::from(channels) * rate as usize * 2 / 10 {
-            self.flush(ch);
+            self.flush(flow);
         }
     }
 }
 
-fn forward(ch: &Channel<InvokeResponseBody>, who: &str, audio: &mut AudioBatch, e: GfxEvent) {
+struct Out {
+    ch: Channel<InvokeResponseBody>,
+    flow: Arc<Flow>,
+    screen: Arc<Mutex<Screen>>,
+    audio: AudioBatch,
+}
+
+fn forward(out: &mut Out, who: &str, e: GfxEvent) {
+    let ch = &out.ch;
     match e {
         GfxEvent::Frame {
             x,
@@ -99,18 +199,27 @@ fn forward(ch: &Channel<InvokeResponseBody>, who: &str, audio: &mut AudioBatch, 
             height,
             rgba,
         } => {
-            let mut msg = Vec::with_capacity(8 + rgba.len());
-            for v in [x, y, width, height] {
-                msg.extend(v.to_le_bytes());
+            let Ok(mut screen) = out.screen.lock() else { return };
+            screen.paint(x, y, width, height, &rgba);
+            if !out.flow.send(frame_msg(x, y, width, height, &rgba)) {
+                screen.mark(x, y, width, height);
             }
-            msg.extend(rgba);
-            let _ = ch.send(InvokeResponseBody::Raw(msg));
         }
-        GfxEvent::Connected { width, height, name } => send_json(ch, &GfxEventDto::Connected { width, height, name }),
-        GfxEvent::Resized { width, height } => send_json(ch, &GfxEventDto::Resized { width, height }),
+        GfxEvent::Connected { width, height, name } => {
+            if let Ok(mut s) = out.screen.lock() {
+                s.resize(width, height);
+            }
+            send_json(ch, &GfxEventDto::Connected { width, height, name })
+        }
+        GfxEvent::Resized { width, height } => {
+            if let Ok(mut s) = out.screen.lock() {
+                s.resize(width, height);
+            }
+            send_json(ch, &GfxEventDto::Resized { width, height })
+        }
         GfxEvent::Bell => send_json(ch, &GfxEventDto::Bell),
         GfxEvent::Clipboard(text) => send_json(ch, &GfxEventDto::Clipboard { text }),
-        GfxEvent::Audio { channels, rate, pcm } => audio.add(ch, channels, rate, pcm),
+        GfxEvent::Audio { channels, rate, pcm } => out.audio.add(&out.flow, channels, rate, pcm),
         GfxEvent::Cursor(shape) => {
             let (shape, width, height, hot_x, hot_y, rgba) = match shape {
                 CursorShape::Default => ("default", 0, 0, 0, 0, String::new()),
@@ -181,8 +290,16 @@ pub async fn open_gfx_session(
     };
     let credentials = state.ssh.credentials.clone();
     let who = format!("{kind:?} {endpoint}");
-    let mut audio = AudioBatch::default();
-    let sink: linecard_proto::gfx::GfxSink = Box::new(move |e| forward(&on_event, &who, &mut audio, e));
+    let flow = Flow::new(on_event.clone(), crate::flow::SCREEN_LIMIT);
+    let screen = Arc::new(Mutex::new(Screen::default()));
+    resume_screen(&flow, &screen);
+    let mut out = Out {
+        ch: on_event,
+        flow,
+        screen,
+        audio: AudioBatch::default(),
+    };
+    let sink: linecard_proto::gfx::GfxSink = Box::new(move |e| forward(&mut out, &who, e));
     let session: Box<dyn GfxSession> = match kind {
         ConnectionKind::Vnc => Box::new(
             linecard_proto::vnc::VncSession::connect_with(
@@ -260,4 +377,49 @@ pub fn gfx_close(state: State<AppState>, session_id: String) -> CmdResult<()> {
         s.close().map_err(err)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn px(screen: &Screen, x: u16, y: u16) -> u8 {
+        screen.rgba[(usize::from(y) * usize::from(screen.width) + usize::from(x)) * 4]
+    }
+
+    #[test]
+    fn screen_keeps_frames_and_sends_the_missed_area() {
+        let mut s = Screen::default();
+        s.resize(10, 10);
+        // 2×2 of 7s at (1, 1), and 3×1 of 9s at (5, 8): both missed.
+        s.paint(1, 1, 2, 2, &[7; 16]);
+        s.mark(1, 1, 2, 2);
+        s.paint(5, 8, 3, 1, &[9; 12]);
+        s.mark(5, 8, 3, 1);
+        assert_eq!((px(&s, 2, 2), px(&s, 7, 8), px(&s, 0, 0)), (7, 9, 0));
+
+        let msg = s.take_dirty().unwrap();
+        let head: Vec<u16> = msg[..8].chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        assert_eq!(head, [1, 1, 7, 8], "one area covering both");
+        assert_eq!(msg.len(), 8 + 7 * 8 * 4);
+        // Row 1, first column of the area is a 7; row 8 at x = 5 is a 9.
+        assert_eq!(msg[8], 7);
+        assert_eq!(msg[8 + (7 * 7 + 4) * 4], 9);
+        assert!(s.take_dirty().is_none());
+    }
+
+    #[test]
+    fn frames_past_the_edge_are_clipped() {
+        let mut s = Screen::default();
+        s.resize(4, 4);
+        s.paint(3, 3, 2, 2, &[5; 16]);
+        s.mark(3, 3, 2, 2);
+        assert_eq!(px(&s, 3, 3), 5);
+        assert_eq!(&s.take_dirty().unwrap()[..8], &[3, 0, 3, 0, 1, 0, 1, 0]);
+        // Before the size is known nothing is kept, and nothing breaks.
+        let mut empty = Screen::default();
+        empty.paint(0, 0, 1, 1, &[1; 4]);
+        empty.mark(0, 0, 1, 1);
+        assert!(empty.take_dirty().is_none());
+    }
 }
