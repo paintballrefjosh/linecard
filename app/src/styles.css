@@ -2074,10 +2074,27 @@ kbd {
   margin-bottom: 6px;
 }
 .hl-profile-head .hl-name {
-  max-width: 320px;
-  margin: 0;
-  font-family: inherit;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
+}
+.hl-test-input {
+  height: auto;
+  min-height: 96px;
+  padding: 6px 8px;
+  resize: vertical;
+  line-height: 1.45;
+}
+.hl-test-preview {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  font: 12.5px/1.45 var(--font-mono);
+  white-space: pre;
+  overflow-x: auto;
 }
 .hl-check {
   display: inline-flex;

@@ -8,6 +8,7 @@
 
 - **Fixed: older Cisco switches still dropped the SSH connection.** A Catalyst 3750 on IOS 12.2 offers several key exchange methods, and Linecard picked group exchange, asking for a bigger group than the switch has. The switch hung up instead of saying so. Linecard now tries `diffie-hellman-group14-sha1` first, and asks group exchange for 2048-bit groups, as OpenSSH does. v0.5.1's fix (group1 and 3des-cbc) only helps switches that offer nothing else.
 - **Links in the terminal, and programs can copy.** Ctrl+click a web address in a terminal to open it in your browser, including a long one that wraps onto the next line, and links a program marks, such as Claude Code's `/login` link. A program can also put text on your clipboard (OSC 52), as Claude Code's "c to copy" and tmux and vim do. It can never read the clipboard, and Settings → Tabs and terminal turns it off. Only http, https and mailto links open.
+- **Try out keyword highlighting.** Settings → Highlighting has a Try it box: type or paste some output and see it colored by the profile's keywords, updating as you change them. To rename a profile, use the new Edit button next to New, Duplicate and Delete; the name above the keywords is no longer a text field.
 
 ## v0.5.1 — clone session, scrollback setting; fixes for older Cisco switches, locked SSH accounts and typing
 
