@@ -416,8 +416,9 @@ impl client::Handler for Client {
 fn preferred() -> Preferred {
     let mut kex_order = Preferred::DEFAULT.kex.to_vec();
     // group1 and 3des-cbc are all that many Catalyst 2960/3560/3750 IOS 12.2
-    // releases speak.
-    kex_order.extend([kex::DH_GEX_SHA1, kex::DH_G14_SHA1, kex::DH_G1_SHA1]);
+    // releases speak. group14 goes before group exchange: those switches
+    // offer both, and hang up when asked for a group they don't have.
+    kex_order.extend([kex::DH_G14_SHA1, kex::DH_GEX_SHA1, kex::DH_G1_SHA1]);
     let mut ciphers = Preferred::DEFAULT.cipher.to_vec();
     ciphers.extend([
         cipher::AES_256_CBC,
@@ -456,8 +457,17 @@ fn config_for(t: &TerminalTarget) -> Arc<client::Config> {
         keepalive_max: 3,
         inactivity_timeout: None,
         nodelay: true,
+        gex: gex_params(),
         ..Default::default()
     })
+}
+
+/// Group exchange asks for a 2048-bit group, taking up to 8192. russh's
+/// default (at least 3072, ideally 8192) is more than older Cisco IOS has, and
+/// it closes the connection rather than offer something smaller; so does a
+/// preferred size above what it has, even with 2048 allowed.
+fn gex_params() -> client::GexParams {
+    client::GexParams::new(2048, 2048, 8192).unwrap_or_default()
 }
 
 /// Connect and log in to `target`, through its jump hosts if it has any
