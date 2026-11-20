@@ -96,6 +96,21 @@ function focusSession(dock: DockviewApi, id: string) {
   window.setTimeout(go, 60);
 }
 
+/** Scroll the tab strip so all of `tab` shows (as little as needed). */
+function revealTab(tab: HTMLElement) {
+  const strip = tab.parentElement;
+  if (!strip) return;
+  const start = tab.offsetLeft;
+  const end = start + tab.offsetWidth;
+  if (start < strip.scrollLeft) strip.scrollLeft = start;
+  else if (end > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = end - strip.clientWidth;
+  else return;
+  // Dockview's scrollbar keeps its own copy of the position, updated from
+  // scroll events, and puts it back on its next redraw; if that came before
+  // the (asynchronous) event, the strip jumped back. Tell it now.
+  strip.dispatchEvent(new Event("scroll"));
+}
+
 function SessionTab({ api, containerApi, params }: IDockviewPanelHeaderProps<PanelParams>) {
   const { status, activity, askClose, titles } = useContext(SharedCtx);
   const { prefs } = usePrefs();
@@ -110,6 +125,18 @@ function SessionTab({ api, containerApi, params }: IDockviewPanelHeaderProps<Pan
   const member = members.has(api.id);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const root = useRef<HTMLDivElement>(null);
+  // Dockview scrolls a new tab into view before this content has rendered,
+  // when the tab is still a few pixels wide, so only its left edge showed and
+  // the rest of it ended up past the right edge of a full tab strip. Reveal
+  // the tab in use again whenever its width changes (it renders, its title
+  // turns bold or changes).
+  useEffect(() => {
+    const tab = root.current?.closest<HTMLElement>(".dv-tab");
+    if (!tab) return;
+    const ro = new ResizeObserver(() => api.isVisible && revealTab(tab));
+    ro.observe(tab);
+    return () => ro.disconnect();
+  }, [api]);
   // Dockview drags a tab with a copy of the whole tab (every computed style, icons and buttons)
   // as the drag image; over Remote Desktop the drop areas stopped showing for it, while the
   // plain-text image it uses for the empty header area worked. Replace it with the same kind.
