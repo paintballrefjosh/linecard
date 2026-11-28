@@ -265,7 +265,22 @@ impl Tree {
         let conn = self.connection(connection)?;
         let mut out = Resolved::default();
         out.settings.fill_from(&conn.overrides, &Source::Own, &mut out.sources);
-        if let Some(folder) = &conn.folder {
+        self.fill_inherited(conn.folder.as_deref(), &mut out)?;
+        Ok(out)
+    }
+
+    /// Effective settings for a folder itself: its own defaults, then the
+    /// nearest folder upward, then global defaults.
+    pub fn resolve_folder(&self, folder: &str) -> Result<Resolved, TreeError> {
+        self.folder(folder)?;
+        let mut out = Resolved::default();
+        self.fill_inherited(Some(folder), &mut out)?;
+        Ok(out)
+    }
+
+    /// Fill what's still unset from `folder` and those above it, then global.
+    fn fill_inherited(&self, folder: Option<&str>, out: &mut Resolved) -> Result<(), TreeError> {
+        if let Some(folder) = folder {
             for fid in self.ancestry(folder)?.iter().rev() {
                 let f = self.folder(fid)?;
                 out.settings
@@ -273,14 +288,14 @@ impl Tree {
             }
         }
         out.settings.fill_from(&self.global, &Source::Global, &mut out.sources);
-        Ok(out)
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SerialSettings;
+    use crate::{SerialSettings, NO_TAB_COLOR};
 
     fn folder(id: &str, parent: Option<&str>, defaults: Settings) -> Folder {
         Folder {
@@ -362,6 +377,47 @@ mod tests {
         assert_eq!(r.settings.keepalive_secs, Some(30));
         assert_eq!(r.source_of("keepalive_secs"), Some(&Source::Global));
         assert_eq!(r.source_of("credential_id"), None);
+    }
+
+    #[test]
+    fn folders_resolve_their_own_color_then_upward() {
+        let mut t = sample();
+        t.add_folder(folder("leaf", Some("spine"), Settings::default()))
+            .unwrap();
+        let color = |id: &str| {
+            let r = t.resolve_folder(id).unwrap();
+            r.settings.shown_tab_color().map(str::to_string)
+        };
+        assert_eq!(color("dc"), None);
+        assert_eq!(color("spine").as_deref(), Some("#d64545"));
+        assert_eq!(color("leaf").as_deref(), Some("#d64545"));
+        assert_eq!(
+            t.resolve_folder("leaf").unwrap().source_of("tab_color"),
+            Some(&Source::Folder("spine".into()))
+        );
+        assert!(t.resolve_folder("nope").is_err());
+    }
+
+    #[test]
+    fn no_color_overrides_a_parent_color() {
+        let mut t = sample();
+        let none = Settings {
+            tab_color: Some(NO_TAB_COLOR.into()),
+            ..Default::default()
+        };
+        t.add_folder(folder("quiet", Some("spine"), none.clone())).unwrap();
+        t.add_folder(folder("below", Some("quiet"), Settings::default()))
+            .unwrap();
+        t.add_connection(conn("c1", Some("below"), Settings::default()))
+            .unwrap();
+        t.add_connection(conn("c2", Some("spine"), none)).unwrap();
+        for id in ["c1", "c2"] {
+            assert_eq!(t.resolve(id).unwrap().settings.shown_tab_color(), None, "{id}");
+        }
+        assert_eq!(t.resolve_folder("below").unwrap().settings.shown_tab_color(), None);
+        // a color set below "no color" shows again
+        t.connection_mut("c1").unwrap().overrides.tab_color = Some("#3366ff".into());
+        assert_eq!(t.resolve("c1").unwrap().settings.shown_tab_color(), Some("#3366ff"));
     }
 
     #[test]

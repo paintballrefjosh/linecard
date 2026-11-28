@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   DockviewReact,
   type DockviewApi,
@@ -10,7 +10,8 @@ import {
 } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
 import { CopyPlus, FolderOpen, Radio, RotateCw, X } from "lucide-react";
-import type { ConnectionNode, LayoutId } from "../types";
+import type { ConnectionNode, LayoutId, TreeNode } from "../types";
+import { connectionColors, tabColorOf } from "../tabColor";
 import type { Theme } from "../theme";
 import { KindIcon } from "./icons";
 import { TerminalView, type SessionStatus } from "./TerminalView";
@@ -42,6 +43,8 @@ interface Shared {
   /** Titles sessions set for themselves (OSC 0/2), by panel. */
   titles: Record<string, string>;
   setTitle(panelId: string, title: string): void;
+  /** Each saved connection's color now, by connection id. */
+  colors: Map<string, string | undefined>;
 }
 
 const SharedCtx = createContext<Shared>({
@@ -53,6 +56,7 @@ const SharedCtx = createContext<Shared>({
   askClose: () => {},
   titles: {},
   setTitle: () => {},
+  colors: new Map(),
 });
 
 function SessionPanel({ api, params }: IDockviewPanelProps<PanelParams>) {
@@ -112,9 +116,10 @@ function revealTab(tab: HTMLElement) {
 }
 
 function SessionTab({ api, containerApi, params }: IDockviewPanelHeaderProps<PanelParams>) {
-  const { status, activity, askClose, titles } = useContext(SharedCtx);
+  const { status, activity, askClose, titles, colors } = useContext(SharedCtx);
   const { prefs } = usePrefs();
   const conn = params.conn;
+  const tabColor = tabColorOf(colors, conn);
   // The session's own title (e.g. "user@host: ~/src" or what Claude Code
   // sets), if it set one; the connection's name otherwise.
   const sessionTitle = prefs.tabTitleFromSession ? titles[api.id] : undefined;
@@ -161,7 +166,7 @@ function SessionTab({ api, containerApi, params }: IDockviewPanelHeaderProps<Pan
     <div
       ref={root}
       className={`session-tab ${active ? "has-activity" : ""}`}
-      style={conn.tabColor ? ({ "--tab-color": conn.tabColor } as CSSProperties) : undefined}
+      style={tabColor ? ({ "--tab-color": tabColor } as CSSProperties) : undefined}
       title={[
         sessionTitle,
         `${api.title} · ${conn.kind === "local" ? "this computer" : conn.endpoint}`,
@@ -374,15 +379,19 @@ export function openSessionCount(api: DockviewApi, status: Record<string, Sessio
 
 export function Workspace({
   theme,
+  tree,
   onReady,
   onOpenCount,
 }: {
   theme: Theme;
+  /** The saved connections, so open tabs follow color changes. */
+  tree: TreeNode[];
   onReady(api: DockviewApi): void;
   /** Sessions still open (for the prompt when quitting). */
   onOpenCount?(n: number): void;
 }) {
   const { prefs, update } = usePrefs();
+  const colors = useMemo(() => connectionColors(tree), [tree]);
   const api = useRef<DockviewApi | null>(null);
   const [closing, setClosing] = useState<string | null>(null);
   const [status, setStatusMap] = useState<Record<string, SessionStatus>>({});
@@ -444,7 +453,7 @@ export function Workspace({
 
   const closingPanel = closing ? api.current?.getPanel(closing) : undefined;
   return (
-    <SharedCtx.Provider value={{ theme, status, setStatus, activity, setActivity, askClose, titles, setTitle }}>
+    <SharedCtx.Provider value={{ theme, status, setStatus, activity, setActivity, askClose, titles, setTitle, colors }}>
       <DockviewReact
         className={`workspace ${theme === "dark" ? "dockview-theme-dark" : "dockview-theme-light"}`}
         components={{ session: SessionPanel }}

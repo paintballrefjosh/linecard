@@ -187,13 +187,12 @@ function Row({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
   const d = node.data;
   const change = d.change;
   const below = d.type === "folder" && !node.isOpen ? changedBelow(d) : 0;
-  const tabColor = d.type === "connection" ? d.tabColor : undefined;
   const dropInto = dropParent === d.id && !node.isDragging;
   return (
     <div
       ref={dragHandle}
-      style={tabColor ? ({ ...style, "--tab-color": tabColor } as CSSProperties) : style}
-      className={`tree-row ${tabColor ? "has-tab-color" : ""} ${node.isSelected ? "is-selected" : ""} ${change ? `chg chg-${change.kind}` : ""} ${dropInto ? "is-drop-target" : ""}`}
+      style={d.tabColor ? ({ ...style, "--tab-color": d.tabColor } as CSSProperties) : style}
+      className={`tree-row ${d.tabColor ? "has-tab-color" : ""} ${node.isSelected ? "is-selected" : ""} ${change ? `chg chg-${change.kind}` : ""} ${dropInto ? "is-drop-target" : ""}`}
       onMouseEnter={change ? (e) => showHover(d, e.currentTarget) : undefined}
       onMouseLeave={change ? scheduleHide : undefined}
       onClick={() => d.type === "folder" && !node.isEditing && node.toggle()}

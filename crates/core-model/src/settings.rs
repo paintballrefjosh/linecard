@@ -5,6 +5,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::ObjectId;
 
+/// Stored as `tab_color` to show no color even though a folder above sets one.
+/// A string like any other value, so computers running older versions keep it
+/// when they save, and draw it (not being a color) as none.
+pub const NO_TAB_COLOR: &str = "none";
+
 /// Declares the inheritable settings once and generates the struct plus the
 /// field-by-field merge logic, so adding a setting is a one-line change.
 macro_rules! inheritable {
@@ -58,7 +63,7 @@ inheritable! {
     credential_id: ObjectId,
     /// Connection id of a jump host (SSH ProxyJump).
     jump_host: ObjectId,
-    /// Tab color, e.g. "#d64545" for production.
+    /// Tab color, e.g. "#d64545" for production, or [`NO_TAB_COLOR`].
     tab_color: String,
     /// Terminal profile id (font, colors, scrollback).
     terminal_profile: ObjectId,
@@ -78,6 +83,14 @@ inheritable! {
     logon_actions: Vec<crate::LogonStep>,
     /// Lines of history a terminal keeps above the screen.
     scrollback_lines: u32,
+}
+
+impl Settings {
+    /// The color to draw, if any: `None` both when unset and for
+    /// [`NO_TAB_COLOR`].
+    pub fn shown_tab_color(&self) -> Option<&str> {
+        self.tab_color.as_deref().filter(|c| *c != NO_TAB_COLOR)
+    }
 }
 
 /// Where an effective setting came from.

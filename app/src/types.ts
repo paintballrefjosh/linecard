@@ -37,6 +37,8 @@ export interface FolderNode {
   id: string;
   name: string;
   color?: string;
+  /** The color to draw, own or inherited from a folder above. */
+  tabColor?: string;
   change?: PendingChange;
   children: TreeNode[];
 }
@@ -67,7 +69,8 @@ export interface SerialSettings {
 }
 
 /** The connection editor's form. `id: null` creates a new connection.
- *  Empty `username` / `tabColor` mean "inherit from the folder". */
+ *  Empty `username` / `tabColor` mean "inherit from the folder"; a `tabColor`
+ *  of `NO_TAB_COLOR` means no color, whatever the folder says. */
 /** A folder of this computer shared with an RDP connection (kept on this computer only). */
 export interface RdpShare {
   path: string;

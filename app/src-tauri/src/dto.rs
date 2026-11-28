@@ -67,6 +67,9 @@ pub enum TreeNodeDto {
         name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         color: Option<String>,
+        /// The color to draw, own or inherited.
+        #[serde(rename = "tabColor", skip_serializing_if = "Option::is_none")]
+        tab_color: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         change: Option<PendingChangeDto>,
         children: Vec<TreeNodeDto>,
@@ -90,6 +93,10 @@ pub fn tree_dto(tree: &Tree, changes: &ChangeTracker, parent: Option<&str>) -> V
         id: f.id.clone(),
         name: f.name.clone(),
         color: f.color.clone(),
+        tab_color: tree
+            .resolve_folder(&f.id)
+            .ok()
+            .and_then(|r| r.settings.shown_tab_color().map(str::to_string)),
         change: change(&f.id),
         children: tree_dto(tree, changes, Some(&f.id)),
     });
@@ -101,7 +108,10 @@ pub fn tree_dto(tree: &Tree, changes: &ChangeTracker, parent: Option<&str>) -> V
             name: c.name.clone(),
             kind: c.kind,
             endpoint: c.endpoint.label(),
-            tab_color: tree.resolve(&c.id).ok().and_then(|r| r.settings.tab_color),
+            tab_color: tree
+                .resolve(&c.id)
+                .ok()
+                .and_then(|r| r.settings.shown_tab_color().map(str::to_string)),
             change: change(&c.id),
         });
     folders.chain(conns).collect()
@@ -119,7 +129,8 @@ pub struct SerialDto {
 }
 
 /// The connection editor's form. `id: None` creates a new connection.
-/// Empty `username` / `tabColor` mean "inherit".
+/// Empty `username` / `tabColor` mean "inherit"; a `tabColor` of "none" means
+/// no color, whatever the folder says.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionDraftDto {

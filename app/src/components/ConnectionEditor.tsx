@@ -17,13 +17,11 @@ import { Modal } from "./Dialog";
 import { highlightStore } from "../highlight";
 import { kindLabel } from "./icons";
 import { CredentialSelect, LogonActionsEditor, useCredentials } from "./LoginFields";
+import { TabColorPicker } from "./TabColorPicker";
 
 const defaultPort: Record<ConnectionKind, number> = { ssh: 22, telnet: 23, rdp: 3389, vnc: 5900, serial: 0, local: 0 };
 const kinds: ConnectionKind[] = ["ssh", "telnet", "serial", "rdp", "vnc"];
 const bauds = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200];
-/** Same hues as the tab-color convention: red for production, etc. */
-export const swatches = ["#d64545", "#e07b39", "#d4a72c", "#3fa35b", "#2aa3a3", "#3a7bd5", "#8a5cd6", "#c94f9b"];
-
 /** 9600 8N1, no flow control: the default for most network gear consoles. */
 const consoleDefaults = (port = "COM1"): SerialSettings => ({
   port,
@@ -596,34 +594,11 @@ export function ConnectionEditor({ initial, location, onSave, onClose, jumpHosts
         )}
 
         <span className="form-label">Tab color</span>
-        <div className="swatches" role="radiogroup" aria-label="Tab color">
-          <button
-            type="button"
-            role="radio"
-            aria-checked={!d.tabColor}
-            className="swatch swatch-none"
-            aria-label={inherited?.tabColor ? `Inherited color from ${inherited.tabColor.from}` : "No color"}
-            title={
-              inherited?.tabColor
-                ? `Inherited: ${inherited.tabColor.value} (from ${inherited.tabColor.from})`
-                : "No color"
-            }
-            style={inherited?.tabColor ? { background: inherited.tabColor.value } : undefined}
-            onClick={() => set({ tabColor: null })}
-          />
-          {swatches.map((c) => (
-            <button
-              key={c}
-              type="button"
-              role="radio"
-              aria-checked={d.tabColor === c}
-              aria-label={c}
-              className="swatch"
-              style={{ background: c }}
-              onClick={() => set({ tabColor: c })}
-            />
-          ))}
-        </div>
+        <TabColorPicker
+          value={d.tabColor}
+          inherited={inherited?.tabColor ?? null}
+          onChange={(tabColor) => set({ tabColor })}
+        />
 
         <label htmlFor="ce-notes">Notes</label>
         <textarea id="ce-notes" rows={3} value={d.notes} onChange={(e) => set({ notes: e.target.value })} />
