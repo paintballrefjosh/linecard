@@ -297,7 +297,7 @@ export function mockBackend(): Backend {
     d.kind === "serial" && d.serial ? `${d.serial.port} ${d.serial.baud}` : `${d.host.trim()}:${d.port}`;
 
   return {
-    appVersion: async () => "0.5.2-dev",
+    appVersion: async () => "0.5.3-dev",
     // Connection nodes here hold their own color and folders' are in their
     // settings; what's handed out has the inherited ones filled in.
     getTree: async () => structuredClone(inheritTabColors(tree, ownTabColor)),

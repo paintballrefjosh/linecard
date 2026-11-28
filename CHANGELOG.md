@@ -2,9 +2,12 @@
 
 ## Unreleased
 
+## v0.5.3 — tab color fixes and a No color choice; security updates
+
 - **Fixed: open tabs kept their old color.** Changing a connection's or folder's tab color now recolors its open tabs, including ones that take the color from a folder.
 - **Folders show their color.** A folder with a tab color, its own or from a folder above, shows it on its icon and name in the connection tree.
 - **No color under a colored folder.** Where a folder above sets a color, a connection or folder can now choose No color. Computers running older versions show these without a color too.
+- **Security: dependencies updated.** `url` 2.5.9 fixes a crash on a specially nested `blob:` address (RUSTSEC-2026-0592), and `cookie` 0.18.3 fixes repeated encryption nonces in programs that fork (RUSTSEC-2026-0594). Tauri and other libraries are also updated.
 
 ## v0.5.2 — terminal links and clipboard, highlighting tester, crash dumps; fixes for Cisco 3750 SSH, memory growth and new tabs
 
