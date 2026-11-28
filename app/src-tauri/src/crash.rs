@@ -187,18 +187,24 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("linecard-crash-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("new")).unwrap();
+        // Dated long ago, a second apart: files written in the same instant
+        // can share a time, leaving which one is pruned to chance.
+        let dated = |name: &str, secs: u64| {
+            let path = dir.join(name);
+            fs::write(&path, b"x").unwrap();
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+                .unwrap();
+            path
+        };
         for i in 0..KEEP {
-            fs::write(dir.join(format!("old-{i}.dmp")), b"x").unwrap();
+            dated(&format!("old-{i}.dmp"), 1 + i as u64);
         }
-        // Older than everything above, so it's the one pruned.
-        let oldest = dir.join("oldest.dmp");
-        fs::write(&oldest, b"x").unwrap();
-        fs::File::options()
-            .write(true)
-            .open(&oldest)
-            .unwrap()
-            .set_modified(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap();
+        // Older than everything above, so it's pruned.
+        let oldest = dated("oldest.dmp", 0);
         fs::write(dir.join("new").join("linecard-1.dmp"), b"x").unwrap();
         fs::write(dir.join("new").join("notes.txt"), b"x").unwrap();
 
