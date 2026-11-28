@@ -573,9 +573,11 @@ body.is-resizing .main {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* The tab color tints the name (and, via KindIcon, the icon) so prod vs lab
-   reads before connecting. Change highlights below still win for the name. */
-.has-tab-color .tree-name {
+/* The tab color tints the name and the icon (a connection's via KindIcon), so
+   prod vs lab reads before connecting. Change highlights below still win for
+   the name. */
+.has-tab-color .tree-name,
+.has-tab-color .folder-icon {
   color: var(--tab-color);
 }
 .tree-endpoint {
@@ -1159,6 +1161,12 @@ select {
 }
 .swatch-none {
   background: linear-gradient(135deg, transparent 45%, var(--chg-deleted) 45% 55%, transparent 55%) var(--bg-side);
+}
+/* "Color from the folder", dashed to tell it from the same color chosen here;
+   empty when there's no one color to show. */
+.swatch-inherit {
+  border: 2px dashed var(--text-quiet);
+  background: var(--bg-side);
 }
 .form-error {
   color: var(--chg-deleted);

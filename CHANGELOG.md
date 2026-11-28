@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fixed: open tabs kept their old color.** Changing a connection's or folder's tab color now recolors its open tabs, including ones that take the color from a folder.
+- **Folders show their color.** A folder with a tab color, its own or from a folder above, shows it on its icon and name in the connection tree.
+- **No color under a colored folder.** Where a folder above sets a color, a connection or folder can now choose No color. Computers running older versions show these without a color too.
+
 ## v0.5.2 — terminal links and clipboard, highlighting tester, crash dumps; fixes for Cisco 3750 SSH, memory growth and new tabs
 
 - **Fixed: older Cisco switches still dropped the SSH connection.** A Catalyst 3750 on IOS 12.2 offers several key exchange methods, and Linecard picked group exchange, asking for a bigger group than the switch has. The switch hung up instead of saying so. Linecard now tries `diffie-hellman-group14-sha1` first, and asks group exchange for 2048-bit groups, as OpenSSH does. v0.5.1's fix (group1 and 3des-cbc) only helps switches that offer nothing else.

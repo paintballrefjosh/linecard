@@ -544,6 +544,7 @@ export default function App() {
                 <div className="workspace-wrap" hidden={view !== "connections"}>
                   <Workspace
                     theme={theme}
+                    tree={tree}
                     onOpenCount={setOpenCount}
                     onReady={(api) => {
                       dock.current = api;

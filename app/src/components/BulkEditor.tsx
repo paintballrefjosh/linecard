@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ConnectionDraft, FlowControl, Parity, SerialSettings } from "../types";
 import { Modal } from "./Dialog";
 import { highlightStore } from "../highlight";
-import { swatches } from "./ConnectionEditor";
+import { TabColorPicker } from "./TabColorPicker";
 
 /** The fields several connections can be given at once: the ones that make
  *  sense for all of them. Name, host and protocol stay as they are. */
@@ -267,37 +267,11 @@ export function BulkEditor({ drafts, jumpHosts, onSave, onClose }: Props) {
         )}
 
         <span className="form-label">Tab color{mixedHere("tabColor", color.mixed) ? " (mixed)" : ""}</span>
-        <div className="swatches" role="radiogroup" aria-label="Tab color">
-          {(() => {
-            const current = shown<string | null>("tabColor", color.value);
-            const unknown = mixedHere("tabColor", color.mixed);
-            return (
-              <>
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={!unknown && !current}
-                  className="swatch swatch-none"
-                  aria-label="No color"
-                  title="No color"
-                  onClick={() => set({ tabColor: null })}
-                />
-                {swatches.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    role="radio"
-                    aria-checked={!unknown && current === c}
-                    aria-label={c}
-                    className="swatch"
-                    style={{ background: c }}
-                    onClick={() => set({ tabColor: c })}
-                  />
-                ))}
-              </>
-            );
-          })()}
-        </div>
+        <TabColorPicker
+          bulk
+          value={mixedHere("tabColor", color.mixed) ? undefined : shown<string | null>("tabColor", color.value)}
+          onChange={(tabColor) => set({ tabColor })}
+        />
 
         <label htmlFor="be-notes">Notes</label>
         <textarea

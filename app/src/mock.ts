@@ -22,6 +22,7 @@ import type {
 } from "./types";
 import { SCROLLBACK_DEFAULT, SCROLLBACK_MAX, SCROLLBACK_MIN } from "./types";
 import { defaultRules, type HighlightProfile } from "./highlight";
+import { inheritTabColors } from "./tabColor";
 
 const min = 60_000;
 const now = () => Date.now();
@@ -153,6 +154,23 @@ export function mockBackend(): Backend {
     defaultId: "hl-general",
   };
   const folderSettings = new Map<string, FolderSettings>();
+  const ownTabColor = (n: TreeNode) => (n.type === "folder" ? folderSettings.get(n.id)?.tabColor : n.tabColor);
+  /** The color `folderId` and those above it pass down, as the editors show it. */
+  const inheritedTabColor = (folderId: string | null) => {
+    type Found = { value: string; from: string } | null;
+    const down = (nodes: TreeNode[], path: string, found: Found): Found | undefined => {
+      for (const n of nodes) {
+        if (n.type !== "folder") continue;
+        const here = `${path}/${n.name}`;
+        const value = ownTabColor(n);
+        const next = value ? { value, from: here } : found;
+        const hit = n.id === folderId ? next : down(n.children, here, next);
+        if (hit !== undefined) return hit;
+      }
+      return undefined;
+    };
+    return down(tree, "", null) ?? null;
+  };
 
   let syncConfig: SyncConfig | null = { transport: "relay", location: "https://relay.example.com" };
   const mockPhrase =
@@ -280,7 +298,9 @@ export function mockBackend(): Backend {
 
   return {
     appVersion: async () => "0.5.2-dev",
-    getTree: async () => structuredClone(tree),
+    // Connection nodes here hold their own color and folders' are in their
+    // settings; what's handed out has the inherited ones filled in.
+    getTree: async () => structuredClone(inheritTabColors(tree, ownTabColor)),
     getDevices: async () => devices,
     getSyncState: async () =>
       syncConfig
@@ -666,7 +686,7 @@ export function mockBackend(): Backend {
       const inDc1 = !!folderId && (folderId.startsWith("dc1") || folderId === "dc1");
       return {
         username: inDc1 ? { value: "netadmin", from: "/DC1 Fort Worth" } : null,
-        tabColor: null,
+        tabColor: inheritedTabColor(folderId),
         jumpHost: inDc1 ? { value: "home-pi", from: "/DC1 Fort Worth" } : null,
         log: { value: logging.enabled ? "on" : "off", from: "Settings" },
         highlight: inDc1

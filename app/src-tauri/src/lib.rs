@@ -1457,6 +1457,49 @@ mod tests {
     }
 
     #[test]
+    fn the_ui_tree_carries_the_colors_to_draw() {
+        let mut tree = Tree::default();
+        seed_starter(&mut tree);
+        let mut conn = tree
+            .connections()
+            .find(|c| c.folder.is_some())
+            .expect("a starter connection in a folder")
+            .clone();
+        let folder = conn.folder.clone().unwrap();
+        tree.folder_mut(&folder).unwrap().defaults.tab_color = Some("#d64545".into());
+
+        // id -> tabColor of every node.
+        let colors = |tree: &Tree| {
+            let json = serde_json::to_value(dto::tree_dto(tree, &Default::default(), None)).unwrap();
+            let mut stack = json.as_array().unwrap().clone();
+            let mut out = std::collections::BTreeMap::new();
+            while let Some(n) = stack.pop() {
+                stack.extend(n["children"].as_array().cloned().unwrap_or_default());
+                let color = n["tabColor"].as_str().map(str::to_string);
+                out.insert(n["id"].as_str().unwrap().to_string(), color);
+            }
+            out
+        };
+        let before = colors(&tree);
+        assert_eq!(
+            before[&folder].as_deref(),
+            Some("#d64545"),
+            "the folder shows its color"
+        );
+        assert_eq!(before[&conn.id].as_deref(), Some("#d64545"));
+
+        // "none" on the connection is saved as is, and nothing is drawn.
+        let mut d = draft(ConnectionKind::Ssh);
+        d.tab_color = Some("none".into());
+        d.apply_to(&mut conn).unwrap();
+        assert_eq!(ConnectionDraftDto::from(&conn).tab_color.as_deref(), Some("none"));
+        *tree.connection_mut(&conn.id).unwrap() = conn.clone();
+        let after = colors(&tree);
+        assert_eq!(after[&conn.id], None);
+        assert_eq!(after[&folder].as_deref(), Some("#d64545"));
+    }
+
+    #[test]
     fn drafts_validate_and_round_trip() {
         let mut tree = Tree::default();
         seed_starter(&mut tree);

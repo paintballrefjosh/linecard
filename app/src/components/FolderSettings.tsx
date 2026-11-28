@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { getBackend } from "../api";
 import type { ConnectionNode, FolderSettings, Inherited } from "../types";
-import { HighlightSelect, ScrollbackInput, swatches } from "./ConnectionEditor";
+import { HighlightSelect, ScrollbackInput } from "./ConnectionEditor";
 import { Modal } from "./Dialog";
 import { CredentialSelect, LogonActionsEditor, useCredentials } from "./LoginFields";
+import { TabColorPicker } from "./TabColorPicker";
 
 interface Props {
   folderId: string;
@@ -137,30 +138,11 @@ export function FolderSettingsDialog({ folderId, parentId, path, jumpHosts, onCl
           </select>
 
           <span className="form-label">Tab color</span>
-          <div className="swatches" role="radiogroup" aria-label="Tab color">
-            <button
-              type="button"
-              role="radio"
-              aria-checked={!s.tabColor}
-              className="swatch swatch-none"
-              aria-label={inherited?.tabColor ? `Inherited color from ${inherited.tabColor.from}` : "No color"}
-              title={from(inherited?.tabColor, "No color")}
-              style={inherited?.tabColor ? { background: inherited.tabColor.value } : undefined}
-              onClick={() => set({ tabColor: null })}
-            />
-            {swatches.map((c) => (
-              <button
-                key={c}
-                type="button"
-                role="radio"
-                aria-checked={s.tabColor === c}
-                aria-label={c}
-                className="swatch"
-                style={{ background: c }}
-                onClick={() => set({ tabColor: c })}
-              />
-            ))}
-          </div>
+          <TabColorPicker
+            value={s.tabColor}
+            inherited={inherited?.tabColor ?? null}
+            onChange={(tabColor) => set({ tabColor })}
+          />
         </div>
       )}
       {error && <p className="form-error">{error}</p>}
