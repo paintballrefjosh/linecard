@@ -13,7 +13,7 @@
 # Dependencies build in their own layer (cargo-chef), so a code change only
 # rebuilds the relay itself.
 
-FROM lukemathwalker/cargo-chef:latest-rust-1-alpine@sha256:000cac9096459ebc31e55e1a99bed090b1ce3511f006b4b101fd2d4f4bcb4d1e AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1-alpine@sha256:3dc65f92f830cadaa78d29ddcc8e23a22c5d6785f7758afdf50eba4e88238966 AS chef
 # musl-dev and a C compiler: SQLite is compiled in (rusqlite "bundled").
 RUN apk add --no-cache musl-dev gcc
 WORKDIR /src
